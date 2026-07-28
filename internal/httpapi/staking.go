@@ -47,6 +47,11 @@ type resourcesResponse struct {
 	BandwidthPerTRX string `json:"bandwidth_per_trx"`
 	EnergyPerTRX    string `json:"energy_per_trx"`
 
+	// The node's own answer for how much stake may still be lent out. Shown,
+	// not enforced — see tron.Resources.
+	CanDelegateBandwidth string `json:"can_delegate_bandwidth"`
+	CanDelegateEnergy    string `json:"can_delegate_energy"`
+
 	UnstakeSlots int64 `json:"unstake_slots"`
 
 	Pending     []unstakeResponse    `json:"pending"`
@@ -63,13 +68,15 @@ func toResourcesResponse(res tron.Resources) resourcesResponse {
 			Available: res.Energy.Available.String(),
 			Total:     res.Energy.Total.String(),
 		},
-		StakedBandwidth: res.StakedBandwidth.String(),
-		StakedEnergy:    res.StakedEnergy.String(),
-		Unstaking:       res.Unstaking.String(),
-		WithdrawableNow: res.WithdrawableNow.String(),
-		BandwidthPerTRX: res.BandwidthPerTRX.String(),
-		EnergyPerTRX:    res.EnergyPerTRX.String(),
-		UnstakeSlots:    res.UnstakeSlots,
+		StakedBandwidth:      res.StakedBandwidth.String(),
+		StakedEnergy:         res.StakedEnergy.String(),
+		Unstaking:            res.Unstaking.String(),
+		WithdrawableNow:      res.WithdrawableNow.String(),
+		BandwidthPerTRX:      res.BandwidthPerTRX.String(),
+		EnergyPerTRX:         res.EnergyPerTRX.String(),
+		CanDelegateBandwidth: res.CanDelegateBandwidth.String(),
+		CanDelegateEnergy:    res.CanDelegateEnergy.String(),
+		UnstakeSlots:         res.UnstakeSlots,
 		// Built empty rather than nil so both encode as [] and the UI never has
 		// to guard a null.
 		Pending:     make([]unstakeResponse, 0, len(res.Pending)),

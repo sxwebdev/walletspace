@@ -380,6 +380,10 @@
         font-size: 12px;
         margin-top: 8px;
       }
+
+      .hint.warn {
+        color: var(--err);
+      }
       .dialog-error {
         color: var(--err);
         font-size: 13px;
@@ -1047,6 +1051,7 @@
         $("send-amount").value = "";
         $("send-error").textContent = "";
         $("send-fee").textContent = "";
+        $("send-fee").classList.remove("warn");
         // Any estimate still in flight belongs to the previous dialog.
         newFeeToken();
         updateAvailable();
@@ -1103,7 +1108,15 @@
             ? `, из них ${fmt(est.activation)} за активацию получателя`
             : "";
 
-        return `Комиссия ≈ ${fmt(est.fee)} TRX${activation}`;
+        const line = `Комиссия ≈ ${fmt(est.fee)} TRX${activation}`;
+
+        // The fee is paid in TRX whatever is being sent, so a wallet full of
+        // USDT and empty of TRX can move nothing. Saying so here beats the
+        // node's answer, which arrives only after the transfer was signed and
+        // broadcast and reads "BANDWITH_ERROR".
+        if (!(Number(est.shortfall) > 0)) return line;
+
+        return `${line}. Не хватает ${fmt(est.shortfall)} TRX на комиссию — нода, скорее всего, откажет`;
       }
 
       async function showFee() {
@@ -1123,9 +1136,11 @@
           if (token !== feeToken) return;
 
           hint.textContent = describeFee(est);
+          hint.classList.toggle("warn", Number(est.shortfall) > 0);
         } catch (err) {
           if (token !== feeToken) return;
           hint.textContent = `Не удалось оценить комиссию: ${err.message}`;
+          hint.classList.remove("warn");
         }
       }
 
@@ -1170,6 +1185,7 @@
 
           $("send-amount").value = est.amount;
           $("send-fee").textContent = describeFee(est);
+          $("send-fee").classList.toggle("warn", Number(est.shortfall) > 0);
         } catch (err) {
           if (token !== feeToken) return;
 
@@ -1455,12 +1471,30 @@
           return;
         }
 
-        const staked = resSection("В стейке");
-        staked.append(
-          resLine("За bandwidth", withUnits(r.staked_bandwidth, "bandwidth")),
-          resLine("За energy", withUnits(r.staked_energy, "energy")),
+        const free = resSection("Доступно для делегации");
+        free.append(
+          resLine(
+            "Bandwidth",
+            unitsFirst(r.can_delegate_bandwidth, "bandwidth"),
+          ),
+          resLine("Energy", unitsFirst(r.can_delegate_energy, "energy")),
         );
-        box.appendChild(staked);
+        box.appendChild(free);
+
+        // Spelled out whenever it is below the stake: the gap is the resource
+        // already spent today plus whatever is lent out, and without the
+        // sentence the two numbers just look inconsistent.
+        if (
+          Number(r.can_delegate_bandwidth) < Number(r.staked_bandwidth) ||
+          Number(r.can_delegate_energy) < Number(r.staked_energy)
+        ) {
+          const note = document.createElement("div");
+          note.className = "res-empty";
+          note.textContent =
+            `В стейке ${fmt(r.staked_bandwidth)} TRX за bandwidth и ${fmt(r.staked_energy)} за energy — ` +
+            "делегировать можно только то, что ещё не израсходовано и не отдано другим";
+          free.appendChild(note);
+        }
 
         const delegated = resSection("Делегировано другим");
 
@@ -1538,13 +1572,14 @@
         }
       }
 
-      // The exact amount the chosen operation can move at most, as the string
-      // the server sent — never recomputed here, because that would be a float.
+      // The most the chosen operation can move, in TRX, as the string the server
+      // sent — never recomputed here, because that would be a float.
       //
-      // Only two operations have one. What may be staked has to leave room for
-      // a fee, and what may be delegated depends on inputs only the node holds;
-      // guessing either produced a wrong "0 TRX" that blocked a transfer the
-      // node would have accepted. Those two go to the node unchecked.
+      // Staking has none: the amount has to leave room for a fee, and only a
+      // node can price that. The other three do, and every one of them comes
+      // from the chain rather than from arithmetic here. None of them gates the
+      // request: they fill in "Макс." and label the field, and the node still
+      // has the last word.
       function currentLimit(prefix) {
         const r = state.resources;
         if (!r) return null;
@@ -1556,6 +1591,10 @@
             return resource === "bandwidth"
               ? r.staked_bandwidth
               : r.staked_energy;
+          case "delegate":
+            return resource === "bandwidth"
+              ? r.can_delegate_bandwidth
+              : r.can_delegate_energy;
           case "reclaim": {
             const to = $("dlg-to").value.trim();
             const row = r.delegations.find(
@@ -1589,25 +1628,19 @@
             : `На балансе ${fmt(trx)} TRX — оставьте немного на комиссию`;
         }
 
-        if (op === "delegate") {
-          if (!r) return "";
-
-          const staked =
-            resource === "bandwidth" ? r.staked_bandwidth : r.staked_energy;
-
-          // Deliberately not called a limit: part of the stake may already be
-          // delegated or in use, and only the node knows how much is left.
-          return `В стейке за ${resource}: ${unitsFirst(staked, resource)}`;
-        }
-
         const limit = currentLimit(prefix);
         if (limit === null) {
           return op === "reclaim" ? "Укажите адрес, которому делегировали" : "";
         }
 
-        return op === "unstake"
-          ? `В стейке: ${withUnits(limit, resource)}`
-          : `Делегировано этому адресу: ${unitsFirst(limit, resource)}`;
+        switch (op) {
+          case "unstake":
+            return `В стейке: ${withUnits(limit, resource)}`;
+          case "delegate":
+            return `Можно делегировать: ${unitsFirst(limit, resource)}`;
+          default:
+            return `Делегировано этому адресу: ${unitsFirst(limit, resource)}`;
+        }
       }
 
       // What the amount field is counted in for the chosen operation, and what
@@ -1801,10 +1834,21 @@
             return;
           }
 
-          // The resource figure is that TRX amount converted at the current
+          const units = resourceUnits(limit, $(`${prefix}-resource`).value);
+
+          if ($(`${prefix}-op`).value === "delegate") {
+            // Rounded down: the server converts the resource figure back with
+            // a round-up, and a whole point of slack keeps the result under
+            // the node's limit. It moves with the day's usage anyway.
+            $(`${prefix}-amount`).value =
+              units === null ? "" : String(Math.floor(units));
+            updateForm(prefix);
+            return;
+          }
+
+          // The reclaim figure is that TRX amount converted at the current
           // rate, so converting it back rounds up past what is delegated and
           // the chain refuses it. Show the figure, ask the server for all of it.
-          const units = resourceUnits(limit, $(`${prefix}-resource`).value);
           $(`${prefix}-amount`).value = units === null ? "" : units.toFixed(4);
 
           updateForm(prefix);

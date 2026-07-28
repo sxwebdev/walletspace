@@ -89,6 +89,19 @@ type Resources struct {
 	BandwidthPerTRX decimal.Decimal
 	EnergyPerTRX    decimal.Decimal
 
+	// CanDelegate* is the node's own answer for how much stake may still be
+	// lent out, and it is far below the staked total whenever the account has
+	// been spending: resource already consumed cannot be delegated away, and
+	// neither can what is lent out already.
+	//
+	// It is shown, never enforced. The figure falls as the day's usage grows,
+	// so a request the caller sends anyway is the node's to judge — but leaving
+	// it out means the dialog offers the whole stake and the chain answers with
+	// "delegateBalance must be less than or equal to available
+	// FreezeBandwidthV2 balance", which names no number at all.
+	CanDelegateBandwidth decimal.Decimal
+	CanDelegateEnergy    decimal.Decimal
+
 	// UnstakeSlots is how many more unstakes may be started before the pending
 	// ones have to be withdrawn or cancelled. The chain caps that queue, and
 	// hitting the cap is an opaque refusal otherwise.
@@ -103,14 +116,14 @@ var oneTRX = client.MustFromTRX(decimal.NewFromInt(1))
 
 // Resources reads an account's staking position.
 //
-// It is asked for one wallet at a time, when the dialog is opened. The four
+// It is asked for one wallet at a time, when the dialog is opened. The six
 // reads run in parallel under the same worker limit that keeps the balance
 // fan-out inside a public node's rate limit — but the delegation read is not
 // one request: the SDK walks the receiver index and fetches each receiver in
 // turn, so an account lending to many others costs one request per receiver on
 // top. That is the slow path here.
 //
-// A failure in any of the four fails the whole call. Filling the missing part
+// A failure in any of them fails the whole call. Filling the missing part
 // with zeros would be worse than saying nothing: "В стейке: 0" is a statement
 // about the account, and a read that did not happen must not make it.
 //
@@ -127,6 +140,8 @@ func (s *Service) Resources(ctx context.Context, addr string) (Resources, error)
 		stake   *client.StakeInfo
 		lent    []client.Delegation
 		slots   int64
+		canBW   client.SUN
+		canEN   client.SUN
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -180,6 +195,20 @@ func (s *Service) Resources(ctx context.Context, addr string) (Resources, error)
 		return nil
 	})
 
+	g.Go(func() error {
+		v, err := s.delegatable(gctx, addr, client.ResourceTypeBandwidth)
+		canBW = v
+
+		return err
+	})
+
+	g.Go(func() error {
+		v, err := s.delegatable(gctx, addr, client.ResourceTypeEnergy)
+		canEN = v
+
+		return err
+	})
+
 	if err := g.Wait(); err != nil {
 		return Resources{}, err
 	}
@@ -211,7 +240,9 @@ func (s *Service) Resources(ctx context.Context, addr string) (Resources, error)
 			account.GetTotalNetWeight(), account.GetTotalNetLimit(), oneTRX),
 		EnergyPerTRX: s.client.ConvertStakedToEnergy(
 			account.GetTotalEnergyLimit(), account.GetTotalEnergyWeight(), oneTRX),
-		UnstakeSlots: slots,
+		CanDelegateBandwidth: canBW.TRX(),
+		CanDelegateEnergy:    canEN.TRX(),
+		UnstakeSlots:         slots,
 	}
 
 	for _, item := range stake.PendingUnstakes {
@@ -225,6 +256,20 @@ func (s *Service) Resources(ctx context.Context, addr string) (Resources, error)
 	out.Delegations = splitDelegations(lent)
 
 	return out, nil
+}
+
+// delegatable asks the node how much stake may still be lent out for one
+// resource. An account that does not exist yet can lend nothing, which is an
+// answer rather than a failure.
+func (s *Service) delegatable(ctx context.Context, addr string, resource client.ResourceType) (client.SUN, error) {
+	max, err := retry(ctx, s.nodes, emptyIfMissing(func() (client.SUN, error) {
+		return s.client.GetCanDelegatedMaxSize(ctx, addr, resource)
+	}))
+	if err != nil {
+		return 0, fmt.Errorf("read delegatable %s: %w", resourceFromClient(resource), err)
+	}
+
+	return max, nil
 }
 
 // splitDelegations turns the SDK's per-receiver records, which carry both

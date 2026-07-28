@@ -12,6 +12,51 @@ import (
 	"github.com/sxwebdev/tronfaucet/internal/tron"
 )
 
+// The fee is paid in TRX whatever asset is moving, so the dialog has to say
+// when the sender cannot cover it — the node otherwise answers only after the
+// transfer has been signed and broadcast.
+func TestEstimateReportsTheShortfall(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.estimate = tron.Estimate{Fee: decimal.RequireFromString("27.3")}
+	chain.shortfall = decimal.RequireFromString("27.3")
+
+	srv := newServer(t, newWalletsFake(), chain)
+
+	var got estimateBody
+	do(t, srv, http.MethodPost, "/api/wallets/0/estimate",
+		`{"asset":"usdt","to":"TRecipient","amount":"10"}`, http.StatusOK, &got)
+
+	if got.Shortfall != "27.3" {
+		t.Errorf("shortfall = %q, want 27.3", got.Shortfall)
+	}
+}
+
+// A balance the service could not read must not fail an estimate that was
+// priced successfully: the shortfall only adds a warning to it.
+func TestEstimateSurvivesAFailedShortfallCheck(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.estimate = tron.Estimate{Fee: decimal.RequireFromString("1.1")}
+	chain.shortfallErr = errors.New("node unreachable")
+
+	srv := newServer(t, newWalletsFake(), chain)
+
+	var got estimateBody
+	do(t, srv, http.MethodPost, "/api/wallets/0/estimate",
+		`{"asset":"trx","to":"TRecipient","amount":"1"}`, http.StatusOK, &got)
+
+	if got.Fee != "1.1" {
+		t.Errorf("fee = %q, want the estimate to survive", got.Fee)
+	}
+
+	if got.Shortfall != "0" {
+		t.Errorf("shortfall = %q, want 0 when it could not be worked out", got.Shortfall)
+	}
+}
+
 func TestResources(t *testing.T) {
 	t.Parallel()
 
@@ -27,7 +72,11 @@ func TestResources(t *testing.T) {
 		WithdrawableNow: decimal.NewFromInt(20),
 		BandwidthPerTRX: decimal.RequireFromString("0.63189936"),
 		EnergyPerTRX:    decimal.RequireFromString("73.814562"),
-		UnstakeSlots:    31,
+		// Far below the stake, which is the normal case for an account that has
+		// been spending: consumed resource cannot be lent out.
+		CanDelegateBandwidth: decimal.RequireFromString("308.062077"),
+		CanDelegateEnergy:    decimal.NewFromInt(500),
+		UnstakeSlots:         31,
 		Pending: []tron.Unstake{
 			{Resource: tron.ResourceBandwidth, Amount: decimal.NewFromInt(50), ExpireAt: locked},
 		},
@@ -60,6 +109,13 @@ func TestResources(t *testing.T) {
 	// arrive at full precision rather than rounded to something displayable.
 	if got.EnergyPerTRX != "73.814562" || got.BandwidthPerTRX != "0.63189936" {
 		t.Errorf("rates = %q / %q, want them verbatim", got.BandwidthPerTRX, got.EnergyPerTRX)
+	}
+
+	// The dialog offers the whole stake without this, and the chain answers
+	// "delegateBalance must be less than or equal to available
+	// FreezeBandwidthV2 balance" — which names no number.
+	if got.CanDelegateBandwidth != "308.062077" {
+		t.Errorf("can_delegate_bandwidth = %q, want the node's 308.062077", got.CanDelegateBandwidth)
 	}
 
 	if got.UnstakeSlots != 31 {
@@ -400,6 +456,9 @@ type resourcesBody struct {
 
 	BandwidthPerTRX string `json:"bandwidth_per_trx"`
 	EnergyPerTRX    string `json:"energy_per_trx"`
+
+	CanDelegateBandwidth string `json:"can_delegate_bandwidth"`
+	CanDelegateEnergy    string `json:"can_delegate_energy"`
 
 	UnstakeSlots int64 `json:"unstake_slots"`
 

@@ -496,6 +496,44 @@ func (s *Service) Spendable(ctx context.Context, from, to string, asset Asset) (
 	return spendable, est, nil
 }
 
+// Shortfall is how much TRX the sender is missing to complete a transfer at the
+// given cost. Zero when the balance covers it.
+//
+// A token transfer is paid for in TRX, so an account holding plenty of USDT and
+// no TRX cannot move any of it — and the node only says so after the
+// transaction has been built, signed and broadcast, as a bare BANDWITH_ERROR.
+// This is the same fact, in the dialog, before any of that happens.
+//
+// It reports rather than forbids: the estimate is the node's own figure, but
+// the balance may move between the estimate and the send, and refusing a
+// transfer the chain would have accepted is worse than letting the chain
+// answer.
+func (s *Service) Shortfall(ctx context.Context, from string, asset Asset, amount decimal.Decimal, est Estimate) (decimal.Decimal, error) {
+	balances, errs := s.Balances(ctx, []string{from}, false)
+	if err, ok := errs[from]; ok {
+		return decimal.Zero, fmt.Errorf("read balance of %s: %w", from, err)
+	}
+
+	balance, ok := balances[from]
+	if !ok {
+		return decimal.Zero, fmt.Errorf("no balance for %s", from)
+	}
+
+	// Sending TRX spends the amount as well as the fee; sending a token spends
+	// only the fee, and whether the token balance covers the amount is a
+	// separate question the caller already sees.
+	need := est.Fee
+	if asset == AssetTRX {
+		need = need.Add(amount)
+	}
+
+	if missing := need.Sub(balance.TRX); missing.GreaterThan(decimal.Zero) {
+		return missing, nil
+	}
+
+	return decimal.Zero, nil
+}
+
 // chainError classifies a node's refusal to build a transaction, wherever it
 // surfaces — the estimate, the send and the staking paths.
 //
@@ -505,13 +543,47 @@ func (s *Service) Spendable(ctx context.Context, from, to string, asset Asset) (
 // node's own wording is kept — it names the actual condition, and every attempt
 // to summarise it here has been less specific than the original.
 //
-// Anything else is treated as an upstream problem and keeps its stage prefix.
+// A broadcast rejection is classified the same way, by the node's response
+// code. Anything else is treated as an upstream problem and keeps its stage
+// prefix.
 func (s *Service) chainError(stage string, err error) error {
 	if refusal, ok := errors.AsType[*client.ContractValidateError](err); ok {
 		return fmt.Errorf("%w: %w", ErrInvalidRequest, refusal)
 	}
 
+	if rejection, ok := errors.AsType[*client.BroadcastError](err); ok {
+		if reason := rejectionReason(rejection.Code); reason != "" {
+			return fmt.Errorf("%w: %s (%w)", ErrInvalidRequest, reason, rejection)
+		}
+	}
+
 	return fmt.Errorf("%s: %w", stage, err)
+}
+
+// rejectionReason explains the broadcast codes that are about the transaction
+// the caller asked for rather than about the node. An empty string means the
+// rejection is not the caller's to fix — a busy node, too few peers, a chain
+// still catching up — and it stays an upstream failure.
+//
+// The code is what is matched, not the message: a node routinely rejects a
+// transaction with an empty message and the code as the only diagnostic, which
+// is why gotron surfaces it as a field.
+func rejectionReason(code api.ReturnResponseCode) string {
+	switch code {
+	case api.Return_BANDWITH_ERROR:
+		// The one an account with tokens but no TRX runs into: a TRC20
+		// transfer is paid for in bandwidth and energy, and burning TRX is the
+		// only fallback when neither is staked.
+		return "the account has neither the bandwidth and energy this transaction needs nor the TRX to pay for them"
+	case api.Return_CONTRACT_VALIDATE_ERROR:
+		return "the chain refused the transaction"
+	case api.Return_CONTRACT_EXE_ERROR:
+		return "the contract call failed"
+	case api.Return_TOO_BIG_TRANSACTION_ERROR:
+		return "the transaction is too large"
+	default:
+		return ""
+	}
 }
 
 // submit signs a transaction a node built and broadcasts it, returning the txid.
@@ -524,10 +596,10 @@ func (s *Service) submit(ctx context.Context, tx *api.TransactionExtention, key 
 		return "", fmt.Errorf("sign transaction: %w", err)
 	}
 
-	// A rejection arrives as *client.BroadcastError, whose message always names
-	// the node's response code.
+	// A rejection arrives as *client.BroadcastError carrying the node's response
+	// code, which is what says whether the transaction or the node is at fault.
 	if _, err := s.client.BroadcastTransaction(ctx, tx.GetTransaction()); err != nil {
-		return "", fmt.Errorf("broadcast transaction: %w", err)
+		return "", s.chainError("broadcast transaction", err)
 	}
 
 	return hex.EncodeToString(tx.GetTxid()), nil

@@ -41,6 +41,7 @@ type Chain interface {
 	Balances(ctx context.Context, addresses []string, refresh bool) (map[string]tron.Balance, map[string]error)
 	Estimate(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal) (tron.Estimate, error)
 	Spendable(ctx context.Context, from, to string, asset tron.Asset) (decimal.Decimal, tron.Estimate, error)
+	Shortfall(ctx context.Context, from string, asset tron.Asset, amount decimal.Decimal, est tron.Estimate) (decimal.Decimal, error)
 	Send(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
 
 	Resources(ctx context.Context, addr string) (tron.Resources, error)
@@ -371,6 +372,9 @@ type estimateResponse struct {
 	Amount     string `json:"amount"`
 	Fee        string `json:"fee"`
 	Activation string `json:"activation"`
+	// Shortfall is the TRX the sender is missing, "0" when the balance covers
+	// the cost. It is advisory: the send is still attempted if asked for.
+	Shortfall string `json:"shortfall"`
 }
 
 func (s *Server) handleEstimate(w http.ResponseWriter, r *http.Request) {
@@ -395,10 +399,19 @@ func (s *Server) handleEstimate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A balance the service could not read is not worth failing a priced
+	// estimate over — the figure only adds a warning to it.
+	shortfall, err := s.chain.Shortfall(ctx, t.from.Address, t.asset, t.amount, est)
+	if err != nil {
+		s.log.Warn("shortfall check failed", "from", t.from.Address, "error", err)
+		shortfall = decimal.Zero
+	}
+
 	writeJSON(w, http.StatusOK, estimateResponse{
 		Amount:     t.amount.String(),
 		Fee:        est.Fee.String(),
 		Activation: est.Activation.String(),
+		Shortfall:  shortfall.String(),
 	})
 }
 

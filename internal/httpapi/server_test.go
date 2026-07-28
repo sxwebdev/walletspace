@@ -398,6 +398,7 @@ type estimateBody struct {
 	Amount     string `json:"amount"`
 	Fee        string `json:"fee"`
 	Activation string `json:"activation"`
+	Shortfall  string `json:"shortfall"`
 }
 
 func TestSendMapsValidationFailuresTo400(t *testing.T) {
@@ -677,6 +678,9 @@ type chainFake struct {
 	spendableErr   error
 	spendableCalls int
 
+	shortfall    decimal.Decimal
+	shortfallErr error
+
 	sendErr    error
 	sentFrom   string
 	sentTo     string
@@ -753,6 +757,14 @@ func (f *chainFake) Spendable(_ context.Context, from, to string, asset tron.Ass
 	}
 
 	return f.spendable, f.estimate, nil
+}
+
+func (f *chainFake) Shortfall(_ context.Context, from string, asset tron.Asset, amount decimal.Decimal, est tron.Estimate) (decimal.Decimal, error) {
+	if f.shortfallErr != nil {
+		return decimal.Zero, f.shortfallErr
+	}
+
+	return f.shortfall, nil
 }
 
 func (f *chainFake) Send(_ context.Context, from, to string, asset tron.Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
