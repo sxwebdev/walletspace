@@ -429,9 +429,12 @@ func (s *Service) Estimate(ctx context.Context, from, to string, asset Asset, am
 		return Estimate{}, s.transferError("estimate transfer", from, err)
 	}
 
+	// Fee is what actually leaves the account: gotron nets the transfer against
+	// the sender's own bandwidth and energy, and itemises the account-creation
+	// charges that the free allowance is not allowed to pay for.
 	est := Estimate{
-		Fee:        res.Total.Fee.TRX(),
-		Activation: res.Activation.Fee.TRX(),
+		Fee:        res.Fee.TRX(),
+		Activation: (res.Charges.AccountCreation + res.Charges.UnstakedCreation).TRX(),
 	}
 	s.estimates.Set(cacheKey, est, ttlcache.DefaultTTL)
 
