@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
-	"strings"
 	"sync"
 	"time"
 
@@ -426,7 +425,7 @@ func (s *Service) Estimate(ctx context.Context, from, to string, asset Asset, am
 		return Estimate{}, fmt.Errorf("%w: unknown asset %q", ErrInvalidRequest, asset)
 	}
 	if err != nil {
-		return Estimate{}, s.transferError("estimate transfer", from, err)
+		return Estimate{}, s.chainError("estimate transfer", err)
 	}
 
 	// Fee is what actually leaves the account: gotron nets the transfer against
@@ -497,16 +496,41 @@ func (s *Service) Spendable(ctx context.Context, from, to string, asset Asset) (
 	return spendable, est, nil
 }
 
-// transferError gives node refusals the same wording on both the estimate and
-// the send path, so the same condition is never explained two different ways.
-func (s *Service) transferError(stage, from string, err error) error {
-	switch {
-	case errors.Is(err, client.ErrInvalidTransaction),
-		strings.Contains(err.Error(), "balance is not sufficient"):
-		return fmt.Errorf("node rejected the transfer: check that %s holds enough TRX to cover the amount and the fee", from)
-	default:
-		return fmt.Errorf("%s: %w", stage, err)
+// chainError classifies a node's refusal to build a transaction, wherever it
+// surfaces — the estimate, the send and the staking paths.
+//
+// A contract validation error is the node saying the request itself is wrong:
+// nothing staked, an account that does not exist, more than is delegated. It is
+// reported as a bad request so the API answers 400 rather than 502, and the
+// node's own wording is kept — it names the actual condition, and every attempt
+// to summarise it here has been less specific than the original.
+//
+// Anything else is treated as an upstream problem and keeps its stage prefix.
+func (s *Service) chainError(stage string, err error) error {
+	if refusal, ok := errors.AsType[*client.ContractValidateError](err); ok {
+		return fmt.Errorf("%w: %w", ErrInvalidRequest, refusal)
 	}
+
+	return fmt.Errorf("%s: %w", stage, err)
+}
+
+// submit signs a transaction a node built and broadcasts it, returning the txid.
+//
+// The broadcast is deliberately not retried: an attempt that reached the
+// network may well have been accepted, and sending the same transaction to the
+// next node could double it.
+func (s *Service) submit(ctx context.Context, tx *api.TransactionExtention, key *ecdsa.PrivateKey) (string, error) {
+	if err := s.client.SignTransaction(tx.GetTransaction(), key); err != nil {
+		return "", fmt.Errorf("sign transaction: %w", err)
+	}
+
+	// A rejection arrives as *client.BroadcastError, whose message always names
+	// the node's response code.
+	if _, err := s.client.BroadcastTransaction(ctx, tx.GetTransaction()); err != nil {
+		return "", fmt.Errorf("broadcast transaction: %w", err)
+	}
+
+	return hex.EncodeToString(tx.GetTxid()), nil
 }
 
 // Send transfers TRX or the configured TRC20 token and returns the txid.
@@ -538,7 +562,7 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 			return s.client.CreateTransferTransaction(ctx, from, to, sun)
 		})
 		if err != nil {
-			err = s.transferError("create TRX transfer", from, err)
+			err = s.chainError("create TRX transfer", err)
 		}
 
 	case AssetUSDT:
@@ -551,7 +575,7 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 			return s.client.TRC20Send(ctx, from, to, s.token.Contract, tokens, s.feeLimit)
 		})
 		if err != nil {
-			err = s.transferError("create "+s.token.Symbol+" transfer", from, err)
+			err = s.chainError("create "+s.token.Symbol+" transfer", err)
 		}
 
 	default:
@@ -561,19 +585,14 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 		return "", err
 	}
 
-	if err := s.client.SignTransaction(tx.GetTransaction(), key); err != nil {
-		return "", fmt.Errorf("sign transaction: %w", err)
-	}
-
-	// A rejection arrives as *client.BroadcastError, whose message always names
-	// the node's response code.
-	if _, err := s.client.BroadcastTransaction(ctx, tx.GetTransaction()); err != nil {
-		return "", fmt.Errorf("broadcast transaction: %w", err)
+	txid, err := s.submit(ctx, tx, key)
+	if err != nil {
+		return "", err
 	}
 
 	s.invalidate(from, to)
 
-	return hex.EncodeToString(tx.GetTxid()), nil
+	return txid, nil
 }
 
 // healthLogger bridges the client's health checker to slog.

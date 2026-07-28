@@ -42,6 +42,15 @@ type Chain interface {
 	Estimate(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal) (tron.Estimate, error)
 	Spendable(ctx context.Context, from, to string, asset tron.Asset) (decimal.Decimal, tron.Estimate, error)
 	Send(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+
+	Resources(ctx context.Context, addr string) (tron.Resources, error)
+	Stake(ctx context.Context, from string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+	Unstake(ctx context.Context, from string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+	Delegate(ctx context.Context, from, to string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+	Reclaim(ctx context.Context, from, to string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+	ReclaimAll(ctx context.Context, from, to string, resource tron.Resource, key *ecdsa.PrivateKey) (string, error)
+	WithdrawUnstaked(ctx context.Context, from string, key *ecdsa.PrivateKey) (string, error)
+	CancelUnstakes(ctx context.Context, from string, key *ecdsa.PrivateKey) (string, error)
 }
 
 // Server wires the storage and the chain service into an http.Handler.
@@ -77,6 +86,13 @@ func New(wallets Wallets, chain Chain, network, explorer string, log *slog.Logge
 	mux.HandleFunc("POST /api/wallets/{index}/estimate", s.handleEstimate)
 	mux.HandleFunc("POST /api/wallets/{index}/send", s.handleSend)
 	mux.HandleFunc("PATCH /api/wallets/{index}", s.handleRename)
+	mux.HandleFunc("GET /api/wallets/{index}/resources", s.handleResources)
+	mux.HandleFunc("POST /api/wallets/{index}/stake", s.handleStake)
+	mux.HandleFunc("POST /api/wallets/{index}/unstake", s.handleUnstake)
+	mux.HandleFunc("POST /api/wallets/{index}/delegate", s.handleDelegate)
+	mux.HandleFunc("POST /api/wallets/{index}/reclaim", s.handleReclaim)
+	mux.HandleFunc("POST /api/wallets/{index}/withdraw", s.handleWithdrawUnstaked)
+	mux.HandleFunc("POST /api/wallets/{index}/cancel-unstakes", s.handleCancelUnstakes)
 
 	return s.guard(mux), nil
 }
@@ -116,11 +132,17 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if ct := r.Header.Get("Content-Type"); ct != "" {
-				if media, _, err := mime.ParseMediaType(ct); err != nil || media != "application/json" {
-					writeError(w, http.StatusUnsupportedMediaType, "expected Content-Type: application/json")
-					return
-				}
+			// Required even from a request with no body at all. A cross-site
+			// POST that sets no Content-Type is a CORS simple request, which a
+			// browser sends without asking permission first; demanding JSON is
+			// what forces the preflight that then fails. Accepting a missing
+			// header would leave the two bodyless endpoints — withdraw and
+			// cancel-unstakes, both of which move staked TRX — guarded by the
+			// Sec-Fetch-Site and Origin checks alone.
+			media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil || media != "application/json" {
+				writeError(w, http.StatusUnsupportedMediaType, "expected Content-Type: application/json")
+				return
 			}
 
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -293,9 +315,8 @@ type transfer struct {
 // decodeTransfer parses the shared body and resolves the sending wallet,
 // writing the response itself when anything is wrong.
 func (s *Server) decodeTransfer(w http.ResponseWriter, r *http.Request) (transfer, bool) {
-	index, err := parseIndex(r.PathValue("index"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	from, ok := s.resolveWallet(w, r)
+	if !ok {
 		return transfer{}, false
 	}
 
@@ -305,14 +326,15 @@ func (s *Server) decodeTransfer(w http.ResponseWriter, r *http.Request) (transfe
 		return transfer{}, false
 	}
 
-	t := transfer{index: index, to: req.To, max: req.Amount == amountMax}
+	t := transfer{index: from.Index, from: from, to: req.To, max: req.Amount == amountMax}
 
 	if !t.max {
-		t.amount, err = decimal.NewFromString(req.Amount)
+		amount, err := decimal.NewFromString(req.Amount)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid amount: "+req.Amount)
 			return transfer{}, false
 		}
+		t.amount = amount
 	}
 
 	switch req.Asset {
@@ -322,12 +344,6 @@ func (s *Server) decodeTransfer(w http.ResponseWriter, r *http.Request) (transfe
 		t.asset = tron.AssetUSDT
 	default:
 		writeError(w, http.StatusBadRequest, "unknown asset: "+req.Asset)
-		return transfer{}, false
-	}
-
-	t.from, err = s.wallets.Get(index)
-	if err != nil {
-		s.writeStoreError(w, err)
 		return transfer{}, false
 	}
 

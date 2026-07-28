@@ -112,6 +112,11 @@
         color: var(--accent-text);
       }
 
+      button.sm {
+        padding: 5px 10px;
+        font-size: 13px;
+      }
+
       button.primary:hover:not(:disabled) {
         filter: brightness(1.07);
         background: var(--accent);
@@ -127,7 +132,7 @@
       table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 760px;
+        min-width: 990px;
       }
 
       th,
@@ -168,6 +173,11 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 13px;
         user-select: all;
+        /* The shortened form has an ellipsis in the middle, which is a break
+           opportunity: without this the row splits the address in two as soon
+           as the "не активирован" tag claims part of the cell. */
+        white-space: nowrap;
+        flex: none;
       }
 
       .icon-btn {
@@ -294,6 +304,11 @@
         color: var(--text);
         padding: 20px;
         width: min(94vw, 440px);
+        max-height: 88vh;
+      }
+
+      dialog.wide {
+        width: min(94vw, 560px);
       }
 
       dialog::backdrop {
@@ -309,7 +324,16 @@
         color: var(--muted);
         font-size: 13px;
         margin-bottom: 16px;
-        word-break: break-all;
+        overflow-x: auto;
+      }
+
+      /* An address split across two lines cannot be read back character by
+         character, which is the one thing anyone does with it. The line breaks
+         before the address instead, and the address itself stays whole. */
+      .addr-full {
+        white-space: nowrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        user-select: all;
       }
 
       label {
@@ -367,7 +391,76 @@
         margin-top: 14px;
         color: var(--muted);
         font-size: 12px;
-        word-break: break-all;
+        overflow-x: auto;
+      }
+
+      .res-section {
+        margin-top: 16px;
+      }
+
+      .res-section h3 {
+        margin: 0 0 6px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+
+      .res-line {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 3px 0;
+        font-size: 14px;
+      }
+
+      .res-line .v {
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .res-line .k {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .res-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+      }
+
+      .res-row .grow {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .res-empty {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .rule {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 20px 0 0;
+      }
+
+      /* The three per-wallet actions stay on one line; the card scrolls
+         horizontally rather than letting them wrap. */
+      td.row-actions {
+        white-space: nowrap;
+      }
+
+      td.row-actions button + button {
+        margin-left: 5px;
       }
     </style>
   </head>
@@ -391,7 +484,7 @@
               <th style="width: 150px">Метка</th>
               <th class="num" style="width: 130px">TRX</th>
               <th class="num" style="width: 130px" id="token-head">USDT</th>
-              <th style="width: 110px"></th>
+              <th style="width: 300px"></th>
             </tr>
           </thead>
           <tbody id="rows">
@@ -449,12 +542,120 @@
       </form>
     </dialog>
 
+    <dialog id="stk-dialog" class="wide">
+      <form method="dialog">
+        <h2>Стейкинг</h2>
+        <div class="from" id="stk-from"></div>
+
+        <div id="stk-summary"></div>
+
+        <hr class="rule" />
+
+        <label for="stk-op">Операция</label>
+        <select id="stk-op">
+          <option value="stake">Застейкать TRX</option>
+          <option value="unstake">Разстейкать TRX</option>
+        </select>
+
+        <label for="stk-resource">Ресурс</label>
+        <select id="stk-resource">
+          <option value="bandwidth">Bandwidth</option>
+          <option value="energy">Energy</option>
+        </select>
+
+        <label for="stk-amount">Сумма, TRX</label>
+        <div class="amount-row">
+          <input
+            type="text"
+            id="stk-amount"
+            placeholder="0.0"
+            autocomplete="off"
+            inputmode="decimal"
+          />
+          <button type="button" id="stk-max">Макс.</button>
+        </div>
+        <div class="hint" id="stk-yield"></div>
+        <div class="hint" id="stk-limit"></div>
+        <div class="dialog-error" id="stk-error"></div>
+
+        <div class="actions">
+          <button type="button" id="stk-close">Закрыть</button>
+          <button type="button" id="stk-submit" class="primary">
+            Выполнить
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-dialog" class="wide">
+      <form method="dialog">
+        <h2>Делегация ресурсов</h2>
+        <div class="from" id="dlg-from"></div>
+
+        <div id="dlg-summary"></div>
+
+        <hr class="rule" />
+
+        <label for="dlg-op">Операция</label>
+        <select id="dlg-op">
+          <option value="delegate">Делегировать</option>
+          <option value="reclaim">Разделегировать</option>
+        </select>
+
+        <label for="dlg-resource">Ресурс</label>
+        <select id="dlg-resource">
+          <option value="bandwidth">Bandwidth</option>
+          <option value="energy">Energy</option>
+        </select>
+
+        <label for="dlg-to">Получатель</label>
+        <select id="dlg-to-pick">
+          <option value="">— выбрать свой кошелёк —</option>
+        </select>
+        <input
+          type="text"
+          id="dlg-to"
+          placeholder="T…"
+          autocomplete="off"
+          spellcheck="false"
+          style="margin-top: 6px"
+        />
+
+        <label for="dlg-amount" id="dlg-amount-label">Количество</label>
+        <div class="amount-row">
+          <input
+            type="text"
+            id="dlg-amount"
+            placeholder="0.0"
+            autocomplete="off"
+            inputmode="decimal"
+          />
+          <button type="button" id="dlg-max">Макс.</button>
+        </div>
+        <div class="hint" id="dlg-yield"></div>
+        <div class="hint" id="dlg-limit"></div>
+        <div class="dialog-error" id="dlg-error"></div>
+
+        <div class="actions">
+          <button type="button" id="dlg-close">Закрыть</button>
+          <button type="button" id="dlg-submit" class="primary">
+            Выполнить
+          </button>
+        </div>
+      </form>
+    </dialog>
+
     <script>
       const state = {
         info: null,
         wallets: [],
         balances: new Map(),
         sendIndex: null,
+        resIndex: null,
+        resources: null,
+        // Set only by "Макс." on a reclaim: the amount then goes to the server
+        // as the sentinel rather than as the rounded resource figure shown.
+        reclaimAll: false,
       };
 
       const $ = (id) => document.getElementById(id);
@@ -462,8 +663,11 @@
       async function api(method, path, body) {
         const res = await fetch(path, {
           method,
+          // Sent on every write, including the two that carry no body: the
+          // server requires it, because a POST without it is a request a
+          // browser will make cross-site without asking permission first.
           headers:
-            body === undefined ? {} : { "Content-Type": "application/json" },
+            method === "GET" ? {} : { "Content-Type": "application/json" },
           body: body === undefined ? undefined : JSON.stringify(body),
         });
 
@@ -490,11 +694,28 @@
         );
       }
 
+      // Numbers get a dot for the decimal point and a thin space between
+      // thousands. A comma is what the Russian locale puts before the fraction
+      // and what most others put between thousands, so "15,504" is read as two
+      // different numbers depending on who is looking; neither separator here
+      // is ambiguous.
+      function numberFormat(maximumFractionDigits) {
+        const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits });
+
+        return (n) =>
+          nf
+            .formatToParts(n)
+            .map((part) => (part.type === "group" ? " " : part.value))
+            .join("");
+      }
+
+      const formatAmount = numberFormat(6);
+
       function fmt(value) {
         const n = Number(value);
         if (!Number.isFinite(n)) return value;
 
-        return n.toLocaleString("ru-RU", { maximumFractionDigits: 6 });
+        return formatAmount(n);
       }
 
       function fillBalanceCell(cell, entry, field) {
@@ -528,6 +749,16 @@
           .replace(/&/g, "&amp;")
           .replace(/"/g, "&quot;")
           .replace(/</g, "&lt;");
+      }
+
+      // Writes "<label> <address>" into node, keeping the address in one piece.
+      // The label may wrap, the address may not.
+      function addressLine(node, label, address) {
+        const addr = document.createElement("span");
+        addr.className = "addr-full";
+        addr.textContent = address;
+
+        node.replaceChildren(label, addr);
       }
 
       function shorten(addr) {
@@ -613,7 +844,11 @@
           <td><input class="label-input" data-label="${w.index}" placeholder="—" /></td>
           <td class="num" data-role="trx"></td>
           <td class="num" data-role="usdt"></td>
-          <td><button data-send="${w.index}">Отправить</button></td>`;
+          <td class="row-actions">
+            <button class="sm" data-send="${w.index}">Отправить</button>
+            <button class="sm" data-stake="${w.index}">Стейкинг</button>
+            <button class="sm" data-delegate="${w.index}">Делегация</button>
+          </td>`;
 
         // Set through .value rather than the attribute so the field is never
         // re-created from markup on later updates.
@@ -702,8 +937,11 @@
         $("token-head").textContent = state.info.token_symbol || "USDT";
         $("send-asset").options[1].textContent =
           state.info.token_symbol || "USDT";
-        $("contract").textContent =
-          `Контракт ${state.info.token_symbol}: ${state.info.token_contract}`;
+        addressLine(
+          $("contract"),
+          `Контракт ${state.info.token_symbol}: `,
+          state.info.token_contract,
+        );
       }
 
       document.addEventListener("click", async (e) => {
@@ -714,7 +952,47 @@
         }
 
         const send = e.target.closest("[data-send]");
-        if (send) openSend(Number(send.dataset.send));
+        if (send) {
+          openSend(Number(send.dataset.send));
+          return;
+        }
+
+        const stake = e.target.closest("[data-stake]");
+        if (stake) {
+          openResourceDialog("stk", Number(stake.dataset.stake));
+          return;
+        }
+
+        const delegate = e.target.closest("[data-delegate]");
+        if (delegate) {
+          openResourceDialog("dlg", Number(delegate.dataset.delegate));
+          return;
+        }
+
+        // "Вернуть" next to a delegation only fills the form in; the user still
+        // has to press "Выполнить", so a stray click cannot move a stake.
+        const reclaim = e.target.closest("[data-reclaim-to]");
+        if (reclaim) {
+          $("dlg-op").value = "reclaim";
+          $("dlg-resource").value = reclaim.dataset.reclaimResource;
+          $("dlg-to").value = reclaim.dataset.reclaimTo;
+          updateForm("dlg");
+          // Same path as "Макс.", so the whole delegation comes back exactly.
+          $("dlg-max").click();
+          return;
+        }
+
+        const action = e.target.closest("[data-res-action]");
+        if (action) {
+          const withdraw = action.dataset.resAction === "withdraw";
+          await runResourceOp(
+            "stk",
+            withdraw ? "withdraw" : "cancel-unstakes",
+            undefined,
+            withdraw ? "Выведено" : "Разморозка отменена",
+            action,
+          );
+        }
       });
 
       document.addEventListener("change", async (e) => {
@@ -764,7 +1042,7 @@
         const w = state.wallets.find((x) => x.index === index);
         if (!w) return;
 
-        $("send-from").textContent = `С кошелька #${w.index} — ${w.address}`;
+        addressLine($("send-from"), `С кошелька #${w.index} — `, w.address);
         $("send-to").value = "";
         $("send-amount").value = "";
         $("send-error").textContent = "";
@@ -947,6 +1225,657 @@
           btn.textContent = "Отправить";
         }
       });
+
+      // --- ресурсы: стейкинг и делегация ---
+
+      // Two dialogs share one fetch of the account's position: "stk" stakes and
+      // unstakes, "dlg" delegates and reclaims.
+      //
+      // The two take their amount in different units. Staking is about locking
+      // TRX, so it asks for TRX and previews the resource that buys. Delegation
+      // is about handing over resource, so it asks for bandwidth or energy and
+      // previews the TRX that gets frozen behind it — the server does that
+      // conversion, since the result is money.
+      const RES_OPS = {
+        stake: {
+          path: "stake",
+          needsTo: false,
+          done: "Застейкано",
+          unit: "trx",
+          verb: "Получите",
+        },
+        unstake: {
+          path: "unstake",
+          needsTo: false,
+          done: "Разморозка запущена",
+          unit: "trx",
+          verb: "Освободится",
+        },
+        delegate: {
+          path: "delegate",
+          needsTo: true,
+          done: "Делегировано",
+          unit: "resource",
+          verb: "Заморозится",
+        },
+        reclaim: {
+          path: "reclaim",
+          needsTo: true,
+          done: "Возвращено",
+          unit: "resource",
+          verb: "Вернётся в стейк",
+        },
+      };
+
+      function resSection(title) {
+        const box = document.createElement("div");
+        box.className = "res-section";
+
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        box.appendChild(heading);
+
+        return box;
+      }
+
+      function resLine(key, value) {
+        const row = document.createElement("div");
+        row.className = "res-line";
+
+        const k = document.createElement("span");
+        k.className = "k";
+        k.textContent = key;
+
+        const v = document.createElement("span");
+        v.className = "v";
+        v.textContent = value;
+
+        row.append(k, v);
+
+        return row;
+      }
+
+      function resButton(text, dataset) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "sm";
+        btn.textContent = text;
+        Object.assign(btn.dataset, dataset);
+
+        return btn;
+      }
+
+      function whenText(date) {
+        return date.toLocaleString("ru-RU", {
+          dateStyle: "short",
+          timeStyle: "short",
+        });
+      }
+
+      // How much bandwidth or energy a TRX amount is worth at the current rate.
+      //
+      // Resource points are not money — they are a fluctuating estimate the
+      // network recomputes as the total stake moves — so a float is the right
+      // tool here, unlike for the amount itself, which stays an exact string all
+      // the way to the node.
+      function resourceUnits(trx, resource) {
+        const r = state.resources;
+        if (!r || trx === null || trx === "") return null;
+
+        const rate =
+          resource === "bandwidth" ? r.bandwidth_per_trx : r.energy_per_trx;
+        const units = Number(trx) * Number(rate);
+
+        return Number.isFinite(units) ? units : null;
+      }
+
+      // The TRX that has to be frozen to yield a resource amount. Only ever
+      // shown, never sent: the request carries the resource figure and the
+      // server converts it in decimal.
+      function trxFor(units, resource) {
+        const r = state.resources;
+        if (!r || units === null || units === "") return null;
+
+        const rate =
+          resource === "bandwidth" ? r.bandwidth_per_trx : r.energy_per_trx;
+        const trx = Number(units) / Number(rate);
+
+        return Number.isFinite(trx) ? trx : null;
+      }
+
+      // Resource points come out whole: a fraction of a bandwidth point is not
+      // a thing anyone acts on.
+      const fmtUnits = numberFormat(0);
+
+      // "100 TRX ≈ 7 381 energy" — the TRX is what the chain moves, the resource
+      // is what it is for.
+      function withUnits(trx, resource) {
+        const units = resourceUnits(trx, resource);
+
+        return units === null
+          ? `${fmt(trx)} TRX`
+          : `${fmt(trx)} TRX ≈ ${fmtUnits(units)} ${resource}`;
+      }
+
+      // The same pair the other way round, for the dialog that counts in
+      // resource rather than in TRX.
+      function unitsFirst(trx, resource) {
+        const units = resourceUnits(trx, resource);
+
+        return units === null
+          ? `${fmt(trx)} TRX`
+          : `${fmtUnits(units)} ${resource} ≈ ${fmt(trx)} TRX`;
+      }
+
+      // Built with DOM nodes rather than innerHTML: every address and amount
+      // here comes from the chain, and textContent cannot be talked into markup.
+      function renderStakeSummary() {
+        const box = $("stk-summary");
+        box.replaceChildren();
+
+        const r = state.resources;
+        if (!r) {
+          box.appendChild(placeholderNode());
+          return;
+        }
+
+        const pools = resSection("Ресурсы");
+        pools.append(
+          resLine(
+            "Bandwidth",
+            `${fmt(r.bandwidth.available)} из ${fmt(r.bandwidth.total)}`,
+          ),
+          resLine(
+            "Energy",
+            `${fmt(r.energy.available)} из ${fmt(r.energy.total)}`,
+          ),
+        );
+        box.appendChild(pools);
+
+        const stake = resSection("Стейк");
+        stake.append(
+          resLine("За bandwidth", withUnits(r.staked_bandwidth, "bandwidth")),
+          resLine("За energy", withUnits(r.staked_energy, "energy")),
+        );
+
+        // Shown only once there is something to unstake. An account that holds
+        // no stake reports zero remaining slots, and zero there reads as "the
+        // queue is full" rather than "the queue does not apply".
+        if (Number(r.staked_bandwidth) > 0 || Number(r.staked_energy) > 0) {
+          stake.appendChild(
+            resLine("Осталось разморозок", String(r.unstake_slots)),
+          );
+        }
+
+        box.appendChild(stake);
+
+        if (Number(r.unstaking) > 0) {
+          const pending = resSection("Разморозка");
+          pending.appendChild(resLine("Всего", `${fmt(r.unstaking)} TRX`));
+
+          for (const item of r.pending) {
+            const at = new Date(item.expire_at);
+            const ready = at <= new Date();
+            pending.appendChild(
+              resLine(
+                `${item.resource} · ${ready ? "готово" : `до ${whenText(at)}`}`,
+                `${fmt(item.amount)} TRX`,
+              ),
+            );
+          }
+
+          // Unstaked TRX stays out of reach until it is withdrawn, so the
+          // button belongs right next to the number that says it is ready.
+          const actions = document.createElement("div");
+          actions.className = "res-row";
+
+          if (Number(r.withdrawable_now) > 0) {
+            actions.appendChild(
+              resButton(`Забрать ${fmt(r.withdrawable_now)} TRX`, {
+                resAction: "withdraw",
+              }),
+            );
+          }
+
+          actions.appendChild(
+            resButton("Отменить разморозку", { resAction: "cancel" }),
+          );
+          pending.appendChild(actions);
+          box.appendChild(pending);
+        }
+      }
+
+      function renderDelegationSummary() {
+        const box = $("dlg-summary");
+        box.replaceChildren();
+
+        const r = state.resources;
+        if (!r) {
+          box.appendChild(placeholderNode());
+          return;
+        }
+
+        const staked = resSection("В стейке");
+        staked.append(
+          resLine("За bandwidth", withUnits(r.staked_bandwidth, "bandwidth")),
+          resLine("За energy", withUnits(r.staked_energy, "energy")),
+        );
+        box.appendChild(staked);
+
+        const delegated = resSection("Делегировано другим");
+
+        if (r.delegations.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "res-empty";
+          empty.textContent = "нет";
+          delegated.appendChild(empty);
+        }
+
+        for (const d of r.delegations) {
+          const row = document.createElement("div");
+          row.className = "res-row";
+
+          const who = document.createElement("span");
+          who.className = "grow";
+          who.title = d.to;
+          who.textContent = `${shorten(d.to)} · ${unitsFirst(d.amount, d.resource)}`;
+          row.appendChild(who);
+
+          // A locked delegation is one the chain refuses to take back. This UI
+          // never creates one, but the account may hold some made elsewhere.
+          const locked =
+            d.locked_until && new Date(d.locked_until) > new Date();
+          if (locked) {
+            const note = resButton("заблокировано", {});
+            note.disabled = true;
+            note.title = `Разблокируется ${whenText(new Date(d.locked_until))}`;
+            row.appendChild(note);
+          } else {
+            row.appendChild(
+              resButton("Вернуть", {
+                reclaimTo: d.to,
+                reclaimResource: d.resource,
+                reclaimAmount: d.amount,
+              }),
+            );
+          }
+
+          delegated.appendChild(row);
+        }
+
+        box.appendChild(delegated);
+      }
+
+      function placeholderNode() {
+        const node = document.createElement("div");
+        node.className = "res-empty";
+        node.textContent = "Загрузка…";
+
+        return node;
+      }
+
+      function renderResources() {
+        renderStakeSummary();
+        renderDelegationSummary();
+      }
+
+      function fillReceiverPicker(index) {
+        const pick = $("dlg-to-pick");
+        pick.replaceChildren();
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "— выбрать свой кошелёк —";
+        pick.appendChild(placeholder);
+
+        for (const w of state.wallets) {
+          if (w.index === index) continue;
+
+          const opt = document.createElement("option");
+          opt.value = w.address;
+          opt.textContent = `#${w.index} ${shorten(w.address)}${w.label ? ` · ${w.label}` : ""}`;
+          pick.appendChild(opt);
+        }
+      }
+
+      // The exact amount the chosen operation can move at most, as the string
+      // the server sent — never recomputed here, because that would be a float.
+      //
+      // Only two operations have one. What may be staked has to leave room for
+      // a fee, and what may be delegated depends on inputs only the node holds;
+      // guessing either produced a wrong "0 TRX" that blocked a transfer the
+      // node would have accepted. Those two go to the node unchecked.
+      function currentLimit(prefix) {
+        const r = state.resources;
+        if (!r) return null;
+
+        const resource = $(`${prefix}-resource`).value;
+
+        switch ($(`${prefix}-op`).value) {
+          case "unstake":
+            return resource === "bandwidth"
+              ? r.staked_bandwidth
+              : r.staked_energy;
+          case "reclaim": {
+            const to = $("dlg-to").value.trim();
+            const row = r.delegations.find(
+              (d) => d.to === to && d.resource === resource,
+            );
+            return row ? row.amount : null;
+          }
+          default:
+            return null;
+        }
+      }
+
+      function walletBalance(index) {
+        const w = state.wallets.find((x) => x.index === index);
+        const entry = w ? state.balances.get(w.address) : null;
+
+        return entry && !entry.error ? entry.trx : null;
+      }
+
+      // The line under the amount field: what the account has to work with for
+      // this operation, in both units.
+      function limitText(prefix) {
+        const op = $(`${prefix}-op`).value;
+        const resource = $(`${prefix}-resource`).value;
+        const r = state.resources;
+
+        if (op === "stake") {
+          const trx = walletBalance(state.resIndex);
+          return trx === null
+            ? ""
+            : `На балансе ${fmt(trx)} TRX — оставьте немного на комиссию`;
+        }
+
+        if (op === "delegate") {
+          if (!r) return "";
+
+          const staked =
+            resource === "bandwidth" ? r.staked_bandwidth : r.staked_energy;
+
+          // Deliberately not called a limit: part of the stake may already be
+          // delegated or in use, and only the node knows how much is left.
+          return `В стейке за ${resource}: ${unitsFirst(staked, resource)}`;
+        }
+
+        const limit = currentLimit(prefix);
+        if (limit === null) {
+          return op === "reclaim" ? "Укажите адрес, которому делегировали" : "";
+        }
+
+        return op === "unstake"
+          ? `В стейке: ${withUnits(limit, resource)}`
+          : `Делегировано этому адресу: ${unitsFirst(limit, resource)}`;
+      }
+
+      // What the amount field is counted in for the chosen operation, and what
+      // the other unit works out to.
+      function amountText(prefix) {
+        const spec = RES_OPS[$(`${prefix}-op`).value];
+        const resource = $(`${prefix}-resource`).value;
+        const amount = $(`${prefix}-amount`).value.trim();
+
+        if (!(Number(amount) > 0)) return "";
+
+        if (spec.unit === "trx") {
+          const units = resourceUnits(amount, resource);
+          return units === null
+            ? ""
+            : `${spec.verb} ≈ ${fmtUnits(units)} ${resource}`;
+        }
+
+        const trx = trxFor(amount, resource);
+
+        return trx === null ? "" : `${spec.verb} ≈ ${fmt(trx)} TRX`;
+      }
+
+      function updateForm(prefix) {
+        // Whatever the last attempt failed at no longer applies once the
+        // operation, the resource or the receiver changes.
+        $(`${prefix}-error`).textContent = "";
+
+        // Likewise "reclaim everything": it is pinned to one exact delegation,
+        // and any edit means the caller is naming an amount of their own.
+        state.reclaimAll = false;
+
+        if (prefix === "dlg") {
+          $("dlg-amount-label").textContent =
+            `Количество, ${$("dlg-resource").value}`;
+        }
+
+        $(`${prefix}-max`).disabled = currentLimit(prefix) === null;
+        $(`${prefix}-limit`).textContent = limitText(prefix);
+        $(`${prefix}-yield`).textContent = amountText(prefix);
+      }
+
+      function updateBothForms() {
+        updateForm("stk");
+        updateForm("dlg");
+      }
+
+      async function loadResources() {
+        const index = state.resIndex;
+        // Closing the dialog clears the index; an operation that finishes after
+        // that has nothing left to refresh.
+        if (index === null) return;
+
+        state.resources = null;
+        renderResources();
+
+        let failure = null;
+
+        try {
+          const data = await api("GET", `/api/wallets/${index}/resources`);
+          // The dialog may already have been closed or reopened on another
+          // wallet while the node was answering.
+          if (state.resIndex !== index) return;
+          state.resources = data;
+        } catch (err) {
+          if (state.resIndex !== index) return;
+          failure = `Не удалось прочитать ресурсы: ${err.message}`;
+        }
+
+        renderResources();
+        updateBothForms();
+
+        // Written after the forms refresh, not before: updateForm clears the
+        // error box, so setting it first would wipe this message out.
+        if (failure) {
+          $("stk-error").textContent = failure;
+          $("dlg-error").textContent = failure;
+        }
+      }
+
+      function openResourceDialog(prefix, index) {
+        const w = state.wallets.find((x) => x.index === index);
+        if (!w) return;
+
+        state.resIndex = index;
+        state.resources = null;
+
+        addressLine($(`${prefix}-from`), `Кошелёк #${w.index} — `, w.address);
+        $(`${prefix}-error`).textContent = "";
+        $(`${prefix}-amount`).value = "";
+        $(`${prefix}-op`).selectedIndex = 0;
+        $(`${prefix}-resource`).value = "bandwidth";
+
+        if (prefix === "dlg") {
+          $("dlg-to").value = "";
+          fillReceiverPicker(index);
+        }
+
+        renderResources();
+        updateForm(prefix);
+
+        $(`${prefix}-dialog`).showModal();
+        loadResources();
+      }
+
+      async function runResourceOp(prefix, path, body, label, btn) {
+        const errBox = $(`${prefix}-error`);
+        const caption = btn.textContent;
+
+        errBox.textContent = "";
+        btn.disabled = true;
+        btn.textContent = "…";
+
+        try {
+          const res = await api(
+            "POST",
+            `/api/wallets/${state.resIndex}/${path}`,
+            body,
+          );
+
+          const link = `${state.info.explorer}/#/transaction/${res.txid}`;
+          toast(
+            `${label}. <a href="${link}" target="_blank" rel="noreferrer">${res.txid.slice(0, 16)}…</a>`,
+            "ok",
+          );
+
+          $(`${prefix}-amount`).value = "";
+          await loadResources();
+          loadBalances(true);
+        } catch (err) {
+          errBox.textContent = err.message;
+        } finally {
+          // A reload rebuilds the summary, so this button may be detached by
+          // now; restoring it then simply has no effect.
+          btn.disabled = false;
+          btn.textContent = caption;
+        }
+      }
+
+      async function submitResourceOp(prefix) {
+        const spec = RES_OPS[$(`${prefix}-op`).value];
+        const errBox = $(`${prefix}-error`);
+        errBox.textContent = "";
+
+        const all = spec.path === "reclaim" && state.reclaimAll;
+
+        const body = {
+          resource: $(`${prefix}-resource`).value,
+          amount: all ? "max" : $(`${prefix}-amount`).value.trim(),
+        };
+        if (spec.needsTo) body.to = $("dlg-to").value.trim();
+
+        if (!body.amount) {
+          errBox.textContent = "Укажите количество";
+          return;
+        }
+
+        if (spec.needsTo && !body.to) {
+          errBox.textContent = "Укажите получателя";
+          return;
+        }
+
+        await runResourceOp(
+          prefix,
+          spec.path,
+          body,
+          spec.done,
+          $(`${prefix}-submit`),
+        );
+      }
+
+      for (const prefix of ["stk", "dlg"]) {
+        for (const field of ["op", "resource"]) {
+          $(`${prefix}-${field}`).addEventListener("change", () =>
+            updateForm(prefix),
+          );
+        }
+
+        $(`${prefix}-amount`).addEventListener("input", () =>
+          updateForm(prefix),
+        );
+
+        $(`${prefix}-max`).addEventListener("click", () => {
+          const limit = currentLimit(prefix);
+          if (limit === null) return;
+
+          if (RES_OPS[$(`${prefix}-op`).value].unit === "trx") {
+            // Exact: the string came from the server and goes back untouched.
+            $(`${prefix}-amount`).value = limit;
+            updateForm(prefix);
+            return;
+          }
+
+          // The resource figure is that TRX amount converted at the current
+          // rate, so converting it back rounds up past what is delegated and
+          // the chain refuses it. Show the figure, ask the server for all of it.
+          const units = resourceUnits(limit, $(`${prefix}-resource`).value);
+          $(`${prefix}-amount`).value = units === null ? "" : units.toFixed(4);
+
+          updateForm(prefix);
+          state.reclaimAll = true;
+          $(`${prefix}-yield`).textContent =
+            `Вернётся вся делегация — ${fmt(limit)} TRX`;
+        });
+
+        $(`${prefix}-close`).addEventListener("click", () =>
+          $(`${prefix}-dialog`).close(),
+        );
+
+        $(`${prefix}-submit`).addEventListener("click", () =>
+          submitResourceOp(prefix),
+        );
+
+        // Marks any in-flight resource load as belonging to a closed dialog.
+        $(`${prefix}-dialog`).addEventListener("close", () => {
+          state.resIndex = null;
+        });
+      }
+
+      $("dlg-to").addEventListener("input", () => updateForm("dlg"));
+
+      // The picker only fills the field in: the text input stays the single
+      // source of truth, so a typed address and a chosen one behave alike.
+      $("dlg-to-pick").addEventListener("change", (e) => {
+        if (!e.target.value) return;
+
+        $("dlg-to").value = e.target.value;
+        e.target.value = "";
+        updateForm("dlg");
+      });
+
+      // A dialog does not close when its backdrop is clicked, so wire it up.
+      //
+      // The backdrop is not an element of its own: a click on it reports the
+      // dialog as the target, and so does a click on the dialog's own padding.
+      // Only the pointer position tells them apart.
+      //
+      // Both press and release have to land outside, or selecting text in the
+      // dialog and letting go past its edge would close it — and these dialogs
+      // hold addresses people select.
+      function closeOnBackdropClick(dialog) {
+        const outside = (e) => {
+          if (e.target !== dialog) return false;
+
+          const box = dialog.getBoundingClientRect();
+
+          return (
+            e.clientX < box.left ||
+            e.clientX > box.right ||
+            e.clientY < box.top ||
+            e.clientY > box.bottom
+          );
+        };
+
+        let startedOutside = false;
+
+        dialog.addEventListener("mousedown", (e) => {
+          startedOutside = outside(e);
+        });
+
+        dialog.addEventListener("click", (e) => {
+          if (startedOutside && outside(e)) dialog.close();
+        });
+      }
+
+      for (const id of ["send-dialog", "stk-dialog", "dlg-dialog"]) {
+        closeOnBackdropClick($(id));
+      }
 
       (async () => {
         try {

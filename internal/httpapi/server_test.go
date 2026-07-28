@@ -567,7 +567,8 @@ func do(t *testing.T, srv *httptest.Server, method, path, body string, wantStatu
 		t.Fatalf("NewRequest(%s %s) error = %v", method, path, err)
 	}
 
-	if body != "" {
+	// The guard requires it on every write, body or not.
+	if method != http.MethodGet {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
@@ -682,6 +683,21 @@ type chainFake struct {
 	sentAsset  tron.Asset
 	sentAmount decimal.Decimal
 	sentKey    *ecdsa.PrivateKey
+
+	resources     tron.Resources
+	resourcesErr  error
+	resourcesAddr string
+
+	// One recording for every staking operation: which one ran, and with what.
+	// A handler that resolves the wrong wallet, swaps the two addresses or
+	// drops the resource would otherwise still return a txid.
+	stakeErr   error
+	opName     string
+	opFrom     string
+	opTo       string
+	opResource tron.Resource
+	opAmount   decimal.Decimal
+	opKey      *ecdsa.PrivateKey
 }
 
 func newChainFake() *chainFake {
@@ -747,4 +763,54 @@ func (f *chainFake) Send(_ context.Context, from, to string, asset tron.Asset, a
 	f.sentFrom, f.sentTo, f.sentAsset, f.sentAmount, f.sentKey = from, to, asset, amount, key
 
 	return "deadbeef", nil
+}
+
+func (f *chainFake) Resources(_ context.Context, addr string) (tron.Resources, error) {
+	f.resourcesAddr = addr
+
+	if f.resourcesErr != nil {
+		return tron.Resources{}, f.resourcesErr
+	}
+
+	return f.resources, nil
+}
+
+// record captures one staking operation and stands in for the txid a node would
+// return.
+func (f *chainFake) record(name, from, to string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
+	if f.stakeErr != nil {
+		return "", f.stakeErr
+	}
+
+	f.opName, f.opFrom, f.opTo, f.opResource, f.opAmount, f.opKey = name, from, to, resource, amount, key
+
+	return "cafebabe", nil
+}
+
+func (f *chainFake) Stake(_ context.Context, from string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
+	return f.record("stake", from, "", resource, amount, key)
+}
+
+func (f *chainFake) Unstake(_ context.Context, from string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
+	return f.record("unstake", from, "", resource, amount, key)
+}
+
+func (f *chainFake) Delegate(_ context.Context, from, to string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
+	return f.record("delegate", from, to, resource, amount, key)
+}
+
+func (f *chainFake) Reclaim(_ context.Context, from, to string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
+	return f.record("reclaim", from, to, resource, amount, key)
+}
+
+func (f *chainFake) ReclaimAll(_ context.Context, from, to string, resource tron.Resource, key *ecdsa.PrivateKey) (string, error) {
+	return f.record("reclaim-all", from, to, resource, decimal.Zero, key)
+}
+
+func (f *chainFake) WithdrawUnstaked(_ context.Context, from string, key *ecdsa.PrivateKey) (string, error) {
+	return f.record("withdraw", from, "", "", decimal.Zero, key)
+}
+
+func (f *chainFake) CancelUnstakes(_ context.Context, from string, key *ecdsa.PrivateKey) (string, error) {
+	return f.record("cancel", from, "", "", decimal.Zero, key)
 }
