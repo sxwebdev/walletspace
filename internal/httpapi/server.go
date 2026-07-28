@@ -320,7 +320,13 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		s.log.Error("send failed", "from", from.Address, "to", req.To, "asset", asset, "error", err)
+		s.log.Error("send failed",
+			"from", from.Address,
+			"to", req.To,
+			"asset", asset,
+			"amount", amount.String(),
+			"error", err,
+		)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
