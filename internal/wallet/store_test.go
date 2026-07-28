@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sxwebdev/tronfaucet/internal/wallet"
+	"github.com/sxwebdev/walletspace/internal/wallet"
 )
 
 // Vectors taken from gotron's pkg/address tests, which in turn come from

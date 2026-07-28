@@ -7,8 +7,8 @@ import (
 	"net/http"
 
 	"github.com/shopspring/decimal"
-	"github.com/sxwebdev/tronfaucet/internal/tron"
-	"github.com/sxwebdev/tronfaucet/internal/wallet"
+	"github.com/sxwebdev/walletspace/internal/tron"
+	"github.com/sxwebdev/walletspace/internal/wallet"
 )
 
 // deployRequest is the body /deploy takes. The two limits are chain settings

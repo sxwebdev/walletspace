@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
-	"github.com/sxwebdev/tronfaucet/internal/tron"
+	"github.com/sxwebdev/walletspace/internal/tron"
 )
 
 // The fee is paid in TRX whatever asset is moving, so the dialog has to say

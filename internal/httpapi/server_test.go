@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
-	"github.com/sxwebdev/tronfaucet/internal/httpapi"
-	"github.com/sxwebdev/tronfaucet/internal/tron"
-	"github.com/sxwebdev/tronfaucet/internal/wallet"
+	"github.com/sxwebdev/walletspace/internal/httpapi"
+	"github.com/sxwebdev/walletspace/internal/tron"
+	"github.com/sxwebdev/walletspace/internal/wallet"
 )
 
 // Real base58 addresses, not placeholders. The handlers validate what they are
@@ -545,7 +545,7 @@ func TestServesUI(t *testing.T) {
 		t.Fatalf("read body error = %v", err)
 	}
 
-	if !strings.Contains(string(body), "tronfaucet") {
+	if !strings.Contains(string(body), "walletspace") {
 		t.Error("GET / did not return the UI page")
 	}
 }

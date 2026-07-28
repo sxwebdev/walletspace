@@ -1,5 +1,5 @@
 start:
-	go run ./cmd/tronfaucet
+	go run ./cmd/walletspace
 
 fmt:
 	go fix ./...

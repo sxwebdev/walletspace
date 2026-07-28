@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/shopspring/decimal"
-	"github.com/sxwebdev/tronfaucet/internal/tron"
+	"github.com/sxwebdev/walletspace/internal/tron"
 )
 
 // Comparable, so the whole estimate can be asserted in one go and a field that

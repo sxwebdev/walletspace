@@ -1,4 +1,4 @@
-module github.com/sxwebdev/tronfaucet
+module github.com/sxwebdev/walletspace
 
 go 1.26.5
 

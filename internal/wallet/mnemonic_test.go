@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sxwebdev/tronfaucet/internal/wallet"
+	"github.com/sxwebdev/walletspace/internal/wallet"
 )
 
 func TestResolveMnemonicPrefersConfigured(t *testing.T) {

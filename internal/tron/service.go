@@ -18,7 +18,7 @@ import (
 	"github.com/sxwebdev/gotron/pkg/address"
 	"github.com/sxwebdev/gotron/pkg/client"
 	"github.com/sxwebdev/gotron/schema/pb/api"
-	"github.com/sxwebdev/tronfaucet/internal/config"
+	"github.com/sxwebdev/walletspace/internal/config"
 	"golang.org/x/sync/errgroup"
 )
 

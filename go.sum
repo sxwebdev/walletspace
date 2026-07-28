@@ -78,8 +78,6 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/sxwebdev/go-bip39 v0.0.0-20251104152753-5b0ef6e9b27c h1:dyhne2CSmro21Uynsxf3SyEmfxO/cEZJ6g6lD70q5sk=
 github.com/sxwebdev/go-bip39 v0.0.0-20251104152753-5b0ef6e9b27c/go.mod h1:mzyJiXj6CzlM2vzRxTVQcgzCcN4OWL/3OoTuI8Bc7OM=
-github.com/sxwebdev/gotron v0.0.0-20260728195527-4b6660ba6682 h1:ED7Cj5BxrkeYybX/CIs4rVX0cfYKDByYc0dYsdSQjXI=
-github.com/sxwebdev/gotron v0.0.0-20260728195527-4b6660ba6682/go.mod h1:CLPkxoXp1q8V0fFO1YYUq7nLRYpSnOSYJ3FdrAT5fWE=
 github.com/sxwebdev/gotron v0.0.0-20260728212623-3852652709a3 h1:aUOEcZkafEaU4S28cMOJcv/m5Cnb7TqR5ietT5P07Ng=
 github.com/sxwebdev/gotron v0.0.0-20260728212623-3852652709a3/go.mod h1:CLPkxoXp1q8V0fFO1YYUq7nLRYpSnOSYJ3FdrAT5fWE=
 github.com/sxwebdev/xconfig v0.4.1 h1:rRCaYLiZ7Lld5pTZNVsc/3hVtVN83R+1n7uDMW5tqGI=

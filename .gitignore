@@ -7,6 +7,6 @@ config.yaml
 
 # Build output
 /bin/
-/tronfaucet
+/walletspace
 
 /go.work*

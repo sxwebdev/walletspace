@@ -1,4 +1,4 @@
-# tronfaucet
+# walletspace
 
 Локальный сервис для Tron-кошельков, выведенных из **одной** мнемоники и пасфразы (BIP39/BIP44, путь `m/44'/195'/0'/0/{index}`).
 При запуске открывает веб-UI со списком кошельков, их балансами в TRX и USDT, кнопкой «сгенерировать новый» и формой отправки.
@@ -9,10 +9,10 @@
 
 ```bash
 # мнемоника сгенерируется в ./data/mnemonic.txt при первом запуске
-go run ./cmd/tronfaucet
+go run ./cmd/walletspace
 
 # или со своей мнемоникой
-MNEMONIC="слова ..." PASSPHRASE="" go run ./cmd/tronfaucet
+MNEMONIC="слова ..." PASSPHRASE="" go run ./cmd/walletspace
 ```
 
 UI откроется на http://127.0.0.1:8080 автоматически.

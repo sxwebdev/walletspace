@@ -1,4 +1,4 @@
-// Command tronfaucet serves a local UI for wallets derived from a single
+// Command walletspace serves a local UI for wallets derived from a single
 // BIP39 mnemonic, showing their TRX and USDT balances.
 package main
 
@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sxwebdev/tronfaucet/internal/config"
-	"github.com/sxwebdev/tronfaucet/internal/httpapi"
-	"github.com/sxwebdev/tronfaucet/internal/tron"
-	"github.com/sxwebdev/tronfaucet/internal/wallet"
+	"github.com/sxwebdev/walletspace/internal/config"
+	"github.com/sxwebdev/walletspace/internal/httpapi"
+	"github.com/sxwebdev/walletspace/internal/tron"
+	"github.com/sxwebdev/walletspace/internal/wallet"
 )
 
 func main() {
@@ -78,7 +78,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		if errors.Is(err, syscall.EADDRINUSE) {
 			return fmt.Errorf(
-				"%s is already in use — another tronfaucet is probably still running; "+
+				"%s is already in use — another walletspace is probably still running; "+
 					"stop it (lsof -nP -iTCP:%s -sTCP:LISTEN) or set ADDR to a free port",
 				cfg.Addr, portOf(cfg.Addr),
 			)

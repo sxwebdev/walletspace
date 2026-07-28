@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
-	"github.com/sxwebdev/tronfaucet/internal/tron"
-	"github.com/sxwebdev/tronfaucet/internal/wallet"
+	"github.com/sxwebdev/walletspace/internal/tron"
+	"github.com/sxwebdev/walletspace/internal/wallet"
 )
 
 //go:embed ui
