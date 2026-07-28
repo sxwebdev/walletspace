@@ -8,3 +8,5 @@ config.yaml
 # Build output
 /bin/
 /tronfaucet
+
+/go.work*

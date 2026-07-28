@@ -1,97 +1,62 @@
 package tron
 
 import (
-	"errors"
 	"fmt"
 	"math/big"
-	"sync"
-	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/sxwebdev/gotron/pkg/client"
 )
 
-// trxDecimals is the number of fractional digits of TRX (1 TRX = 1e6 SUN).
-const trxDecimals = 6
-
-// ErrInvalidRequest marks failures caused by the caller's input rather than by
-// the network, so the HTTP layer can answer 400 instead of 502.
-var ErrInvalidRequest = errors.New("invalid request")
-
-// toTokenUnits converts a human-readable token amount into the contract's
-// smallest unit, rejecting values with more precision than the token has.
-func toTokenUnits(amount decimal.Decimal, decimals int32) (decimal.Decimal, error) {
-	raw := amount.Shift(decimals)
-	if !raw.Equal(raw.Truncate(0)) {
-		return decimal.Zero, fmt.Errorf("%w: amount %s has more than %d decimal places", ErrInvalidRequest, amount, decimals)
+// validateDecimals checks what a token contract reports as its decimals before
+// the service starts scaling every balance and every transfer by it.
+//
+// The accepted window has to match what the amount constructors take, or a
+// perfectly good send would be refused at conversion time and blamed on the
+// caller. gotron caps decimals at the digits of an ABI uint256; anything wider
+// would also make Decimal().String() build a gigabyte-long number out of a
+// single balance.
+//
+// Zero is excluded deliberately: an all-zero response word parses as a
+// legitimate 0 — a wrong contract address or a fallback function is enough —
+// and accepting it would scale everything by 10^decimals. No stablecoin lacks
+// a fractional unit.
+func validateDecimals(decimals *big.Int) (int32, error) {
+	if decimals == nil {
+		return 0, fmt.Errorf("%w: no decimals reported", ErrInvalidRequest)
 	}
 
-	return raw, nil
-}
-
-// checkFitsInt64 reports whether amount still fits an int64 once scaled to the
-// smallest unit. Both gotron transfer paths funnel the scaled value through
-// decimal.IntPart, which keeps only the low 64 bits of anything larger — a
-// silent wrap that would send a different amount than the one requested.
-func checkFitsInt64(amount decimal.Decimal, decimals int32) error {
-	if !amount.Shift(decimals).Truncate(0).BigInt().IsInt64() {
-		return fmt.Errorf("%w: amount %s is too large to be represented on chain", ErrInvalidRequest, amount)
+	if !decimals.IsInt64() || decimals.Int64() < 1 || decimals.Int64() > maxTokenDecimals {
+		return 0, fmt.Errorf("reports unusable decimals %s, expected 1..%d", decimals, maxTokenDecimals)
 	}
 
-	return nil
+	return int32(decimals.Int64()), nil
 }
 
-// fromTokenUnits converts a raw on-chain balance into a human-readable amount.
-func fromTokenUnits(raw *big.Int, decimals int32) decimal.Decimal {
-	if raw == nil {
-		return decimal.Zero
+// trxAmount converts a user-supplied TRX amount into the SUN the chain works
+// in. The constructor is the single place that rejects an amount the chain
+// cannot represent, so no separate range check belongs at the call site.
+//
+// It runs before any RPC, so a refusal is about the request itself: the error
+// carries ErrInvalidRequest and the HTTP layer answers 400 without having to
+// know which sentinel the SDK happens to use.
+func trxAmount(amount decimal.Decimal) (client.SUN, error) {
+	sun, err := client.FromTRX(amount)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 
-	return decimal.NewFromBigInt(raw, -decimals)
+	return sun, nil
 }
 
-// balanceCache serves recently fetched balances so that re-rendering the UI
-// does not hit the RPC nodes again.
-type balanceCache struct {
-	ttl time.Duration
-
-	mu      sync.Mutex
-	entries map[string]cacheEntry
-}
-
-type cacheEntry struct {
-	balance Balance
-	at      time.Time
-}
-
-func newBalanceCache(ttl time.Duration) *balanceCache {
-	return &balanceCache{ttl: ttl, entries: make(map[string]cacheEntry)}
-}
-
-// get returns a cached balance when it is still fresh at time now.
-func (c *balanceCache) get(addr string, now time.Time) (Balance, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	e, ok := c.entries[addr]
-	if !ok || now.Sub(e.at) >= c.ttl {
-		return Balance{}, false
+// tokenAmount converts a user-supplied token amount into the contract's
+// minimal units, rejecting anything finer than the token can represent rather
+// than truncating it.
+func tokenAmount(amount decimal.Decimal, decimals int32) (client.TokenAmount, error) {
+	tokens, err := client.FromTokenDecimal(amount, decimals)
+	if err != nil {
+		return client.TokenAmount{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 
-	return e.balance, true
-}
-
-func (c *balanceCache) put(addr string, b Balance, now time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.entries[addr] = cacheEntry{balance: b, at: now}
-}
-
-func (c *balanceCache) invalidate(addresses ...string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for _, addr := range addresses {
-		delete(c.entries, addr)
-	}
+	return tokens, nil
 }

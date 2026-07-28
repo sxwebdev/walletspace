@@ -87,6 +87,44 @@ func TestGuardRejectsCrossSiteWrites(t *testing.T) {
 	}
 }
 
+// The two staking endpoints that act on the whole pending queue send no body,
+// so nothing sets a Content-Type for them. A POST without one is a CORS simple
+// request, which a browser issues cross-site with no preflight to fail — the
+// header has to be demanded even when there is nothing to describe.
+func TestGuardRejectsBodylessWritesWithoutContentType(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"withdraw", "cancel-unstakes"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+
+			chain := newChainFake()
+			srv := newServer(t, newWalletsFake(), chain)
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+				srv.URL+"/api/wallets/0/"+path, nil)
+			if err != nil {
+				t.Fatalf("NewRequest() error = %v", err)
+			}
+
+			res, err := srv.Client().Do(req)
+			if err != nil {
+				t.Fatalf("POST %s error = %v", path, err)
+			}
+			defer res.Body.Close()
+
+			if res.StatusCode != http.StatusUnsupportedMediaType {
+				body, _ := io.ReadAll(res.Body)
+				t.Errorf("status = %d, want 415 (body: %s)", res.StatusCode, body)
+			}
+
+			if chain.opName != "" {
+				t.Errorf("%q ran for a request with no Content-Type", chain.opName)
+			}
+		})
+	}
+}
+
 func TestGuardAllowsSameOriginSend(t *testing.T) {
 	t.Parallel()
 
@@ -94,7 +132,7 @@ func TestGuardAllowsSameOriginSend(t *testing.T) {
 	srv := newServer(t, newWalletsFake(), chain)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
-		srv.URL+"/api/wallets/0/send", strings.NewReader(`{"asset":"trx","to":"TRecipient","amount":"1"}`))
+		srv.URL+"/api/wallets/0/send", strings.NewReader(`{"asset":"trx","to":"`+recipientAddr+`","amount":"1"}`))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}

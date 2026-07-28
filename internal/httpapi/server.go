@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -23,8 +24,14 @@ import (
 //go:embed ui
 var uiFS embed.FS
 
-// requestTimeout bounds every on-chain operation triggered from the UI.
-const requestTimeout = 45 * time.Second
+const (
+	// requestTimeout bounds every on-chain operation triggered from the UI.
+	requestTimeout = 45 * time.Second
+	// deployTimeout covers a deployment, which waits for its receipt on top of
+	// building and broadcasting: a contract that ran out of energy is only
+	// visible once the transaction is in a block.
+	deployTimeout = 90 * time.Second
+)
 
 // Wallets is the wallet storage the API operates on.
 type Wallets interface {
@@ -39,7 +46,22 @@ type Wallets interface {
 type Chain interface {
 	Token() tron.TokenInfo
 	Balances(ctx context.Context, addresses []string, refresh bool) (map[string]tron.Balance, map[string]error)
+	Estimate(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal) (tron.Estimate, error)
+	Spendable(ctx context.Context, from, to string, asset tron.Asset) (decimal.Decimal, tron.Estimate, error)
+	Shortfall(ctx context.Context, from string, asset tron.Asset, amount decimal.Decimal, est tron.Estimate) (decimal.Decimal, error)
 	Send(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+
+	Resources(ctx context.Context, addr string) (tron.Resources, error)
+	Stake(ctx context.Context, from string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+	Unstake(ctx context.Context, from string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+	Delegate(ctx context.Context, from, to string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+	Reclaim(ctx context.Context, from, to string, resource tron.Resource, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
+	ReclaimAll(ctx context.Context, from, to string, resource tron.Resource, key *ecdsa.PrivateKey) (string, error)
+	WithdrawUnstaked(ctx context.Context, from string, key *ecdsa.PrivateKey) (string, error)
+	CancelUnstakes(ctx context.Context, from string, key *ecdsa.PrivateKey) (string, error)
+
+	EstimateDeploy(ctx context.Context, from string, d tron.Deployment) (tron.DeployCost, error)
+	Deploy(ctx context.Context, from string, d tron.Deployment, key *ecdsa.PrivateKey) (tron.Deployed, error)
 }
 
 // Server wires the storage and the chain service into an http.Handler.
@@ -72,15 +94,51 @@ func New(wallets Wallets, chain Chain, network, explorer string, log *slog.Logge
 	mux.HandleFunc("GET /api/wallets", s.handleList)
 	mux.HandleFunc("POST /api/wallets", s.handleCreate)
 	mux.HandleFunc("GET /api/balances", s.handleBalances)
+	mux.HandleFunc("POST /api/wallets/{index}/estimate", s.handleEstimate)
 	mux.HandleFunc("POST /api/wallets/{index}/send", s.handleSend)
 	mux.HandleFunc("PATCH /api/wallets/{index}", s.handleRename)
+	mux.HandleFunc("GET /api/wallets/{index}/resources", s.handleResources)
+	mux.HandleFunc("POST /api/wallets/{index}/stake", s.handleStake)
+	mux.HandleFunc("POST /api/wallets/{index}/unstake", s.handleUnstake)
+	mux.HandleFunc("POST /api/wallets/{index}/delegate", s.handleDelegate)
+	mux.HandleFunc("POST /api/wallets/{index}/reclaim", s.handleReclaim)
+	mux.HandleFunc("POST /api/wallets/{index}/withdraw", s.handleWithdrawUnstaked)
+	mux.HandleFunc("POST /api/wallets/{index}/cancel-unstakes", s.handleCancelUnstakes)
+	mux.HandleFunc("POST "+deployPath, s.handleDeploy)
+	mux.HandleFunc("POST "+deployEstimatePath, s.handleDeployEstimate)
 
 	return s.guard(mux), nil
 }
 
-// maxBodyBytes caps request bodies. Every payload here is a handful of short
-// fields, so anything larger is a mistake or an attempt to exhaust memory.
-const maxBodyBytes = 64 << 10
+const (
+	// maxBodyBytes caps request bodies. Every payload here is a handful of short
+	// fields, so anything larger is a mistake or an attempt to exhaust memory.
+	maxBodyBytes = 64 << 10
+	// maxDeployBodyBytes caps the one payload that is not: a contract travels as
+	// hex, so it is twice its own size, and the ABI rides along with it. The
+	// chain's own limit on deployed code is a few tens of kilobytes.
+	maxDeployBodyBytes = 512 << 10
+
+	// The two deployment routes. Both carry the contract itself, so both need
+	// the larger body limit; they share the prefix that bodyLimit matches on.
+	deployPath         = "/api/wallets/{index}/deploy"
+	deployEstimatePath = deployPath + "-estimate"
+)
+
+// bodyLimit is how much of a request body will be read. Only a deployment needs
+// more than the default, and giving every endpoint its allowance would mean an
+// unauthenticated POST could park half a megabyte of nonsense in memory before
+// the address on it is even looked at.
+func bodyLimit(path string) int64 {
+	// Whole final segments, not a substring: matching "/deploy" anywhere would
+	// hand the raised limit to "…/deploy-anything" and to any later route that
+	// merely embeds the word. These two are the routes registered above.
+	if strings.HasSuffix(path, "/deploy") || strings.HasSuffix(path, "/deploy-estimate") {
+		return maxDeployBodyBytes
+	}
+
+	return maxBodyBytes
+}
 
 // guard protects the unauthenticated local API from requests a browser makes on
 // behalf of another site.
@@ -113,14 +171,20 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if ct := r.Header.Get("Content-Type"); ct != "" {
-				if media, _, err := mime.ParseMediaType(ct); err != nil || media != "application/json" {
-					writeError(w, http.StatusUnsupportedMediaType, "expected Content-Type: application/json")
-					return
-				}
+			// Required even from a request with no body at all. A cross-site
+			// POST that sets no Content-Type is a CORS simple request, which a
+			// browser sends without asking permission first; demanding JSON is
+			// what forces the preflight that then fails. Accepting a missing
+			// header would leave the two bodyless endpoints — withdraw and
+			// cancel-unstakes, both of which move staked TRX — guarded by the
+			// Sec-Fetch-Site and Origin checks alone.
+			media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil || media != "application/json" {
+				writeError(w, http.StatusUnsupportedMediaType, "expected Content-Type: application/json")
+				return
 			}
 
-			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r.URL.Path))
 		}
 
 		next.ServeHTTP(w, r)
@@ -263,56 +327,162 @@ func (s *Server) handleBalances(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"balances": out})
 }
 
+// amountMax asks the server to work out the largest sendable amount itself.
+// The arithmetic stays in decimal on this side rather than going through a
+// browser float, and the fee is priced on a probe the node will actually build.
+const amountMax = "max"
+
+// transferRequest is the body both /estimate and /send take.
+type transferRequest struct {
+	Asset  string `json:"asset"`
+	To     string `json:"to"`
+	Amount string `json:"amount"`
+}
+
+// transfer is a decoded transfer request: which wallet sends what to whom.
+type transfer struct {
+	index  uint32
+	from   wallet.Wallet
+	to     string
+	asset  tron.Asset
+	amount decimal.Decimal
+	// max is set when the caller asked for the largest sendable amount instead
+	// of naming one; amount is then filled in by the server.
+	max bool
+}
+
+// decodeTransfer parses the shared body and resolves the sending wallet,
+// writing the response itself when anything is wrong.
+func (s *Server) decodeTransfer(w http.ResponseWriter, r *http.Request) (transfer, bool) {
+	from, ok := s.resolveWallet(w, r)
+	if !ok {
+		return transfer{}, false
+	}
+
+	var req transferRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return transfer{}, false
+	}
+
+	t := transfer{index: from.Index, from: from, to: req.To, max: req.Amount == amountMax}
+
+	if !t.max {
+		amount, err := decimal.NewFromString(req.Amount)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid amount: "+req.Amount)
+			return transfer{}, false
+		}
+		t.amount = amount
+	}
+
+	switch req.Asset {
+	case string(tron.AssetTRX):
+		t.asset = tron.AssetTRX
+	case string(tron.AssetUSDT):
+		t.asset = tron.AssetUSDT
+	default:
+		writeError(w, http.StatusBadRequest, "unknown asset: "+req.Asset)
+		return transfer{}, false
+	}
+
+	return t, true
+}
+
+// resolveAmount fills in the amount when the caller asked for "max".
+func (s *Server) resolveAmount(ctx context.Context, t *transfer) (tron.Estimate, error) {
+	if !t.max {
+		est, err := s.chain.Estimate(ctx, t.from.Address, t.to, t.asset, t.amount)
+		return est, err
+	}
+
+	spendable, est, err := s.chain.Spendable(ctx, t.from.Address, t.to, t.asset)
+	if err != nil {
+		return tron.Estimate{}, err
+	}
+	t.amount = spendable
+
+	return est, nil
+}
+
+type estimateResponse struct {
+	// Amount echoes what was priced, which is the point of the "max" mode.
+	Amount     string `json:"amount"`
+	Fee        string `json:"fee"`
+	Activation string `json:"activation"`
+	// Shortfall is the TRX the sender is missing, "0" when the balance covers
+	// the cost. It is advisory: the send is still attempted if asked for.
+	Shortfall string `json:"shortfall"`
+}
+
+func (s *Server) handleEstimate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	t, ok := s.decodeTransfer(w, r)
+	if !ok {
+		return
+	}
+
+	est, err := s.resolveAmount(ctx, &t)
+	if err != nil {
+		if errors.Is(err, tron.ErrInvalidRequest) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		s.log.Warn("estimate failed",
+			"from", t.from.Address, "to", t.to, "asset", t.asset, "amount", t.amount.String(), "error", err)
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// A balance the service could not read is not worth failing a priced
+	// estimate over — the figure only adds a warning to it.
+	shortfall, err := s.chain.Shortfall(ctx, t.from.Address, t.asset, t.amount, est)
+	if err != nil {
+		s.log.Warn("shortfall check failed", "from", t.from.Address, "error", err)
+		shortfall = decimal.Zero
+	}
+
+	writeJSON(w, http.StatusOK, estimateResponse{
+		Amount:     t.amount.String(),
+		Fee:        est.Fee.String(),
+		Activation: est.Activation.String(),
+		Shortfall:  shortfall.String(),
+	})
+}
+
 func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 
-	index, err := parseIndex(r.PathValue("index"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	t, ok := s.decodeTransfer(w, r)
+	if !ok {
 		return
 	}
 
-	var req struct {
-		Asset  string `json:"asset"`
-		To     string `json:"to"`
-		Amount string `json:"amount"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
+	if t.max {
+		if _, err := s.resolveAmount(ctx, &t); err != nil {
+			if errors.Is(err, tron.ErrInvalidRequest) {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
 	}
 
-	amount, err := decimal.NewFromString(req.Amount)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid amount: "+req.Amount)
-		return
-	}
+	from, asset, amount, to := t.from, t.asset, t.amount, t.to
 
-	var asset tron.Asset
-	switch req.Asset {
-	case string(tron.AssetTRX):
-		asset = tron.AssetTRX
-	case string(tron.AssetUSDT):
-		asset = tron.AssetUSDT
-	default:
-		writeError(w, http.StatusBadRequest, "unknown asset: "+req.Asset)
-		return
-	}
-
-	from, err := s.wallets.Get(index)
+	key, err := s.wallets.PrivateKey(t.index)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
 
-	key, err := s.wallets.PrivateKey(index)
-	if err != nil {
-		s.writeStoreError(w, err)
-		return
-	}
-
-	txid, err := s.chain.Send(ctx, from.Address, req.To, asset, amount, key)
+	txid, err := s.chain.Send(ctx, from.Address, to, asset, amount, key)
 	if err != nil {
 		// Input the chain never saw is the caller's fault, not the node's.
 		if errors.Is(err, tron.ErrInvalidRequest) {
@@ -320,12 +490,18 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		s.log.Error("send failed", "from", from.Address, "to", req.To, "asset", asset, "error", err)
+		s.log.Error("send failed",
+			"from", from.Address,
+			"to", to,
+			"asset", asset,
+			"amount", amount.String(),
+			"error", err,
+		)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	s.log.Info("sent", "from", from.Address, "to", req.To, "asset", asset, "amount", amount.String(), "txid", txid)
+	s.log.Info("sent", "from", from.Address, "to", to, "asset", asset, "amount", amount.String(), "txid", txid)
 	writeJSON(w, http.StatusOK, map[string]string{"txid": txid})
 }
 
