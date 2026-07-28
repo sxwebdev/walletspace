@@ -437,6 +437,7 @@
           <button type="button" id="send-max">Макс.</button>
         </div>
         <div class="hint" id="send-available"></div>
+        <div class="hint" id="send-fee"></div>
         <div class="dialog-error" id="send-error"></div>
 
         <div class="actions">
@@ -767,6 +768,9 @@
         $("send-to").value = "";
         $("send-amount").value = "";
         $("send-error").textContent = "";
+        $("send-fee").textContent = "";
+        // Any estimate still in flight belongs to the previous dialog.
+        newFeeToken();
         updateAvailable();
         $("send-dialog").showModal();
       }
@@ -779,21 +783,123 @@
         return $("send-asset").value === "trx" ? entry.trx : entry.usdt;
       }
 
-      function updateAvailable() {
-        const value = available();
-        const symbol =
-          $("send-asset").value === "trx"
-            ? "TRX"
-            : state.info?.token_symbol || "USDT";
-        $("send-available").textContent =
-          value === null ? "" : `Доступно: ${fmt(value)} ${symbol}`;
+      function assetSymbol() {
+        return $("send-asset").value === "trx"
+          ? "TRX"
+          : state.info?.token_symbol || "USDT";
       }
 
-      $("send-asset").addEventListener("change", updateAvailable);
-
-      $("send-max").addEventListener("click", () => {
+      function updateAvailable() {
         const value = available();
-        if (value !== null) $("send-amount").value = value;
+        $("send-available").textContent =
+          value === null ? "" : `Доступно: ${fmt(value)} ${assetSymbol()}`;
+      }
+
+      // Asks the server what the transfer would cost. The fee is not a
+      // constant: sending to an address that does not exist on chain yet also
+      // pays for creating it, which is about 1 TRX on top.
+      //
+      // Pass "max" as the amount and the server works out the largest sendable
+      // figure itself, in decimal — the browser must not do money arithmetic in
+      // floats, and only the server knows what the node will accept.
+      function estimate(amount) {
+        return api("POST", `/api/wallets/${state.sendIndex}/estimate`, {
+          asset: $("send-asset").value,
+          to: $("send-to").value.trim(),
+          amount: String(amount),
+        });
+      }
+
+      // Every estimate carries the token that was current when it started, and
+      // a stale answer is dropped: the asset, the recipient or the whole dialog
+      // may have changed while the node was thinking.
+      let feeToken = 0;
+
+      function newFeeToken() {
+        return ++feeToken;
+      }
+
+      function describeFee(est) {
+        const activation =
+          Number(est.activation) > 0
+            ? `, из них ${fmt(est.activation)} за активацию получателя`
+            : "";
+
+        return `Комиссия ≈ ${fmt(est.fee)} TRX${activation}`;
+      }
+
+      async function showFee() {
+        const token = newFeeToken();
+        const hint = $("send-fee");
+
+        const amount = $("send-amount").value.trim();
+        if (!amount || !$("send-to").value.trim() || !(Number(amount) > 0)) {
+          hint.textContent = "";
+          return;
+        }
+
+        hint.textContent = "Считаем комиссию…";
+
+        try {
+          const est = await estimate(amount);
+          if (token !== feeToken) return;
+
+          hint.textContent = describeFee(est);
+        } catch (err) {
+          if (token !== feeToken) return;
+          hint.textContent = `Не удалось оценить комиссию: ${err.message}`;
+        }
+      }
+
+      function debounce(fn, ms) {
+        let timer = null;
+        return (...args) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => fn(...args), ms);
+        };
+      }
+
+      const debouncedFee = debounce(showFee, 450);
+
+      $("send-asset").addEventListener("change", () => {
+        updateAvailable();
+        showFee();
+      });
+
+      $("send-amount").addEventListener("input", debouncedFee);
+      $("send-to").addEventListener("input", debouncedFee);
+
+      // "Max" has to leave the fee behind, or the node rejects the whole
+      // transfer with "balance is not sufficient". The server computes it.
+      $("send-max").addEventListener("click", async () => {
+        if (!$("send-to").value.trim()) {
+          $("send-error").textContent =
+            "Сначала укажите получателя — от него зависит комиссия";
+          return;
+        }
+
+        const token = newFeeToken();
+        const btn = $("send-max");
+        const errBox = $("send-error");
+
+        btn.disabled = true;
+        errBox.textContent = "";
+        $("send-fee").textContent = "Считаем максимум…";
+
+        try {
+          const est = await estimate("max");
+          if (token !== feeToken) return;
+
+          $("send-amount").value = est.amount;
+          $("send-fee").textContent = describeFee(est);
+        } catch (err) {
+          if (token !== feeToken) return;
+
+          $("send-fee").textContent = "";
+          errBox.textContent = err.message;
+        } finally {
+          btn.disabled = false;
+        }
       });
 
       $("send-cancel").addEventListener("click", () =>

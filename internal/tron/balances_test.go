@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jellydator/ttlcache/v3"
 	"github.com/shopspring/decimal"
 )
 
@@ -188,6 +189,10 @@ func newTestService(fetch func(context.Context, string) (Balance, error)) *Servi
 		nodes:   1,
 		workers: 4,
 		cache:   newBalanceCache(balanceTTL),
-		fetch:   fetch,
+		estimates: ttlcache.New(
+			ttlcache.WithTTL[string, Estimate](estimateTTL),
+			ttlcache.WithDisableTouchOnHit[string, Estimate](),
+		),
+		fetch: fetch,
 	}
 }

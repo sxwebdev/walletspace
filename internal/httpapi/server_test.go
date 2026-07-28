@@ -224,6 +224,182 @@ func TestSendRejectsBadInput(t *testing.T) {
 	}
 }
 
+func TestEstimate(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.estimate = tron.Estimate{
+		Fee:        decimal.RequireFromString("1.268"),
+		Activation: decimal.RequireFromString("1"),
+	}
+
+	srv := newServer(t, newWalletsFake(), chain)
+
+	var got estimateBody
+	do(t, srv, http.MethodPost, "/api/wallets/0/estimate",
+		`{"asset":"trx","to":"TRecipient","amount":"1"}`, http.StatusOK, &got)
+
+	// The UI subtracts the fee from the balance for "Max", so it has to arrive
+	// exactly, not rounded through a float.
+	if got.Fee != "1.268" {
+		t.Errorf("fee = %q, want 1.268", got.Fee)
+	}
+
+	if got.Activation != "1" {
+		t.Errorf("activation = %q, want 1 — the recipient needs creating", got.Activation)
+	}
+}
+
+func TestEstimatePassesTheRequestThrough(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	srv := newServer(t, newWalletsFake(), chain)
+
+	// Wallet 1, not 0: a handler that resolves the wrong wallet, or swaps
+	// sender and recipient, would otherwise go unnoticed.
+	do(t, srv, http.MethodPost, "/api/wallets/1/estimate",
+		`{"asset":"usdt","to":"TRecipient","amount":"2.5"}`, http.StatusOK, nil)
+
+	if chain.estFrom != "TAddr1" {
+		t.Errorf("estimated from %q, want the address of wallet 1", chain.estFrom)
+	}
+
+	if chain.estTo != "TRecipient" {
+		t.Errorf("estimated to %q, want the recipient from the body", chain.estTo)
+	}
+
+	if chain.estAsset != tron.AssetUSDT {
+		t.Errorf("estimated asset = %q, want usdt", chain.estAsset)
+	}
+
+	if !chain.estAmount.Equal(decimal.RequireFromString("2.5")) {
+		t.Errorf("estimated amount = %s, want 2.5", chain.estAmount)
+	}
+}
+
+func TestEstimateMaxAsksTheServerForTheAmount(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.spendable = decimal.RequireFromString("1979.463")
+	chain.estimate = tron.Estimate{Fee: decimal.RequireFromString("0.269")}
+
+	srv := newServer(t, newWalletsFake(), chain)
+
+	var got estimateBody
+	do(t, srv, http.MethodPost, "/api/wallets/0/estimate",
+		`{"asset":"trx","to":"TRecipient","amount":"max"}`, http.StatusOK, &got)
+
+	if chain.spendableCalls != 1 {
+		t.Errorf("Spendable called %d times, want exactly 1", chain.spendableCalls)
+	}
+
+	// The browser must not compute this itself: it would do it in a float.
+	if got.Amount != "1979.463" {
+		t.Errorf("amount = %q, want the server-computed 1979.463", got.Amount)
+	}
+}
+
+func TestEstimateRejectsBadInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{
+			name:       "unknown asset",
+			path:       "/api/wallets/0/estimate",
+			body:       `{"asset":"btc","to":"TRecipient","amount":"1"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "unknown wallet",
+			path:       "/api/wallets/99/estimate",
+			body:       `{"asset":"trx","to":"TRecipient","amount":"1"}`,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "unparsable amount",
+			path:       "/api/wallets/0/estimate",
+			body:       `{"asset":"trx","to":"TRecipient","amount":"plenty"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			do(t, srvFor(t), http.MethodPost, tt.path, tt.body, tt.wantStatus, nil)
+		})
+	}
+}
+
+func srvFor(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	return newServer(t, newWalletsFake(), newChainFake())
+}
+
+func TestSendMaxResolvesAmountBeforeSigning(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.spendable = decimal.RequireFromString("42.5")
+
+	srv := newServer(t, newWalletsFake(), chain)
+
+	do(t, srv, http.MethodPost, "/api/wallets/0/send",
+		`{"asset":"trx","to":"TRecipient","amount":"max"}`, http.StatusOK, nil)
+
+	if chain.spendableCalls != 1 {
+		t.Errorf("Spendable called %d times, want 1", chain.spendableCalls)
+	}
+
+	// Sending "max" must transfer what the server worked out, not zero.
+	if !chain.sentAmount.Equal(decimal.RequireFromString("42.5")) {
+		t.Errorf("sent %s, want the spendable 42.5", chain.sentAmount)
+	}
+}
+
+func TestSendMaxSurfacesSpendableFailure(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.spendableErr = fmt.Errorf("%w: holds 0.1 TRX, which does not cover the fee", tron.ErrInvalidRequest)
+
+	srv := newServer(t, newWalletsFake(), chain)
+
+	do(t, srv, http.MethodPost, "/api/wallets/0/send",
+		`{"asset":"trx","to":"TRecipient","amount":"max"}`, http.StatusBadRequest, nil)
+
+	if chain.sentFrom != "" {
+		t.Error("a transfer was attempted although the amount could not be resolved")
+	}
+}
+
+func TestEstimateMapsValidationFailuresTo400(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.estimateErr = fmt.Errorf("%w: invalid recipient address: checksum mismatch", tron.ErrInvalidRequest)
+
+	srv := newServer(t, newWalletsFake(), chain)
+
+	do(t, srv, http.MethodPost, "/api/wallets/0/estimate",
+		`{"asset":"trx","to":"T","amount":"1"}`, http.StatusBadRequest, nil)
+}
+
+type estimateBody struct {
+	Amount     string `json:"amount"`
+	Fee        string `json:"fee"`
+	Activation string `json:"activation"`
+}
+
 func TestSendMapsValidationFailuresTo400(t *testing.T) {
 	t.Parallel()
 
@@ -486,6 +662,20 @@ type chainFake struct {
 
 	lastRefresh bool
 
+	estimate    tron.Estimate
+	estimateErr error
+
+	// Recorded so a test can catch a handler that passes the wrong wallet,
+	// swaps sender and recipient, or drops the amount.
+	estFrom   string
+	estTo     string
+	estAsset  tron.Asset
+	estAmount decimal.Decimal
+
+	spendable      decimal.Decimal
+	spendableErr   error
+	spendableCalls int
+
 	sendErr    error
 	sentFrom   string
 	sentTo     string
@@ -526,6 +716,27 @@ func (f *chainFake) Balances(_ context.Context, addresses []string, refresh bool
 	}
 
 	return out, errs
+}
+
+func (f *chainFake) Estimate(_ context.Context, from, to string, asset tron.Asset, amount decimal.Decimal) (tron.Estimate, error) {
+	f.estFrom, f.estTo, f.estAsset, f.estAmount = from, to, asset, amount
+
+	if f.estimateErr != nil {
+		return tron.Estimate{}, f.estimateErr
+	}
+
+	return f.estimate, nil
+}
+
+func (f *chainFake) Spendable(_ context.Context, from, to string, asset tron.Asset) (decimal.Decimal, tron.Estimate, error) {
+	f.estFrom, f.estTo, f.estAsset = from, to, asset
+	f.spendableCalls++
+
+	if f.spendableErr != nil {
+		return decimal.Zero, tron.Estimate{}, f.spendableErr
+	}
+
+	return f.spendable, f.estimate, nil
 }
 
 func (f *chainFake) Send(_ context.Context, from, to string, asset tron.Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {

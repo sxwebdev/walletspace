@@ -39,6 +39,8 @@ type Wallets interface {
 type Chain interface {
 	Token() tron.TokenInfo
 	Balances(ctx context.Context, addresses []string, refresh bool) (map[string]tron.Balance, map[string]error)
+	Estimate(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal) (tron.Estimate, error)
+	Spendable(ctx context.Context, from, to string, asset tron.Asset) (decimal.Decimal, tron.Estimate, error)
 	Send(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error)
 }
 
@@ -72,6 +74,7 @@ func New(wallets Wallets, chain Chain, network, explorer string, log *slog.Logge
 	mux.HandleFunc("GET /api/wallets", s.handleList)
 	mux.HandleFunc("POST /api/wallets", s.handleCreate)
 	mux.HandleFunc("GET /api/balances", s.handleBalances)
+	mux.HandleFunc("POST /api/wallets/{index}/estimate", s.handleEstimate)
 	mux.HandleFunc("POST /api/wallets/{index}/send", s.handleSend)
 	mux.HandleFunc("PATCH /api/wallets/{index}", s.handleRename)
 
@@ -263,56 +266,156 @@ func (s *Server) handleBalances(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"balances": out})
 }
 
+// amountMax asks the server to work out the largest sendable amount itself.
+// The arithmetic stays in decimal on this side rather than going through a
+// browser float, and the fee is priced on a probe the node will actually build.
+const amountMax = "max"
+
+// transferRequest is the body both /estimate and /send take.
+type transferRequest struct {
+	Asset  string `json:"asset"`
+	To     string `json:"to"`
+	Amount string `json:"amount"`
+}
+
+// transfer is a decoded transfer request: which wallet sends what to whom.
+type transfer struct {
+	index  uint32
+	from   wallet.Wallet
+	to     string
+	asset  tron.Asset
+	amount decimal.Decimal
+	// max is set when the caller asked for the largest sendable amount instead
+	// of naming one; amount is then filled in by the server.
+	max bool
+}
+
+// decodeTransfer parses the shared body and resolves the sending wallet,
+// writing the response itself when anything is wrong.
+func (s *Server) decodeTransfer(w http.ResponseWriter, r *http.Request) (transfer, bool) {
+	index, err := parseIndex(r.PathValue("index"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return transfer{}, false
+	}
+
+	var req transferRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return transfer{}, false
+	}
+
+	t := transfer{index: index, to: req.To, max: req.Amount == amountMax}
+
+	if !t.max {
+		t.amount, err = decimal.NewFromString(req.Amount)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid amount: "+req.Amount)
+			return transfer{}, false
+		}
+	}
+
+	switch req.Asset {
+	case string(tron.AssetTRX):
+		t.asset = tron.AssetTRX
+	case string(tron.AssetUSDT):
+		t.asset = tron.AssetUSDT
+	default:
+		writeError(w, http.StatusBadRequest, "unknown asset: "+req.Asset)
+		return transfer{}, false
+	}
+
+	t.from, err = s.wallets.Get(index)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return transfer{}, false
+	}
+
+	return t, true
+}
+
+// resolveAmount fills in the amount when the caller asked for "max".
+func (s *Server) resolveAmount(ctx context.Context, t *transfer) (tron.Estimate, error) {
+	if !t.max {
+		est, err := s.chain.Estimate(ctx, t.from.Address, t.to, t.asset, t.amount)
+		return est, err
+	}
+
+	spendable, est, err := s.chain.Spendable(ctx, t.from.Address, t.to, t.asset)
+	if err != nil {
+		return tron.Estimate{}, err
+	}
+	t.amount = spendable
+
+	return est, nil
+}
+
+type estimateResponse struct {
+	// Amount echoes what was priced, which is the point of the "max" mode.
+	Amount     string `json:"amount"`
+	Fee        string `json:"fee"`
+	Activation string `json:"activation"`
+}
+
+func (s *Server) handleEstimate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	t, ok := s.decodeTransfer(w, r)
+	if !ok {
+		return
+	}
+
+	est, err := s.resolveAmount(ctx, &t)
+	if err != nil {
+		if errors.Is(err, tron.ErrInvalidRequest) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		s.log.Warn("estimate failed",
+			"from", t.from.Address, "to", t.to, "asset", t.asset, "amount", t.amount.String(), "error", err)
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, estimateResponse{
+		Amount:     t.amount.String(),
+		Fee:        est.Fee.String(),
+		Activation: est.Activation.String(),
+	})
+}
+
 func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 
-	index, err := parseIndex(r.PathValue("index"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	t, ok := s.decodeTransfer(w, r)
+	if !ok {
 		return
 	}
 
-	var req struct {
-		Asset  string `json:"asset"`
-		To     string `json:"to"`
-		Amount string `json:"amount"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
+	if t.max {
+		if _, err := s.resolveAmount(ctx, &t); err != nil {
+			if errors.Is(err, tron.ErrInvalidRequest) {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
 	}
 
-	amount, err := decimal.NewFromString(req.Amount)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid amount: "+req.Amount)
-		return
-	}
+	from, asset, amount, to := t.from, t.asset, t.amount, t.to
 
-	var asset tron.Asset
-	switch req.Asset {
-	case string(tron.AssetTRX):
-		asset = tron.AssetTRX
-	case string(tron.AssetUSDT):
-		asset = tron.AssetUSDT
-	default:
-		writeError(w, http.StatusBadRequest, "unknown asset: "+req.Asset)
-		return
-	}
-
-	from, err := s.wallets.Get(index)
+	key, err := s.wallets.PrivateKey(t.index)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
 
-	key, err := s.wallets.PrivateKey(index)
-	if err != nil {
-		s.writeStoreError(w, err)
-		return
-	}
-
-	txid, err := s.chain.Send(ctx, from.Address, req.To, asset, amount, key)
+	txid, err := s.chain.Send(ctx, from.Address, to, asset, amount, key)
 	if err != nil {
 		// Input the chain never saw is the caller's fault, not the node's.
 		if errors.Is(err, tron.ErrInvalidRequest) {
@@ -322,7 +425,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 
 		s.log.Error("send failed",
 			"from", from.Address,
-			"to", req.To,
+			"to", to,
 			"asset", asset,
 			"amount", amount.String(),
 			"error", err,
@@ -331,7 +434,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.log.Info("sent", "from", from.Address, "to", req.To, "asset", asset, "amount", amount.String(), "txid", txid)
+	s.log.Info("sent", "from", from.Address, "to", to, "asset", asset, "amount", amount.String(), "txid", txid)
 	writeJSON(w, http.StatusOK, map[string]string{"txid": txid})
 }
 

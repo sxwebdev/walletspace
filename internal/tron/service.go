@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,9 @@ const (
 	maxTokenDecimals = 78
 	// balanceTTL is how long a fetched balance is served from cache.
 	balanceTTL = 15 * time.Second
+	// estimateTTL covers one pass through the send dialog. Fees move with
+	// chain parameters, which change far more slowly than that.
+	estimateTTL = 60 * time.Second
 	// Public TronGrid endpoints allow ~3 requests per second per IP and each
 	// address costs two calls, so without an API key we stay deliberately slow.
 	balanceConcurrencyPublic = 2
@@ -49,6 +53,15 @@ type Balance struct {
 	Activated bool
 }
 
+// Estimate is what a transfer will cost the sender, on top of the amount.
+type Estimate struct {
+	// Fee is the total cost in TRX, including Activation.
+	Fee decimal.Decimal
+	// Activation is the part of Fee charged for creating the recipient's
+	// account on chain. Zero when the recipient already exists.
+	Activation decimal.Decimal
+}
+
 // TokenInfo describes the TRC20 contract configured as USDT.
 type TokenInfo struct {
 	Contract string
@@ -58,13 +71,14 @@ type TokenInfo struct {
 
 // Service talks to the Tron network.
 type Service struct {
-	client   *client.Client
-	log      *slog.Logger
-	token    TokenInfo
-	feeLimit client.SUN
-	nodes    int // number of configured nodes, used as the retry budget
-	workers  int // parallel balance fetches
-	cache    *ttlcache.Cache[string, Balance]
+	client    *client.Client
+	log       *slog.Logger
+	token     TokenInfo
+	feeLimit  client.SUN
+	nodes     int // number of configured nodes, used as the retry budget
+	workers   int // parallel balance fetches
+	cache     *ttlcache.Cache[string, Balance]
+	estimates *ttlcache.Cache[string, Estimate]
 	// fetch reads one address from chain. It is a field so the caching and
 	// fan-out logic in Balances can be exercised without a live node.
 	fetch func(ctx context.Context, addr string) (Balance, error)
@@ -151,7 +165,11 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Service, e
 		nodes:    len(nodeCfgs),
 		workers:  workers,
 		cache:    newBalanceCache(balanceTTL),
-		token:    TokenInfo{Contract: cfg.USDTContract},
+		estimates: ttlcache.New(
+			ttlcache.WithTTL[string, Estimate](estimateTTL),
+			ttlcache.WithDisableTouchOnHit[string, Estimate](),
+		),
+		token: TokenInfo{Contract: cfg.USDTContract},
 	}
 	s.fetch = s.balance
 
@@ -165,6 +183,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Service, e
 	// left to stop it — and Stop() is a no-op until Start has actually run, so
 	// a caller could not clean it up either.
 	go s.cache.Start()
+	go s.estimates.Start()
 
 	return s, nil
 }
@@ -184,6 +203,7 @@ func newBalanceCache(ttl time.Duration) *ttlcache.Cache[string, Balance] {
 // Close stops the cache janitor and releases the underlying transports.
 func (s *Service) Close() error {
 	s.cache.Stop()
+	s.estimates.Stop()
 
 	return s.client.Close()
 }
@@ -293,6 +313,12 @@ func (s *Service) invalidate(addresses ...string) {
 	for _, addr := range addresses {
 		s.cache.Delete(addr)
 	}
+
+	// A transfer can activate the recipient, which makes every later transfer
+	// to them about 1 TRX cheaper. The cache is a handful of entries, so
+	// clearing it wholesale is simpler than tracking which ones the recipient
+	// appears in.
+	s.estimates.DeleteAll()
 }
 
 // accountBalance carries the TRX balance together with whether the account
@@ -335,6 +361,151 @@ func (s *Service) balance(ctx context.Context, addr string) (Balance, error) {
 	}, nil
 }
 
+// probeAmount is the amount used to price a transfer whose size is not known
+// yet. The fee depends on the transaction's byte length, not on the value, so
+// one SUN prices the same transfer as any other amount — up to the few bytes
+// the amount's varint encoding differs by, which feeSlack covers.
+var probeAmount = decimal.New(1, -6)
+
+// feeSlack pads a probed fee to absorb the varint width difference between the
+// probe and the real amount: an int64 is at most 10 bytes, and bandwidth is
+// charged per byte.
+var feeSlack = decimal.New(16, -3)
+
+// Estimate reports what a transfer would cost without broadcasting anything.
+//
+// Sending TRX to a recipient that does not exist on chain yet also pays for
+// creating their account, which is why the fee cannot be assumed constant and
+// why "send everything" has to leave room for it.
+func (s *Service) Estimate(ctx context.Context, from, to string, asset Asset, amount decimal.Decimal) (Estimate, error) {
+	if err := address.Validate(to); err != nil {
+		return Estimate{}, fmt.Errorf("%w: invalid recipient address: %s", ErrInvalidRequest, err)
+	}
+
+	if amount.LessThanOrEqual(decimal.Zero) {
+		return Estimate{}, fmt.Errorf("%w: amount must be greater than zero", ErrInvalidRequest)
+	}
+
+	// Pricing a transfer costs five or six node calls, and the UI asks again on
+	// every pause in typing. The fee is driven by the transaction's size and by
+	// whether the recipient exists, not by the amount, so one answer serves the
+	// whole dialog — which also keeps a keyless public endpoint within its few
+	// requests per second.
+	cacheKey := from + "|" + to + "|" + string(asset)
+	if item := s.estimates.Get(cacheKey); item != nil {
+		return item.Value(), nil
+	}
+
+	var (
+		res *client.EstimateTransferResult
+		err error
+	)
+
+	switch asset {
+	case AssetTRX:
+		sun, convErr := trxAmount(amount)
+		if convErr != nil {
+			return Estimate{}, convErr
+		}
+
+		res, err = retry(ctx, s.nodes, func() (*client.EstimateTransferResult, error) {
+			return s.client.EstimateTRXTransfer(ctx, from, to, sun)
+		})
+
+	case AssetUSDT:
+		tokens, convErr := tokenAmount(amount, s.token.Decimals)
+		if convErr != nil {
+			return Estimate{}, convErr
+		}
+
+		res, err = retry(ctx, s.nodes, func() (*client.EstimateTransferResult, error) {
+			return s.client.EstimateTRC20Transfer(ctx, from, to, s.token.Contract, tokens)
+		})
+
+	default:
+		return Estimate{}, fmt.Errorf("%w: unknown asset %q", ErrInvalidRequest, asset)
+	}
+	if err != nil {
+		return Estimate{}, s.transferError("estimate transfer", from, err)
+	}
+
+	est := Estimate{
+		Fee:        res.Total.Fee.TRX(),
+		Activation: res.Activation.Fee.TRX(),
+	}
+	s.estimates.Set(cacheKey, est, ttlcache.DefaultTTL)
+
+	return est, nil
+}
+
+// Spendable returns the largest amount that can still be sent after the fee,
+// together with the estimate it is based on.
+//
+// The fee is priced on a probe transfer rather than on the whole balance:
+// estimating builds a real transaction, and the node refuses to build one whose
+// value the account cannot cover — which is exactly the case "send everything"
+// runs into when the recipient has to be created first.
+//
+// The figure is deliberately conservative. The fee assumes bandwidth is paid
+// for in TRX, while an account with its daily free bandwidth left spends none,
+// so a little may be left behind rather than a transfer refused.
+func (s *Service) Spendable(ctx context.Context, from, to string, asset Asset) (decimal.Decimal, Estimate, error) {
+	balances, errs := s.Balances(ctx, []string{from}, false)
+	if err, ok := errs[from]; ok {
+		return decimal.Zero, Estimate{}, fmt.Errorf("read balance of %s: %w", from, err)
+	}
+
+	balance, ok := balances[from]
+	if !ok {
+		return decimal.Zero, Estimate{}, fmt.Errorf("no balance for %s", from)
+	}
+
+	// A token transfer is paid for in TRX, so the whole token balance can go.
+	if asset == AssetUSDT {
+		if balance.USDT.LessThanOrEqual(decimal.Zero) {
+			return decimal.Zero, Estimate{}, fmt.Errorf("%w: %s holds no %s", ErrInvalidRequest, from, s.token.Symbol)
+		}
+
+		est, err := s.Estimate(ctx, from, to, asset, balance.USDT)
+		if err != nil {
+			return decimal.Zero, Estimate{}, err
+		}
+
+		return balance.USDT, est, nil
+	}
+
+	if balance.TRX.LessThanOrEqual(probeAmount) {
+		return decimal.Zero, Estimate{}, fmt.Errorf("%w: %s holds %s TRX, too little to send anything", ErrInvalidRequest, from, balance.TRX)
+	}
+
+	est, err := s.Estimate(ctx, from, to, asset, probeAmount)
+	if err != nil {
+		return decimal.Zero, Estimate{}, err
+	}
+
+	spendable := balance.TRX.Sub(est.Fee).Sub(feeSlack)
+	if spendable.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, est, fmt.Errorf(
+			"%w: %s holds %s TRX, which does not cover the fee of about %s TRX",
+			ErrInvalidRequest, from, balance.TRX, est.Fee,
+		)
+	}
+
+	return spendable, est, nil
+}
+
+// transferError gives node refusals the same wording on both the estimate and
+// the send path, so the same condition is never explained two different ways.
+func (s *Service) transferError(stage, from string, err error) error {
+	switch {
+	case errors.Is(err, client.ErrInvalidTransaction),
+		strings.Contains(err.Error(), "balance is not sufficient"):
+		return fmt.Errorf("node rejected the transfer: check that %s holds enough TRX to cover the amount and the fee", from)
+	default:
+		return fmt.Errorf("%s: %w", stage, err)
+	}
+}
+
 // Send transfers TRX or the configured TRC20 token and returns the txid.
 func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
 	if err := address.Validate(to); err != nil {
@@ -363,14 +534,8 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 		tx, err = retry(ctx, s.nodes, func() (*api.TransactionExtention, error) {
 			return s.client.CreateTransferTransaction(ctx, from, to, sun)
 		})
-		switch {
-		case err == nil:
-		case errors.Is(err, client.ErrInvalidTransaction):
-			// The node rejects the transfer without saying why; in practice the
-			// sender is empty or not activated yet.
-			err = fmt.Errorf("node rejected the TRX transfer: check that %s holds enough TRX to cover the amount and the fee", from)
-		default:
-			err = fmt.Errorf("create TRX transfer: %w", err)
+		if err != nil {
+			err = s.transferError("create TRX transfer", from, err)
 		}
 
 	case AssetUSDT:
@@ -383,7 +548,7 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 			return s.client.TRC20Send(ctx, from, to, s.token.Contract, tokens, s.feeLimit)
 		})
 		if err != nil {
-			err = fmt.Errorf("create %s transfer: %w", s.token.Symbol, err)
+			err = s.transferError("create "+s.token.Symbol+" transfer", from, err)
 		}
 
 	default:
