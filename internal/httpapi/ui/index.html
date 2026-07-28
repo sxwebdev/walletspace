@@ -1562,10 +1562,23 @@
         // Shown only once there is something to unstake. An account that holds
         // no stake reports zero remaining slots, and zero there reads as "the
         // queue is full" rather than "the queue does not apply".
+        //
+        // The number is a free-slot count, not a countdown of anything the
+        // account has done: the chain refuses a new unstake once too many are
+        // already waiting out their period, and each one frees its slot again
+        // when it is withdrawn or cancelled. Left as a bare number it reads as
+        // "you have 32 unfreezes left", which is neither what it counts nor a
+        // limit that ever runs out.
         if (Number(r.staked_bandwidth) > 0 || Number(r.staked_energy) > 0) {
-          stake.appendChild(
-            resLine("Осталось разморозок", String(r.unstake_slots)),
+          const slots = resLine(
+            "Свободно слотов разморозки",
+            String(r.unstake_slots),
           );
+          slots.title =
+            "Сколько разморозок можно запустить прямо сейчас. " +
+            "Слот занят, пока разморозка идёт, и освобождается, когда TRX забраны " +
+            "или разморозка отменена.";
+          stake.appendChild(slots);
         }
 
         box.appendChild(stake);

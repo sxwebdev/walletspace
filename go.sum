@@ -80,6 +80,8 @@ github.com/sxwebdev/go-bip39 v0.0.0-20251104152753-5b0ef6e9b27c h1:dyhne2CSmro21
 github.com/sxwebdev/go-bip39 v0.0.0-20251104152753-5b0ef6e9b27c/go.mod h1:mzyJiXj6CzlM2vzRxTVQcgzCcN4OWL/3OoTuI8Bc7OM=
 github.com/sxwebdev/gotron v0.0.0-20260728195527-4b6660ba6682 h1:ED7Cj5BxrkeYybX/CIs4rVX0cfYKDByYc0dYsdSQjXI=
 github.com/sxwebdev/gotron v0.0.0-20260728195527-4b6660ba6682/go.mod h1:CLPkxoXp1q8V0fFO1YYUq7nLRYpSnOSYJ3FdrAT5fWE=
+github.com/sxwebdev/gotron v0.0.0-20260728212623-3852652709a3 h1:aUOEcZkafEaU4S28cMOJcv/m5Cnb7TqR5ietT5P07Ng=
+github.com/sxwebdev/gotron v0.0.0-20260728212623-3852652709a3/go.mod h1:CLPkxoXp1q8V0fFO1YYUq7nLRYpSnOSYJ3FdrAT5fWE=
 github.com/sxwebdev/xconfig v0.4.1 h1:rRCaYLiZ7Lld5pTZNVsc/3hVtVN83R+1n7uDMW5tqGI=
 github.com/sxwebdev/xconfig v0.4.1/go.mod h1:AQdju1tuvzyrBw9OXxXKGuVGdYnte9DoqyY1EY73qFM=
 github.com/sxwebdev/xconfig/decoders/xconfigyaml v0.0.0-20260505165448-c5f59ca4c792 h1:ya6dNZpCrp0qrcgpMBb1eT67wYZVWXqUn0Wz1cbOa2s=
