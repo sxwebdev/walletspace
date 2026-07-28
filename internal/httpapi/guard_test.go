@@ -132,7 +132,7 @@ func TestGuardAllowsSameOriginSend(t *testing.T) {
 	srv := newServer(t, newWalletsFake(), chain)
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
-		srv.URL+"/api/wallets/0/send", strings.NewReader(`{"asset":"trx","to":"TRecipient","amount":"1"}`))
+		srv.URL+"/api/wallets/0/send", strings.NewReader(`{"asset":"trx","to":"`+recipientAddr+`","amount":"1"}`))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}

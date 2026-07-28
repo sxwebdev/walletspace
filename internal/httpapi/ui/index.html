@@ -132,7 +132,7 @@
       table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 990px;
+        min-width: 1090px;
       }
 
       th,
@@ -305,6 +305,9 @@
         padding: 20px;
         width: min(94vw, 440px);
         max-height: 88vh;
+        /* The deploy form is taller than a screen once an ABI is pasted into
+           it; without this the actions below simply cannot be reached. */
+        overflow-y: auto;
       }
 
       dialog.wide {
@@ -344,6 +347,7 @@
       }
 
       input[type="text"],
+      textarea,
       select {
         font: inherit;
         width: 100%;
@@ -355,9 +359,31 @@
       }
 
       input:focus,
+      textarea:focus,
       select:focus {
         outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
         outline-offset: 1px;
+      }
+
+      textarea {
+        resize: vertical;
+      }
+
+      /* Bytecode and ABI are one unbroken token each, so they have to be
+         allowed to break anywhere; otherwise the field scrolls sideways
+         forever and shows none of what was pasted. */
+      textarea.code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        word-break: break-all;
+      }
+
+      /* The three deployment settings are short numbers and belong on one row. */
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
       }
 
       .amount-row {
@@ -457,7 +483,7 @@
         margin: 20px 0 0;
       }
 
-      /* The three per-wallet actions stay on one line; the card scrolls
+      /* The per-wallet actions stay on one line; the card scrolls
          horizontally rather than letting them wrap. */
       td.row-actions {
         white-space: nowrap;
@@ -488,7 +514,7 @@
               <th style="width: 150px">Метка</th>
               <th class="num" style="width: 130px">TRX</th>
               <th class="num" style="width: 130px" id="token-head">USDT</th>
-              <th style="width: 300px"></th>
+              <th style="width: 400px"></th>
             </tr>
           </thead>
           <tbody id="rows">
@@ -649,6 +675,110 @@
       </form>
     </dialog>
 
+    <dialog id="dep-dialog" class="wide">
+      <form method="dialog" id="dep-form">
+        <h2>Деплой контракта</h2>
+        <div class="from" id="dep-from"></div>
+
+        <label for="dep-bytecode">Байткод</label>
+        <textarea
+          id="dep-bytecode"
+          class="code"
+          rows="4"
+          placeholder="608060405234801561001057600080fd5b50…"
+          autocomplete="off"
+          spellcheck="false"
+        ></textarea>
+        <div class="hint">
+          Скомпилированный контракт в hex, с 0x или без. Аргументы конструктора
+          сюда дописывать не нужно — для них есть отдельное поле.
+        </div>
+
+        <label for="dep-abi">ABI</label>
+        <textarea
+          id="dep-abi"
+          class="code"
+          rows="4"
+          placeholder='[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"}]'
+          autocomplete="off"
+          spellcheck="false"
+        ></textarea>
+        <div class="hint">
+          Массив из solc или обёртка {"entrys":[…]}. Необязателен, но без него
+          вызовы контракта потом никто не декодирует.
+        </div>
+
+        <label for="dep-args">Аргументы конструктора</label>
+        <textarea
+          id="dep-args"
+          class="code"
+          rows="2"
+          placeholder='[{"uint256":"1000000"},{"address":"T…"}]'
+          autocomplete="off"
+          spellcheck="false"
+        ></textarea>
+        <div class="hint">
+          Список пар «тип: значение», по одной на аргумент. Пусто, если
+          конструктор их не принимает.
+        </div>
+
+        <label for="dep-name">Имя</label>
+        <input
+          type="text"
+          id="dep-name"
+          placeholder="необязательно"
+          autocomplete="off"
+        />
+
+        <div class="field-grid">
+          <div>
+            <label for="dep-fee">Лимит комиссии, TRX</label>
+            <input
+              type="text"
+              id="dep-fee"
+              autocomplete="off"
+              inputmode="decimal"
+            />
+          </div>
+          <div>
+            <label for="dep-percent">Платит вызывающий, %</label>
+            <input
+              type="text"
+              id="dep-percent"
+              autocomplete="off"
+              inputmode="numeric"
+            />
+          </div>
+          <div>
+            <label for="dep-energy">Origin energy limit</label>
+            <input
+              type="text"
+              id="dep-energy"
+              autocomplete="off"
+              inputmode="numeric"
+            />
+          </div>
+        </div>
+        <div class="hint">
+          Деплой платит энергией, а без неё в стейке — сжигает TRX. Лимит
+          комиссии это потолок расхода, а не сумма списания; если его не хватит,
+          транзакция пройдёт, деньги спишутся, а контракта не будет.
+        </div>
+        <div class="hint" id="dep-cost"></div>
+
+        <div id="dep-result"></div>
+        <div class="dialog-error" id="dep-error"></div>
+
+        <div class="actions">
+          <button type="button" id="dep-close">Закрыть</button>
+          <button type="button" id="dep-estimate">Оценить</button>
+          <button type="button" id="dep-submit" class="primary">
+            Задеплоить
+          </button>
+        </div>
+      </form>
+    </dialog>
+
     <script>
       const state = {
         info: null,
@@ -656,6 +786,7 @@
         balances: new Map(),
         sendIndex: null,
         resIndex: null,
+        deployIndex: null,
         resources: null,
         // Set only by "Макс." on a reclaim: the amount then goes to the server
         // as the sentinel rather than as the rounded resource figure shown.
@@ -852,6 +983,7 @@
             <button class="sm" data-send="${w.index}">Отправить</button>
             <button class="sm" data-stake="${w.index}">Стейкинг</button>
             <button class="sm" data-delegate="${w.index}">Делегация</button>
+            <button class="sm" data-deploy="${w.index}">Контракт</button>
           </td>`;
 
         // Set through .value rather than the attribute so the field is never
@@ -970,6 +1102,12 @@
         const delegate = e.target.closest("[data-delegate]");
         if (delegate) {
           openResourceDialog("dlg", Number(delegate.dataset.delegate));
+          return;
+        }
+
+        const deploy = e.target.closest("[data-deploy]");
+        if (deploy) {
+          openDeploy(Number(deploy.dataset.deploy));
           return;
         }
 
@@ -1294,7 +1432,10 @@
         return box;
       }
 
-      function resLine(key, value) {
+      // One labelled row. The value is a node so a link can go there too; the
+      // text form below is the same thing with a text node, rather than a
+      // second copy of the markup that would drift from this one.
+      function resLineNode(key, node) {
         const row = document.createElement("div");
         row.className = "res-line";
 
@@ -1304,11 +1445,15 @@
 
         const v = document.createElement("span");
         v.className = "v";
-        v.textContent = value;
+        v.appendChild(node);
 
         row.append(k, v);
 
         return row;
+      }
+
+      function resLine(key, value) {
+        return resLineNode(key, document.createTextNode(value));
       }
 
       function resButton(text, dataset) {
@@ -1883,6 +2028,293 @@
         updateForm("dlg");
       });
 
+      // --- деплой контракта ---
+
+      // Filled in on every open rather than written into the markup, so a
+      // second deployment starts from the defaults instead of from whatever the
+      // last one used.
+      const DEPLOY_DEFAULTS = {
+        // A deployment costs energy in proportion to the code its constructor
+        // runs; the node's own default cap is far below that. This is a ceiling
+        // and is only spent if the contract actually needs it.
+        fee: "1000",
+        // The caller pays for their own calls, which is what a contract nobody
+        // is subsidising wants.
+        percent: "100",
+        energy: "10000000",
+      };
+
+      function openDeploy(index) {
+        const w = state.wallets.find((x) => x.index === index);
+        if (!w) return;
+
+        state.deployIndex = index;
+
+        addressLine($("dep-from"), `С кошелька #${w.index} — `, w.address);
+        $("dep-bytecode").value = "";
+        $("dep-abi").value = "";
+        $("dep-args").value = "";
+        $("dep-name").value = "";
+        $("dep-fee").value = DEPLOY_DEFAULTS.fee;
+        $("dep-percent").value = DEPLOY_DEFAULTS.percent;
+        $("dep-energy").value = DEPLOY_DEFAULTS.energy;
+        $("dep-error").textContent = "";
+        $("dep-cost").textContent = "";
+        $("dep-result").replaceChildren();
+
+        $("dep-dialog").showModal();
+      }
+
+      // The two chain settings are whole numbers stored with the contract, not
+      // money, so they go over as numbers — but they still have to be numbers.
+      function wholeNumber(value) {
+        const n = Number(value);
+
+        return value !== "" && Number.isSafeInteger(n) && n >= 0 ? n : null;
+      }
+
+      // Reads the form into the body both endpoints take, or writes why it
+      // cannot into the error box and returns null.
+      function deployBody() {
+        const errBox = $("dep-error");
+        errBox.textContent = "";
+
+        const bytecode = $("dep-bytecode").value.trim();
+        if (!bytecode) {
+          errBox.textContent = "Вставьте байткод контракта";
+          return null;
+        }
+
+        const percent = wholeNumber($("dep-percent").value.trim());
+        if (percent === null || percent > 100) {
+          errBox.textContent = "Доля вызывающего — целое число от 0 до 100";
+          return null;
+        }
+
+        const energy = wholeNumber($("dep-energy").value.trim());
+        if (energy === null || energy === 0) {
+          errBox.textContent = "Origin energy limit — целое число больше нуля";
+          return null;
+        }
+
+        return {
+          name: $("dep-name").value.trim(),
+          abi: $("dep-abi").value.trim(),
+          bytecode,
+          constructor_params: $("dep-args").value.trim(),
+          fee_limit: $("dep-fee").value.trim(),
+          consume_user_resource_percent: percent,
+          origin_energy_limit: energy,
+        };
+      }
+
+      // What the deployment will cost, from the node's own simulation.
+      //
+      // Two figures, and they are not the same one. The fee is what leaves the
+      // account after the sender's staked energy covers what it can; the fee
+      // limit has to cover the energy outright, staked or not, because it caps
+      // how much the transaction may consume at all.
+      function describeDeployCost(cost) {
+        const parts = [
+          `Сожжёт ≈ ${fmtUnits(Number(cost.energy))} энергии и ${fmtUnits(Number(cost.bandwidth))} bandwidth`,
+          Number(cost.fee) > 0
+            ? `спишется ≈ ${fmt(cost.fee)} TRX`
+            : "спишется 0 TRX — хватает своих ресурсов",
+        ];
+
+        const min = Number(cost.min_fee_limit);
+        const set = Number($("dep-fee").value.trim());
+        let warn = Number(cost.shortfall) > 0;
+
+        if (min > 0) {
+          if (Number.isFinite(set) && set < min) {
+            parts.push(
+              `лимит комиссии ${fmt(set)} TRX мал — нужно не меньше ${fmt(min)}`,
+            );
+            warn = true;
+          } else {
+            parts.push(`лимита хватает (нужно от ${fmt(min)} TRX)`);
+          }
+        }
+
+        if (Number(cost.shortfall) > 0) {
+          parts.push(`не хватает ${fmt(cost.shortfall)} TRX на комиссию`);
+        }
+
+        return { text: parts.join(", ") + ".", warn };
+      }
+
+      async function estimateDeploy() {
+        const body = deployBody();
+        if (!body) return;
+
+        const btn = $("dep-estimate");
+        const hint = $("dep-cost");
+
+        btn.disabled = true;
+        hint.classList.remove("warn");
+        hint.textContent = "Считаем…";
+
+        try {
+          const cost = await api(
+            "POST",
+            `/api/wallets/${state.deployIndex}/deploy-estimate`,
+            body,
+          );
+
+          const described = describeDeployCost(cost);
+          hint.textContent = described.text;
+          hint.classList.toggle("warn", described.warn);
+        } catch (err) {
+          hint.textContent = "";
+          $("dep-error").textContent = err.message;
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      function explorerLink(kind, id, text) {
+        const a = document.createElement("a");
+        a.href = `${state.info.explorer}/#/${kind}/${id}`;
+        a.target = "_blank";
+        a.rel = "noreferrer";
+        a.textContent = text;
+
+        return a;
+      }
+
+      // The outcome stays in the dialog rather than in a toast: it holds an
+      // address that has to be copied somewhere, and a deployment the chain
+      // refused is worth reading rather than dismissing.
+      function renderDeployResult(res) {
+        const box = $("dep-result");
+        box.replaceChildren();
+
+        const section = resSection(
+          res.failure ? "Контракт не создан" : "Контракт",
+        );
+
+        if (res.failure) {
+          const why = document.createElement("div");
+          why.className = "res-empty";
+          // The transaction went through and the fee is gone, so the address is
+          // not shown: nothing lives there.
+          why.textContent =
+            res.failure === "OUT_OF_ENERGY"
+              ? "OUT_OF_ENERGY — лимита комиссии не хватило на конструктор. Комиссия списана, контракта нет; поднимите лимит и попробуйте снова."
+              : res.failure;
+          section.appendChild(why);
+        } else {
+          const row = document.createElement("div");
+          row.className = "res-row";
+
+          const addr = document.createElement("span");
+          addr.className = "addr-full grow";
+          addr.title = res.address;
+          addr.textContent = res.address;
+
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "icon-btn";
+          copy.dataset.copy = res.address;
+          copy.title = "Скопировать адрес";
+          copy.setAttribute("aria-label", "Скопировать адрес");
+          copy.innerHTML = ICON_COPY;
+
+          const link = explorerLink("contract", res.address, "");
+          link.className = "icon-btn";
+          link.title = "Открыть в обозревателе";
+          link.setAttribute("aria-label", "Открыть в обозревателе");
+          link.innerHTML = ICON_EXTERNAL;
+
+          row.append(addr, copy, link);
+          section.appendChild(row);
+        }
+
+        section.appendChild(
+          resLineNode(
+            "Транзакция",
+            explorerLink("transaction", res.txid, shorten(res.txid)),
+          ),
+        );
+
+        if (res.confirmed) {
+          section.append(
+            resLine("Сожжено энергии", fmtUnits(Number(res.energy_used || 0))),
+            resLine("Комиссия", `${fmt(res.fee || "0")} TRX`),
+          );
+        } else {
+          const pending = document.createElement("div");
+          pending.className = "res-empty";
+          pending.textContent =
+            "Подтверждение не пришло за отведённое время — транзакция отправлена, посмотрите её в обозревателе.";
+          section.appendChild(pending);
+        }
+
+        box.appendChild(section);
+      }
+
+      async function submitDeploy() {
+        const body = deployBody();
+        if (!body) return;
+
+        const btn = $("dep-submit");
+
+        btn.disabled = true;
+        btn.textContent = "Деплой…";
+
+        const waiting = document.createElement("div");
+        waiting.className = "res-empty";
+        waiting.textContent = "Отправляем и ждём, что скажет блок…";
+        $("dep-result").replaceChildren(waiting);
+
+        try {
+          const res = await api(
+            "POST",
+            `/api/wallets/${state.deployIndex}/deploy`,
+            body,
+          );
+
+          renderDeployResult(res);
+
+          if (res.failure) {
+            toast(`Контракт не создан: ${escapeAttr(res.failure)}`, "err");
+          } else {
+            toast(`Контракт задеплоен: ${res.address}`, "ok");
+          }
+
+          // The deployment spent energy, or TRX when there was none staked.
+          loadBalances(true);
+        } catch (err) {
+          $("dep-result").replaceChildren();
+          $("dep-error").textContent = err.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Задеплоить";
+        }
+      }
+
+      // Enter in any of the short fields would otherwise submit the form, and a
+      // method="dialog" form submits by closing — throwing away a pasted
+      // contract. Deploying costs real TRX, so it takes the button and nothing
+      // else.
+      $("dep-form").addEventListener("submit", (e) => e.preventDefault());
+
+      // An estimate belongs to the exact bytecode, arguments and fee limit it
+      // was asked for. Any edit and it stops describing what the button would
+      // now send, so it is dropped rather than left to be read as current.
+      $("dep-form").addEventListener("input", () => {
+        $("dep-cost").textContent = "";
+        $("dep-cost").classList.remove("warn");
+      });
+
+      $("dep-estimate").addEventListener("click", estimateDeploy);
+      $("dep-submit").addEventListener("click", submitDeploy);
+      $("dep-close").addEventListener("click", () => $("dep-dialog").close());
+      $("dep-dialog").addEventListener("close", () => {
+        state.deployIndex = null;
+      });
+
       // A dialog does not close when its backdrop is clicked, so wire it up.
       //
       // The backdrop is not an element of its own: a click on it reports the
@@ -1917,7 +2349,12 @@
         });
       }
 
-      for (const id of ["send-dialog", "stk-dialog", "dlg-dialog"]) {
+      for (const id of [
+        "send-dialog",
+        "stk-dialog",
+        "dlg-dialog",
+        "dep-dialog",
+      ]) {
         closeOnBackdropClick($(id));
       }
 

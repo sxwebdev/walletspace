@@ -2,7 +2,6 @@ package httpapi_test
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -26,10 +25,22 @@ func TestEstimateReportsTheShortfall(t *testing.T) {
 
 	var got estimateBody
 	do(t, srv, http.MethodPost, "/api/wallets/0/estimate",
-		`{"asset":"usdt","to":"TRecipient","amount":"10"}`, http.StatusOK, &got)
+		`{"asset":"usdt","to":"`+recipientAddr+`","amount":"10"}`, http.StatusOK, &got)
 
 	if got.Shortfall != "27.3" {
 		t.Errorf("shortfall = %q, want 27.3", got.Shortfall)
+	}
+
+	// The sender, not the recipient, and the asset as asked: tron.Shortfall adds
+	// the amount to the need only for TRX, so a handler that hard-coded either
+	// would still answer plausibly here while getting a TRX send badly wrong.
+	if chain.sfFrom != walletAddr0 || chain.sfAsset != tron.AssetUSDT {
+		t.Errorf("shortfall asked for %q/%q, want %q/usdt", chain.sfFrom, chain.sfAsset, walletAddr0)
+	}
+
+	if !chain.sfAmount.Equal(decimal.NewFromInt(10)) || !chain.sfEstimate.Fee.Equal(chain.estimate.Fee) {
+		t.Errorf("shortfall priced %s against fee %s, want 10 against the estimate's own fee",
+			chain.sfAmount, chain.sfEstimate.Fee)
 	}
 }
 
@@ -46,7 +57,7 @@ func TestEstimateSurvivesAFailedShortfallCheck(t *testing.T) {
 
 	var got estimateBody
 	do(t, srv, http.MethodPost, "/api/wallets/0/estimate",
-		`{"asset":"trx","to":"TRecipient","amount":"1"}`, http.StatusOK, &got)
+		`{"asset":"trx","to":"`+recipientAddr+`","amount":"1"}`, http.StatusOK, &got)
 
 	if got.Fee != "1.1" {
 		t.Errorf("fee = %q, want the estimate to survive", got.Fee)
@@ -81,7 +92,7 @@ func TestResources(t *testing.T) {
 			{Resource: tron.ResourceBandwidth, Amount: decimal.NewFromInt(50), ExpireAt: locked},
 		},
 		Delegations: []tron.Delegation{
-			{To: "TReceiver", Resource: tron.ResourceEnergy, Amount: decimal.NewFromInt(200)},
+			{To: receiverAddr, Resource: tron.ResourceEnergy, Amount: decimal.NewFromInt(200)},
 			{To: "TLocked", Resource: tron.ResourceBandwidth, Amount: decimal.NewFromInt(7), LockedUntil: locked},
 		},
 	}
@@ -91,7 +102,7 @@ func TestResources(t *testing.T) {
 	var got resourcesBody
 	do(t, srv, http.MethodGet, "/api/wallets/1/resources", "", http.StatusOK, &got)
 
-	if chain.resourcesAddr != "TAddr1" {
+	if chain.resourcesAddr != walletAddr1 {
 		t.Errorf("read resources of %q, want the address of wallet 1", chain.resourcesAddr)
 	}
 
@@ -191,18 +202,18 @@ func TestStakingOperationsPassTheRequestThrough(t *testing.T) {
 			// amount goes through untouched and the service converts it.
 			name:     "delegate",
 			path:     "/api/wallets/1/delegate",
-			body:     `{"resource":"energy","amount":"14762.9124","to":"TReceiver"}`,
+			body:     `{"resource":"energy","amount":"14762.9124","to":"` + receiverAddr + `"}`,
 			wantOp:   "delegate",
-			wantTo:   "TReceiver",
+			wantTo:   receiverAddr,
 			wantRes:  tron.ResourceEnergy,
 			wantAmnt: "14762.9124",
 		},
 		{
 			name:     "reclaim",
 			path:     "/api/wallets/1/reclaim",
-			body:     `{"resource":"energy","amount":"14762.9124","to":"TReceiver"}`,
+			body:     `{"resource":"energy","amount":"14762.9124","to":"` + receiverAddr + `"}`,
 			wantOp:   "reclaim",
-			wantTo:   "TReceiver",
+			wantTo:   receiverAddr,
 			wantRes:  tron.ResourceEnergy,
 			wantAmnt: "14762.9124",
 		},
@@ -230,7 +241,7 @@ func TestStakingOperationsPassTheRequestThrough(t *testing.T) {
 
 			// Wallet 1, not 0: a handler that resolves the wrong wallet or puts
 			// the receiver where the sender belongs would otherwise pass.
-			if chain.opFrom != "TAddr1" {
+			if chain.opFrom != walletAddr1 {
 				t.Errorf("from = %q, want the address of wallet 1", chain.opFrom)
 			}
 
@@ -266,7 +277,7 @@ func TestWithdrawAndCancelNeedNoBody(t *testing.T) {
 
 			do(t, srv, http.MethodPost, "/api/wallets/1/"+path, "", http.StatusOK, nil)
 
-			if chain.opFrom != "TAddr1" {
+			if chain.opFrom != walletAddr1 {
 				t.Errorf("from = %q, want the address of wallet 1", chain.opFrom)
 			}
 
@@ -287,13 +298,13 @@ func TestReclaimMaxTakesTheWholeDelegation(t *testing.T) {
 	srv := newServer(t, newWalletsFake(), chain)
 
 	do(t, srv, http.MethodPost, "/api/wallets/1/reclaim",
-		`{"resource":"energy","amount":"max","to":"TReceiver"}`, http.StatusOK, nil)
+		`{"resource":"energy","amount":"max","to":"`+receiverAddr+`"}`, http.StatusOK, nil)
 
 	if chain.opName != "reclaim-all" {
 		t.Errorf("ran %q, want reclaim-all", chain.opName)
 	}
 
-	if chain.opTo != "TReceiver" || chain.opResource != tron.ResourceEnergy {
+	if chain.opTo != receiverAddr || chain.opResource != tron.ResourceEnergy {
 		t.Errorf("reclaimed %s from %q, want energy from TReceiver", chain.opResource, chain.opTo)
 	}
 }
@@ -311,7 +322,7 @@ func TestOnlyReclaimAcceptsMax(t *testing.T) {
 			srv := newServer(t, newWalletsFake(), chain)
 
 			do(t, srv, http.MethodPost, "/api/wallets/0/"+path,
-				`{"resource":"energy","amount":"max","to":"TReceiver"}`, http.StatusBadRequest, nil)
+				`{"resource":"energy","amount":"max","to":"`+receiverAddr+`"}`, http.StatusBadRequest, nil)
 
 			if chain.opName != "" {
 				t.Errorf("%q was attempted for an unparsable amount", chain.opName)
@@ -392,21 +403,31 @@ func TestStakingRejectsBadInput(t *testing.T) {
 func TestStakingMapsValidationFailuresTo400(t *testing.T) {
 	t.Parallel()
 
+	wallets := newWalletsFake()
 	chain := newChainFake()
-	// The service raises these before it ever contacts a node, so blaming the
-	// upstream with a 502 would mislead both clients and log readers.
-	chain.stakeErr = fmt.Errorf("%w: an account cannot delegate to itself", tron.ErrInvalidRequest)
-
-	srv := newServer(t, newWalletsFake(), chain)
+	// Nothing about this needs a node, so blaming the upstream with a 502 would
+	// mislead both clients and log readers.
+	srv := newServer(t, wallets, chain)
 
 	var got struct {
 		Error string `json:"error"`
 	}
 	do(t, srv, http.MethodPost, "/api/wallets/0/delegate",
-		`{"resource":"energy","amount":"1","to":"TAddr0"}`, http.StatusBadRequest, &got)
+		`{"resource":"energy","amount":"1","to":"`+walletAddr0+`"}`, http.StatusBadRequest, &got)
 
 	if !strings.Contains(got.Error, "delegate to itself") {
 		t.Errorf("error = %q, want the validation message", got.Error)
+	}
+
+	// Refused by the handler, before either the chain or the mnemonic is
+	// reached: the chain fake is left unarmed on purpose, so an answer that
+	// came from it would show up as the wrong error message.
+	if chain.opName != "" {
+		t.Errorf("%q ran for a delegation to self", chain.opName)
+	}
+
+	if wallets.keyCalls != 0 {
+		t.Errorf("the private key was derived %d times for a request that cannot succeed", wallets.keyCalls)
 	}
 }
 

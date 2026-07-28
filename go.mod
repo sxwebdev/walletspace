@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/shopspring/decimal v1.4.0
-	github.com/sxwebdev/gotron v0.0.0-20260728134741-9f81fc20bc10
+	github.com/sxwebdev/gotron v0.0.0-20260728195527-4b6660ba6682
 	github.com/sxwebdev/xconfig v0.4.1
 	github.com/sxwebdev/xconfig/decoders/xconfigyaml v0.0.0-20260505165448-c5f59ca4c792
 	golang.org/x/sync v0.22.0

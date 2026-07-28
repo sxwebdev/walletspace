@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -23,8 +24,14 @@ import (
 //go:embed ui
 var uiFS embed.FS
 
-// requestTimeout bounds every on-chain operation triggered from the UI.
-const requestTimeout = 45 * time.Second
+const (
+	// requestTimeout bounds every on-chain operation triggered from the UI.
+	requestTimeout = 45 * time.Second
+	// deployTimeout covers a deployment, which waits for its receipt on top of
+	// building and broadcasting: a contract that ran out of energy is only
+	// visible once the transaction is in a block.
+	deployTimeout = 90 * time.Second
+)
 
 // Wallets is the wallet storage the API operates on.
 type Wallets interface {
@@ -52,6 +59,9 @@ type Chain interface {
 	ReclaimAll(ctx context.Context, from, to string, resource tron.Resource, key *ecdsa.PrivateKey) (string, error)
 	WithdrawUnstaked(ctx context.Context, from string, key *ecdsa.PrivateKey) (string, error)
 	CancelUnstakes(ctx context.Context, from string, key *ecdsa.PrivateKey) (string, error)
+
+	EstimateDeploy(ctx context.Context, from string, d tron.Deployment) (tron.DeployCost, error)
+	Deploy(ctx context.Context, from string, d tron.Deployment, key *ecdsa.PrivateKey) (tron.Deployed, error)
 }
 
 // Server wires the storage and the chain service into an http.Handler.
@@ -94,13 +104,41 @@ func New(wallets Wallets, chain Chain, network, explorer string, log *slog.Logge
 	mux.HandleFunc("POST /api/wallets/{index}/reclaim", s.handleReclaim)
 	mux.HandleFunc("POST /api/wallets/{index}/withdraw", s.handleWithdrawUnstaked)
 	mux.HandleFunc("POST /api/wallets/{index}/cancel-unstakes", s.handleCancelUnstakes)
+	mux.HandleFunc("POST "+deployPath, s.handleDeploy)
+	mux.HandleFunc("POST "+deployEstimatePath, s.handleDeployEstimate)
 
 	return s.guard(mux), nil
 }
 
-// maxBodyBytes caps request bodies. Every payload here is a handful of short
-// fields, so anything larger is a mistake or an attempt to exhaust memory.
-const maxBodyBytes = 64 << 10
+const (
+	// maxBodyBytes caps request bodies. Every payload here is a handful of short
+	// fields, so anything larger is a mistake or an attempt to exhaust memory.
+	maxBodyBytes = 64 << 10
+	// maxDeployBodyBytes caps the one payload that is not: a contract travels as
+	// hex, so it is twice its own size, and the ABI rides along with it. The
+	// chain's own limit on deployed code is a few tens of kilobytes.
+	maxDeployBodyBytes = 512 << 10
+
+	// The two deployment routes. Both carry the contract itself, so both need
+	// the larger body limit; they share the prefix that bodyLimit matches on.
+	deployPath         = "/api/wallets/{index}/deploy"
+	deployEstimatePath = deployPath + "-estimate"
+)
+
+// bodyLimit is how much of a request body will be read. Only a deployment needs
+// more than the default, and giving every endpoint its allowance would mean an
+// unauthenticated POST could park half a megabyte of nonsense in memory before
+// the address on it is even looked at.
+func bodyLimit(path string) int64 {
+	// Whole final segments, not a substring: matching "/deploy" anywhere would
+	// hand the raised limit to "…/deploy-anything" and to any later route that
+	// merely embeds the word. These two are the routes registered above.
+	if strings.HasSuffix(path, "/deploy") || strings.HasSuffix(path, "/deploy-estimate") {
+		return maxDeployBodyBytes
+	}
+
+	return maxBodyBytes
+}
 
 // guard protects the unauthenticated local API from requests a browser makes on
 // behalf of another site.
@@ -146,7 +184,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 				return
 			}
 
-			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r.URL.Path))
 		}
 
 		next.ServeHTTP(w, r)

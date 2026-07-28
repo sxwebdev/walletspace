@@ -148,9 +148,12 @@ func (s *Service) Resources(ctx context.Context, addr string) (Resources, error)
 	g.SetLimit(s.workers)
 
 	g.Go(func() error {
-		v, err := retry(gctx, s.nodes, func() (*api.AccountResourceMessage, error) {
+		// Wrapped like the rest: an account that does not exist is an empty
+		// position, not a failure. The proto getters read a nil message as
+		// zeros, so nothing below needs a second nil check.
+		v, err := retry(gctx, s.nodes, emptyIfMissing(func() (*api.AccountResourceMessage, error) {
 			return s.client.GetAccountResource(gctx, addr)
-		})
+		}))
 		if err != nil {
 			return fmt.Errorf("read resources: %w", err)
 		}
@@ -358,6 +361,15 @@ func stakeAmount(amount decimal.Decimal) (client.SUN, error) {
 
 	return trxAmount(amount)
 }
+
+// ValidateCounterparty reports whether a delegation between these two accounts
+// is one the chain would take, without spending a round-trip — or a key
+// derivation — to find out.
+//
+// It exists so the HTTP layer can refuse a delegation before it reaches the
+// mnemonic. The operations validate again through the same code, so a caller
+// that skips this loses nothing but the ordering.
+func ValidateCounterparty(from, to string) error { return counterparty(from, to) }
 
 // counterparty validates both sides of a delegation.
 //

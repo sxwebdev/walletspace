@@ -211,6 +211,21 @@ func (s *Server) decodeStake(w http.ResponseWriter, r *http.Request, allowAll bo
 	return op, true
 }
 
+// checkCounterparty refuses a delegation whose two sides the chain would not
+// accept, writing the response itself.
+//
+// It runs for the two operations that name a receiver, and it runs before
+// runStake: the service checks the same thing, but only from inside the call
+// that has already been handed a key.
+func (s *Server) checkCounterparty(w http.ResponseWriter, op stakeOp) bool {
+	if err := tron.ValidateCounterparty(op.from.Address, op.to); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+
+	return true
+}
+
 // runStake derives the signing key and performs one staking operation.
 //
 // The key is derived last, once everything that can be rejected already has
@@ -296,7 +311,7 @@ func (s *Server) handleDelegate(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	op, ok := s.decodeStake(w, r, false)
-	if !ok {
+	if !ok || !s.checkCounterparty(w, op) {
 		return
 	}
 
@@ -310,7 +325,7 @@ func (s *Server) handleReclaim(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	op, ok := s.decodeStake(w, r, true)
-	if !ok {
+	if !ok || !s.checkCounterparty(w, op) {
 		return
 	}
 

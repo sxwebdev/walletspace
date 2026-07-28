@@ -509,6 +509,19 @@ func (s *Service) Spendable(ctx context.Context, from, to string, asset Asset) (
 // transfer the chain would have accepted is worse than letting the chain
 // answer.
 func (s *Service) Shortfall(ctx context.Context, from string, asset Asset, amount decimal.Decimal, est Estimate) (decimal.Decimal, error) {
+	// Sending TRX spends the amount as well as the fee; sending a token spends
+	// only the fee, and whether the token balance covers the amount is a
+	// separate question the caller already sees.
+	need := est.Fee
+	if asset == AssetTRX {
+		need = need.Add(amount)
+	}
+
+	return s.missingTRX(ctx, from, need)
+}
+
+// missingTRX is how much TRX the account is short of need, zero when it is not.
+func (s *Service) missingTRX(ctx context.Context, from string, need decimal.Decimal) (decimal.Decimal, error) {
 	balances, errs := s.Balances(ctx, []string{from}, false)
 	if err, ok := errs[from]; ok {
 		return decimal.Zero, fmt.Errorf("read balance of %s: %w", from, err)
@@ -517,14 +530,6 @@ func (s *Service) Shortfall(ctx context.Context, from string, asset Asset, amoun
 	balance, ok := balances[from]
 	if !ok {
 		return decimal.Zero, fmt.Errorf("no balance for %s", from)
-	}
-
-	// Sending TRX spends the amount as well as the fee; sending a token spends
-	// only the fee, and whether the token balance covers the amount is a
-	// separate question the caller already sees.
-	need := est.Fee
-	if asset == AssetTRX {
-		need = need.Add(amount)
 	}
 
 	if missing := need.Sub(balance.TRX); missing.GreaterThan(decimal.Zero) {
@@ -549,6 +554,14 @@ func (s *Service) Shortfall(ctx context.Context, from string, asset Asset, amoun
 func (s *Service) chainError(stage string, err error) error {
 	if refusal, ok := errors.AsType[*client.ContractValidateError](err); ok {
 		return fmt.Errorf("%w: %w", ErrInvalidRequest, refusal)
+	}
+
+	// A call the VM ran and refused says nothing about the node: the contract
+	// reverted, or the constructor did. It arrives from a simulation, so it
+	// costs nothing and there is nothing to retry — the same code will revert
+	// on every node.
+	if errors.Is(err, client.ErrContractCallFailed) {
+		return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 
 	if rejection, ok := errors.AsType[*client.BroadcastError](err); ok {
