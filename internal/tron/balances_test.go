@@ -52,9 +52,9 @@ func TestBalancesCacheStillExpires(t *testing.T) {
 		return Balance{TRX: decimal.NewFromInt(1), Activated: true}, nil
 	})
 
-	// A cache hit must not push its own expiry out. Reading repeatedly inside
-	// the TTL used to re-stamp the entry on every call, so it never went stale
-	// and the UI showed an indefinitely old balance.
+	// A cache hit must not push its own expiry out. ttlcache extends an item's
+	// expiry on every read unless WithDisableTouchOnHit is set, which would
+	// keep a polled address alive forever and show an indefinitely old balance.
 	s.cache = newBalanceCache(50 * time.Millisecond)
 
 	addrs := []string{"TAddr0"}
@@ -112,32 +112,33 @@ func TestBalancesIsolatesPerAddressFailures(t *testing.T) {
 	}
 
 	// A failed address must not be cached as a success.
-	if _, ok := s.cache.get("TBad", time.Now()); ok {
+	if item := s.cache.Get("TBad"); item != nil {
 		t.Error("a failed fetch was written to the cache")
 	}
 }
 
-func TestBalancesSurvivesPanickingFetch(t *testing.T) {
+func TestInvalidateDropsOnlyTheGivenAddresses(t *testing.T) {
 	t.Parallel()
 
-	// errgroup does not recover, and the gotron client indexes its result
-	// slice unguarded — an unrecovered panic here would kill the daemon.
+	var calls atomic.Int64
 	s := newTestService(func(_ context.Context, addr string) (Balance, error) {
-		if addr == "TPanic" {
-			panic("index out of range [0] with length 0")
-		}
-
-		return Balance{TRX: decimal.NewFromInt(4), Activated: true}, nil
+		calls.Add(1)
+		return Balance{TRX: decimal.NewFromInt(1), Activated: true}, nil
 	})
 
-	out, errs := s.Balances(t.Context(), []string{"TOk", "TPanic"}, false)
+	addrs := []string{"TFrom", "TTo", "TOther"}
+	s.Balances(t.Context(), addrs, false)
 
-	if _, ok := out["TOk"]; !ok {
-		t.Error("the healthy address was lost when another one panicked")
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("warm-up fetched %d addresses, want 3", got)
 	}
 
-	if errs["TPanic"] == nil {
-		t.Error("the panicking address produced no error")
+	// After a transfer both sides are stale, but nothing else is.
+	s.invalidate("TFrom", "TTo")
+	s.Balances(t.Context(), addrs, false)
+
+	if got := calls.Load(); got != 5 {
+		t.Errorf("fetch count = %d, want 5: the two invalidated addresses refetched and TOther served from cache", got)
 	}
 }
 

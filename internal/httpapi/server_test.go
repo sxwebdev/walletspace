@@ -245,6 +245,27 @@ func TestSendMapsValidationFailuresTo400(t *testing.T) {
 	}
 }
 
+func TestSendMapsAmountRejectionTo400(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	// tron.Send reports a rejected amount as ErrInvalidRequest, since the
+	// constructors refuse it before any RPC happens.
+	chain.sendErr = fmt.Errorf("%w: invalid amount: 0.0000001 is finer than the token's 6 decimals", tron.ErrInvalidRequest)
+
+	srv := newServer(t, newWalletsFake(), chain)
+
+	var got struct {
+		Error string `json:"error"`
+	}
+	do(t, srv, http.MethodPost, "/api/wallets/0/send",
+		`{"asset":"usdt","to":"TRecipient","amount":"0.0000001"}`, http.StatusBadRequest, &got)
+
+	if !strings.Contains(got.Error, "finer than the token") {
+		t.Errorf("error = %q, want the amount rejection reason", got.Error)
+	}
+}
+
 func TestSendPropagatesChainFailure(t *testing.T) {
 	t.Parallel()
 

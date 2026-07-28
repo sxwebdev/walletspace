@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jellydator/ttlcache/v3"
 	"github.com/shopspring/decimal"
 	"github.com/sxwebdev/gotron/pkg/address"
 	"github.com/sxwebdev/gotron/pkg/client"
@@ -22,6 +23,9 @@ import (
 )
 
 const (
+	// maxTokenDecimals mirrors the cap the gotron amount constructors enforce:
+	// the number of decimal digits in the largest ABI uint256.
+	maxTokenDecimals = 78
 	// balanceTTL is how long a fetched balance is served from cache.
 	balanceTTL = 15 * time.Second
 	// Public TronGrid endpoints allow ~3 requests per second per IP and each
@@ -57,10 +61,10 @@ type Service struct {
 	client   *client.Client
 	log      *slog.Logger
 	token    TokenInfo
-	feeLimit int64 // in SUN
-	nodes    int   // number of configured nodes, used as the retry budget
-	workers  int   // parallel balance fetches
-	cache    *balanceCache
+	feeLimit client.SUN
+	nodes    int // number of configured nodes, used as the retry budget
+	workers  int // parallel balance fetches
+	cache    *ttlcache.Cache[string, Balance]
 	// fetch reads one address from chain. It is a field so the caching and
 	// fan-out logic in Balances can be exercised without a live node.
 	fetch func(ctx context.Context, addr string) (Balance, error)
@@ -134,10 +138,16 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Service, e
 		workers = balanceConcurrencyKeyed
 	}
 
+	feeLimit, err := client.FromTRX(decimal.NewFromInt(cfg.FeeLimitTRX))
+	if err != nil {
+		c.Close()
+		return nil, fmt.Errorf("fee limit of %d TRX: %w", cfg.FeeLimitTRX, err)
+	}
+
 	s := &Service{
 		client:   c,
 		log:      log,
-		feeLimit: cfg.FeeLimitTRX * 1e6,
+		feeLimit: feeLimit,
 		nodes:    len(nodeCfgs),
 		workers:  workers,
 		cache:    newBalanceCache(balanceTTL),
@@ -150,11 +160,33 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Service, e
 		return nil, err
 	}
 
+	// Started only once the Service is going to be returned. Starting earlier
+	// would leak the janitor goroutine on the error path above, with no handle
+	// left to stop it — and Stop() is a no-op until Start has actually run, so
+	// a caller could not clean it up either.
+	go s.cache.Start()
+
 	return s, nil
 }
 
-// Close releases the underlying transports.
-func (s *Service) Close() error { return s.client.Close() }
+// newBalanceCache builds the balance cache.
+//
+// WithDisableTouchOnHit is essential: by default ttlcache extends an item's
+// expiry every time it is read, so a UI that polls faster than the TTL would
+// keep an address alive forever and never see a fresh balance.
+func newBalanceCache(ttl time.Duration) *ttlcache.Cache[string, Balance] {
+	return ttlcache.New(
+		ttlcache.WithTTL[string, Balance](ttl),
+		ttlcache.WithDisableTouchOnHit[string, Balance](),
+	)
+}
+
+// Close stops the cache janitor and releases the underlying transports.
+func (s *Service) Close() error {
+	s.cache.Stop()
+
+	return s.client.Close()
+}
 
 // Token returns the metadata of the configured TRC20 contract.
 func (s *Service) Token() TokenInfo { return s.token }
@@ -173,17 +205,12 @@ func (s *Service) loadTokenInfo(ctx context.Context) error {
 		return fmt.Errorf("read decimals of %s: %w", s.token.Contract, err)
 	}
 
-	// gotron turns an empty node response into a plain 0, so accepting 0 here
-	// would silently install a 10^decimals scale error on every balance and
-	// every transfer. A stablecoin with no fractional unit does not exist, so
-	// treat 0 as the failed read it almost certainly is.
-	if !decimals.IsInt64() || decimals.Int64() < 1 || decimals.Int64() > 30 {
-		return fmt.Errorf(
-			"contract %s reports implausible decimals %s — check that USDT_CONTRACT points at a TRC20 token on %s",
-			s.token.Contract, decimals, s.client.GetNetwork(),
-		)
+	scale, err := validateDecimals(decimals)
+	if err != nil {
+		return fmt.Errorf("contract %s on %s: %w — check that USDT_CONTRACT points at a TRC20 token",
+			s.token.Contract, s.client.GetNetwork(), err)
 	}
-	s.token.Decimals = int32(decimals.Int64())
+	s.token.Decimals = scale
 
 	symbol, err := retry(ctx, s.nodes, func() (string, error) {
 		return s.client.TRC20GetSymbol(ctx, s.token.Contract)
@@ -216,10 +243,9 @@ func (s *Service) Balances(ctx context.Context, addresses []string, refresh bool
 	if refresh {
 		pending = addresses
 	} else {
-		now := time.Now()
 		for _, addr := range addresses {
-			if b, ok := s.cache.get(addr, now); ok {
-				out[addr] = b
+			if item := s.cache.Get(addr); item != nil {
+				out[addr] = item.Value()
 				continue
 			}
 
@@ -233,24 +259,13 @@ func (s *Service) Balances(ctx context.Context, addresses []string, refresh bool
 	fetched := make(map[string]Balance, len(pending))
 
 	for _, addr := range pending {
-		g.Go(func() (err error) {
-			// errgroup deliberately does not recover, and the gotron client
-			// indexes GetConstantResult()[0] unguarded, so one malformed node
-			// reply would otherwise take the whole daemon down.
-			defer func() {
-				if r := recover(); r != nil {
-					mu.Lock()
-					defer mu.Unlock()
-					errs[addr] = fmt.Errorf("balance lookup panicked: %v", r)
-				}
-			}()
-
-			b, balErr := s.fetch(gctx, addr)
+		g.Go(func() error {
+			b, err := s.fetch(gctx, addr)
 
 			mu.Lock()
 			defer mu.Unlock()
-			if balErr != nil {
-				errs[addr] = balErr
+			if err != nil {
+				errs[addr] = err
 				return nil
 			}
 			fetched[addr] = b
@@ -262,36 +277,39 @@ func (s *Service) Balances(ctx context.Context, addresses []string, refresh bool
 	// The goroutines never return an error; failures land in errs.
 	_ = g.Wait()
 
-	// Only freshly fetched balances refresh the cache timestamp. Re-stamping
-	// cache hits here would keep pushing their expiry out, so an entry would
-	// never go stale as long as the UI kept polling.
-	now := time.Now()
+	// Only freshly fetched balances are stored: writing back a cache hit would
+	// restart its TTL and the entry would never go stale.
 	for addr, b := range fetched {
-		s.cache.put(addr, b, now)
+		s.cache.Set(addr, b, ttlcache.DefaultTTL)
 		out[addr] = b
 	}
 
 	return out, errs
 }
 
+// invalidate drops the cached balances of the given addresses, so the next
+// read goes back to the chain. Both sides of a transfer have moved.
+func (s *Service) invalidate(addresses ...string) {
+	for _, addr := range addresses {
+		s.cache.Delete(addr)
+	}
+}
+
 // accountBalance carries the TRX balance together with whether the account
 // exists on chain at all.
 type accountBalance struct {
-	trx       decimal.Decimal
+	trx       client.SUN
 	activated bool
 }
 
 func (s *Service) balance(ctx context.Context, addr string) (Balance, error) {
-	b := Balance{TRX: decimal.Zero, USDT: decimal.Zero, Activated: true}
-
-	// GetAccountBalance already returns TRX, not SUN. An address that has never
-	// received anything simply does not exist on chain yet — that is a zero
-	// balance of an unactivated account, not a failure, so it must not be
-	// retried against the other nodes.
+	// An address that has never received anything simply does not exist on
+	// chain yet — that is a zero balance of an unactivated account, not a
+	// failure, so it must not be retried against the other nodes.
 	account, err := retry(ctx, s.nodes, func() (accountBalance, error) {
 		v, err := s.client.GetAccountBalance(ctx, addr)
 		if errors.Is(err, client.ErrAccountNotFound) {
-			return accountBalance{trx: decimal.Zero}, nil
+			return accountBalance{}, nil
 		}
 		if err != nil {
 			return accountBalance{}, err
@@ -303,17 +321,18 @@ func (s *Service) balance(ctx context.Context, addr string) (Balance, error) {
 		return Balance{}, fmt.Errorf("trx balance: %w", err)
 	}
 
-	b.TRX, b.Activated = account.trx, account.activated
-
-	raw, err := retry(ctx, s.nodes, func() (*big.Int, error) {
+	tokens, err := retry(ctx, s.nodes, func() (client.TokenAmount, error) {
 		return s.client.TRC20ContractBalance(ctx, addr, s.token.Contract)
 	})
 	if err != nil {
 		return Balance{}, fmt.Errorf("%s balance: %w", s.token.Symbol, err)
 	}
-	b.USDT = fromTokenUnits(raw, s.token.Decimals)
 
-	return b, nil
+	return Balance{
+		TRX:       account.trx.TRX(),
+		USDT:      tokens.Decimal(s.token.Decimals),
+		Activated: account.activated,
+	}, nil
 }
 
 // Send transfers TRX or the configured TRC20 token and returns the txid.
@@ -333,19 +352,16 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 
 	switch asset {
 	case AssetTRX:
-		// CreateTransferTransaction takes TRX and converts it to SUN with
-		// decimal.IntPart, which silently keeps only the low 64 bits when the
-		// value does not fit. Reject those amounts instead of broadcasting a
-		// transfer of some entirely different value.
-		if err := checkFitsInt64(amount, trxDecimals); err != nil {
-			return "", err
+		sun, convErr := trxAmount(amount)
+		if convErr != nil {
+			return "", convErr
 		}
 
 		// Building a transaction is a read-only call on the node, so it is safe
 		// to route past an unhealthy endpoint. Only the broadcast below must
 		// not be retried.
 		tx, err = retry(ctx, s.nodes, func() (*api.TransactionExtention, error) {
-			return s.client.CreateTransferTransaction(ctx, from, to, amount)
+			return s.client.CreateTransferTransaction(ctx, from, to, sun)
 		})
 		switch {
 		case err == nil:
@@ -358,18 +374,13 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 		}
 
 	case AssetUSDT:
-		// TRC20Send expects the amount in the token's smallest unit.
-		raw, convErr := toTokenUnits(amount, s.token.Decimals)
+		tokens, convErr := tokenAmount(amount, s.token.Decimals)
 		if convErr != nil {
 			return "", convErr
 		}
 
-		if err := checkFitsInt64(amount, s.token.Decimals); err != nil {
-			return "", err
-		}
-
 		tx, err = retry(ctx, s.nodes, func() (*api.TransactionExtention, error) {
-			return s.client.TRC20Send(ctx, from, to, s.token.Contract, raw, s.feeLimit)
+			return s.client.TRC20Send(ctx, from, to, s.token.Contract, tokens, s.feeLimit)
 		})
 		if err != nil {
 			err = fmt.Errorf("create %s transfer: %w", s.token.Symbol, err)
@@ -386,11 +397,13 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 		return "", fmt.Errorf("sign transaction: %w", err)
 	}
 
+	// A rejection arrives as *client.BroadcastError, whose message always names
+	// the node's response code.
 	if _, err := s.client.BroadcastTransaction(ctx, tx.GetTransaction()); err != nil {
 		return "", fmt.Errorf("broadcast transaction: %w", err)
 	}
 
-	s.cache.invalidate(from, to)
+	s.invalidate(from, to)
 
 	return hex.EncodeToString(tx.GetTxid()), nil
 }
