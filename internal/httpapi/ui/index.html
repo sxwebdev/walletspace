@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tronfaucet</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7f9;
+        --panel: #ffffff;
+        --border: #e2e5ea;
+        --text: #16181d;
+        --muted: #6b7280;
+        --accent: #d7443e;
+        --accent-text: #ffffff;
+        --ok: #128a5b;
+        --err: #c0392b;
+        --hover: #f1f3f6;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101216;
+          --panel: #181b21;
+          --border: #2a2f38;
+          --text: #e8eaed;
+          --muted: #9aa2af;
+          --accent: #e05a54;
+          --accent-text: #ffffff;
+          --ok: #3fce97;
+          --err: #ff7b6b;
+          --hover: #1f232b;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 32px 20px 64px;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          15px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+      }
+
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+
+      h1 {
+        font-size: 20px;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+
+      .badge {
+        padding: 3px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .badge.mainnet {
+        color: var(--accent);
+        border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+      }
+
+      .spacer {
+        flex: 1;
+      }
+
+      button {
+        font: inherit;
+        padding: 7px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) {
+        background: var(--hover);
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-text);
+      }
+
+      button.primary:hover:not(:disabled) {
+        filter: brightness(1.07);
+        background: var(--accent);
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 760px;
+      }
+
+      th,
+      td {
+        padding: 11px 14px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+      }
+
+      th {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      tbody tr:hover {
+        background: var(--hover);
+      }
+
+      td.num,
+      th.num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .addr-cell {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .addr {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        user-select: all;
+      }
+
+      .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        flex: none;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        background: none;
+        color: var(--muted);
+        cursor: pointer;
+        text-decoration: none;
+      }
+
+      .icon-btn:hover:not(:disabled) {
+        background: var(--hover);
+        border-color: var(--border);
+        color: var(--text);
+      }
+
+      .icon-btn svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .icon-btn.copied {
+        color: var(--ok);
+        border-color: var(--ok);
+      }
+
+      .idx {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .tag {
+        margin-left: 6px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .tag[hidden] {
+        display: none;
+      }
+
+      .label-input {
+        font: inherit;
+        width: 130px;
+        padding: 4px 7px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text);
+      }
+
+      .label-input:hover {
+        border-color: var(--border);
+      }
+      .label-input:focus {
+        border-color: var(--accent);
+        outline: none;
+        background: var(--bg);
+      }
+
+      .skeleton {
+        display: inline-block;
+        width: 54px;
+        height: 12px;
+        border-radius: 4px;
+        background: var(--border);
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        50% {
+          opacity: 0.4;
+        }
+      }
+
+      .inactive {
+        color: var(--muted);
+      }
+      .cell-error {
+        color: var(--err);
+        cursor: help;
+      }
+
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%);
+        max-width: min(90vw, 620px);
+        padding: 11px 16px;
+        border-radius: 10px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+        font-size: 14px;
+      }
+
+      .toast.ok {
+        border-color: var(--ok);
+      }
+      .toast.err {
+        border-color: var(--err);
+      }
+      .toast a {
+        color: var(--accent);
+      }
+
+      dialog {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--panel);
+        color: var(--text);
+        padding: 20px;
+        width: min(94vw, 440px);
+      }
+
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.45);
+      }
+
+      dialog h2 {
+        margin: 0 0 4px;
+        font-size: 17px;
+      }
+
+      .from {
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 16px;
+        word-break: break-all;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin: 12px 0 5px;
+      }
+
+      input[type="text"],
+      select {
+        font: inherit;
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      input:focus,
+      select:focus {
+        outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+        outline-offset: 1px;
+      }
+
+      .amount-row {
+        display: flex;
+        gap: 8px;
+      }
+      .amount-row input {
+        flex: 1;
+      }
+
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 20px;
+      }
+
+      .hint {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      .dialog-error {
+        color: var(--err);
+        font-size: 13px;
+        margin-top: 10px;
+        min-height: 18px;
+      }
+
+      footer {
+        margin-top: 14px;
+        color: var(--muted);
+        font-size: 12px;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>tronfaucet</h1>
+        <span class="badge" id="network">…</span>
+        <span class="spacer"></span>
+        <button id="refresh">Обновить балансы</button>
+        <button id="create" class="primary">Сгенерировать новый</button>
+      </header>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 50px">#</th>
+              <th>Адрес</th>
+              <th style="width: 150px">Метка</th>
+              <th class="num" style="width: 130px">TRX</th>
+              <th class="num" style="width: 130px" id="token-head">USDT</th>
+              <th style="width: 110px"></th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr>
+              <td colspan="6" class="idx">Загрузка…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <footer id="contract"></footer>
+    </div>
+
+    <dialog id="send-dialog">
+      <form method="dialog" id="send-form">
+        <h2>Отправить</h2>
+        <div class="from" id="send-from"></div>
+
+        <label for="send-asset">Актив</label>
+        <select id="send-asset">
+          <option value="trx">TRX</option>
+          <option value="usdt">USDT</option>
+        </select>
+
+        <label for="send-to">Адрес получателя</label>
+        <input
+          type="text"
+          id="send-to"
+          placeholder="T…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+
+        <label for="send-amount">Сумма</label>
+        <div class="amount-row">
+          <input
+            type="text"
+            id="send-amount"
+            placeholder="0.0"
+            autocomplete="off"
+            inputmode="decimal"
+          />
+          <button type="button" id="send-max">Макс.</button>
+        </div>
+        <div class="hint" id="send-available"></div>
+        <div class="dialog-error" id="send-error"></div>
+
+        <div class="actions">
+          <button type="button" id="send-cancel">Отмена</button>
+          <button type="button" id="send-submit" class="primary">
+            Отправить
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <script>
+      const state = {
+        info: null,
+        wallets: [],
+        balances: new Map(),
+        sendIndex: null,
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      async function api(method, path, body) {
+        const res = await fetch(path, {
+          method,
+          headers:
+            body === undefined ? {} : { "Content-Type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        return data;
+      }
+
+      let toastTimer = null;
+      function toast(html, kind) {
+        document.querySelector(".toast")?.remove();
+
+        const el = document.createElement("div");
+        el.className = `toast ${kind || ""}`;
+        el.innerHTML = html;
+        document.body.appendChild(el);
+
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(
+          () => el.remove(),
+          kind === "err" ? 9000 : 6000,
+        );
+      }
+
+      function fmt(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return value;
+
+        return n.toLocaleString("ru-RU", { maximumFractionDigits: 6 });
+      }
+
+      function fillBalanceCell(cell, entry, field) {
+        cell.textContent = "";
+        cell.title = "";
+
+        if (!entry) {
+          const skeleton = document.createElement("span");
+          skeleton.className = "skeleton";
+          cell.appendChild(skeleton);
+          return;
+        }
+
+        const span = document.createElement("span");
+
+        if (entry.error) {
+          span.className = "cell-error";
+          span.textContent = "ошибка";
+          cell.title = entry.error;
+        } else {
+          const raw = entry[field] || "0";
+          span.className = Number(raw) === 0 ? "inactive" : "";
+          span.textContent = fmt(raw);
+        }
+
+        cell.appendChild(span);
+      }
+
+      function escapeAttr(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/"/g, "&quot;")
+          .replace(/</g, "&lt;");
+      }
+
+      function shorten(addr) {
+        return `${addr.slice(0, 10)}…${addr.slice(-8)}`;
+      }
+
+      const ICON_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="9" y="9" width="12" height="12" rx="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </svg>`;
+
+      const ICON_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>`;
+
+      const ICON_EXTERNAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M15 3h6v6" /><path d="M10 14 21 3" />
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      </svg>`;
+
+      // Keyed by the button element so a row rebuild cannot leave a stale id behind.
+      const copyTimers = new WeakMap();
+
+      async function copyAddress(btn) {
+        const address = btn.dataset.copy;
+
+        try {
+          await navigator.clipboard.writeText(address);
+        } catch {
+          // Clipboard access can be refused (no permission, or a non-secure
+          // origin other than localhost); fall back to the old execCommand.
+          const scratch = document.createElement("textarea");
+          scratch.value = address;
+          scratch.setAttribute("readonly", "");
+          scratch.style.position = "fixed";
+          scratch.style.opacity = "0";
+          document.body.appendChild(scratch);
+          scratch.select();
+
+          const ok = document.execCommand("copy");
+          scratch.remove();
+
+          if (!ok) {
+            toast("Не удалось скопировать адрес", "err");
+            return;
+          }
+        }
+
+        // Confirm on the button itself; a toast alone is easy to miss when the
+        // pointer is already on the row.
+        clearTimeout(copyTimers.get(btn));
+        btn.innerHTML = ICON_CHECK;
+        btn.classList.add("copied");
+        copyTimers.set(
+          btn,
+          setTimeout(() => {
+            btn.innerHTML = ICON_COPY;
+            btn.classList.remove("copied");
+          }, 1200),
+        );
+
+        toast("Адрес скопирован", "ok");
+      }
+
+      function buildRow(w) {
+        const explorer = state.info
+          ? `${state.info.explorer}/#/address/${w.address}`
+          : "#";
+
+        const tr = document.createElement("tr");
+        tr.dataset.index = w.index;
+        tr.innerHTML = `
+          <td class="idx">${w.index}</td>
+          <td>
+            <div class="addr-cell">
+              <span class="addr" title="${w.address}">${shorten(w.address)}</span>
+              <button class="icon-btn" data-copy="${w.address}" title="Скопировать адрес" aria-label="Скопировать адрес">${ICON_COPY}</button>
+              <a class="icon-btn" href="${explorer}" target="_blank" rel="noreferrer" title="Открыть в обозревателе" aria-label="Открыть в обозревателе">${ICON_EXTERNAL}</a>
+              <span class="tag" data-role="tag" hidden>не активирован</span>
+            </div>
+          </td>
+          <td><input class="label-input" data-label="${w.index}" placeholder="—" /></td>
+          <td class="num" data-role="trx"></td>
+          <td class="num" data-role="usdt"></td>
+          <td><button data-send="${w.index}">Отправить</button></td>`;
+
+        // Set through .value rather than the attribute so the field is never
+        // re-created from markup on later updates.
+        tr.querySelector("[data-label]").value = w.label || "";
+
+        return tr;
+      }
+
+      // Rows are patched in place, never rebuilt wholesale: replacing the tbody
+      // would drop a focused label input, and a removed element never fires the
+      // change event the rename listener waits for.
+      function render() {
+        const rows = $("rows");
+
+        if (state.wallets.length === 0) {
+          rows.replaceChildren();
+          const tr = document.createElement("tr");
+          tr.innerHTML = '<td colspan="6" class="idx">Кошельков нет</td>';
+          rows.appendChild(tr);
+          return;
+        }
+
+        if (rows.querySelector("td[colspan]")) rows.replaceChildren();
+
+        for (const w of state.wallets) {
+          let tr = rows.querySelector(`tr[data-index="${w.index}"]`);
+          if (!tr) {
+            tr = buildRow(w);
+            rows.appendChild(tr);
+          }
+
+          const label = tr.querySelector("[data-label]");
+          if (document.activeElement !== label) label.value = w.label || "";
+
+          const entry = state.balances.get(w.address);
+          fillBalanceCell(tr.querySelector('[data-role="trx"]'), entry, "trx");
+          fillBalanceCell(
+            tr.querySelector('[data-role="usdt"]'),
+            entry,
+            "usdt",
+          );
+
+          // An unactivated recipient costs the sender an extra account-creation
+          // fee, so it is worth surfacing before they send.
+          tr.querySelector('[data-role="tag"]').hidden =
+            !entry || entry.error || entry.activated;
+        }
+      }
+
+      async function loadWallets() {
+        const data = await api("GET", "/api/wallets");
+        state.wallets = data.wallets || [];
+        render();
+      }
+
+      async function loadBalances(refresh) {
+        const btn = $("refresh");
+        btn.disabled = true;
+        if (refresh) state.balances.clear();
+        render();
+
+        try {
+          const data = await api(
+            "GET",
+            `/api/balances${refresh ? "?refresh=1" : ""}`,
+          );
+          for (const b of data.balances || []) state.balances.set(b.address, b);
+          render();
+        } catch (err) {
+          toast(
+            `Не удалось получить балансы: ${escapeAttr(err.message)}`,
+            "err",
+          );
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      async function loadInfo() {
+        state.info = await api("GET", "/api/info");
+
+        const badge = $("network");
+        badge.textContent = state.info.network;
+        badge.classList.toggle("mainnet", state.info.network === "mainnet");
+
+        $("token-head").textContent = state.info.token_symbol || "USDT";
+        $("send-asset").options[1].textContent =
+          state.info.token_symbol || "USDT";
+        $("contract").textContent =
+          `Контракт ${state.info.token_symbol}: ${state.info.token_contract}`;
+      }
+
+      document.addEventListener("click", async (e) => {
+        const copy = e.target.closest("[data-copy]");
+        if (copy) {
+          await copyAddress(copy);
+          return;
+        }
+
+        const send = e.target.closest("[data-send]");
+        if (send) openSend(Number(send.dataset.send));
+      });
+
+      document.addEventListener("change", async (e) => {
+        const input = e.target.closest("[data-label]");
+        if (!input) return;
+
+        const index = Number(input.dataset.label);
+        try {
+          const updated = await api("PATCH", `/api/wallets/${index}`, {
+            label: input.value,
+          });
+          const w = state.wallets.find((x) => x.index === index);
+          if (w) w.label = updated.label;
+        } catch (err) {
+          toast(
+            `Не удалось сохранить метку: ${escapeAttr(err.message)}`,
+            "err",
+          );
+        }
+      });
+
+      $("create").addEventListener("click", async () => {
+        const btn = $("create");
+        btn.disabled = true;
+
+        try {
+          const w = await api("POST", "/api/wallets", { label: "" });
+          state.wallets.push(w);
+          render();
+          toast(`Создан кошелёк #${w.index}: ${w.address}`, "ok");
+          loadBalances(false);
+        } catch (err) {
+          toast(
+            `Не удалось создать кошелёк: ${escapeAttr(err.message)}`,
+            "err",
+          );
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      $("refresh").addEventListener("click", () => loadBalances(true));
+
+      function openSend(index) {
+        state.sendIndex = index;
+
+        const w = state.wallets.find((x) => x.index === index);
+        if (!w) return;
+
+        $("send-from").textContent = `С кошелька #${w.index} — ${w.address}`;
+        $("send-to").value = "";
+        $("send-amount").value = "";
+        $("send-error").textContent = "";
+        updateAvailable();
+        $("send-dialog").showModal();
+      }
+
+      function available() {
+        const w = state.wallets.find((x) => x.index === state.sendIndex);
+        const entry = w ? state.balances.get(w.address) : null;
+        if (!entry || entry.error) return null;
+
+        return $("send-asset").value === "trx" ? entry.trx : entry.usdt;
+      }
+
+      function updateAvailable() {
+        const value = available();
+        const symbol =
+          $("send-asset").value === "trx"
+            ? "TRX"
+            : state.info?.token_symbol || "USDT";
+        $("send-available").textContent =
+          value === null ? "" : `Доступно: ${fmt(value)} ${symbol}`;
+      }
+
+      $("send-asset").addEventListener("change", updateAvailable);
+
+      $("send-max").addEventListener("click", () => {
+        const value = available();
+        if (value !== null) $("send-amount").value = value;
+      });
+
+      $("send-cancel").addEventListener("click", () =>
+        $("send-dialog").close(),
+      );
+
+      $("send-submit").addEventListener("click", async () => {
+        const btn = $("send-submit");
+        const errBox = $("send-error");
+        errBox.textContent = "";
+
+        const payload = {
+          asset: $("send-asset").value,
+          to: $("send-to").value.trim(),
+          amount: $("send-amount").value.trim(),
+        };
+
+        if (!payload.to || !payload.amount) {
+          errBox.textContent = "Заполните адрес и сумму";
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = "Отправка…";
+
+        try {
+          const res = await api(
+            "POST",
+            `/api/wallets/${state.sendIndex}/send`,
+            payload,
+          );
+          $("send-dialog").close();
+
+          const link = `${state.info.explorer}/#/transaction/${res.txid}`;
+          toast(
+            `Отправлено. <a href="${link}" target="_blank" rel="noreferrer">${res.txid.slice(0, 16)}…</a>`,
+            "ok",
+          );
+
+          loadBalances(true);
+        } catch (err) {
+          errBox.textContent = err.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Отправить";
+        }
+      });
+
+      (async () => {
+        try {
+          await loadInfo();
+          await loadWallets();
+          await loadBalances(false);
+        } catch (err) {
+          toast(`Ошибка загрузки: ${escapeAttr(err.message)}`, "err");
+        }
+      })();
+    </script>
+  </body>
+</html>

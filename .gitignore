@@ -1,0 +1,10 @@
+# Local state: wallets.json and the generated mnemonic live here.
+/data/
+
+# Local configuration may contain the mnemonic and API keys.
+config.yaml
+.env
+
+# Build output
+/bin/
+/tronfaucet
