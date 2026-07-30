@@ -59,6 +59,10 @@ type Estimate struct {
 	// Activation is the part of Fee charged for creating the recipient's
 	// account on chain. Zero when the recipient already exists.
 	Activation decimal.Decimal
+	// bandwidthFee is the part of Fee burned for bandwidth. It stays internal:
+	// callers show the total, while Spendable needs the itemised charge to know
+	// whether the probed amount needs per-byte padding.
+	bandwidthFee decimal.Decimal
 }
 
 // TokenInfo describes the TRC20 contract configured as USDT.
@@ -366,9 +370,11 @@ func (s *Service) balance(ctx context.Context, addr string) (Balance, error) {
 // the amount's varint encoding differs by, which feeSlack covers.
 var probeAmount = decimal.New(1, -6)
 
-// feeSlack pads a probed fee to absorb the varint width difference between the
-// probe and the real amount: an int64 is at most 10 bytes, and bandwidth is
-// charged per byte.
+// feeSlack pads paid bandwidth to absorb the varint width difference between
+// the probe and the real amount: an int64 is at most 10 bytes, and bandwidth is
+// charged per byte. It must not be reserved when either bandwidth pool covers
+// the transaction, because Tron uses one whole pool or the other and never
+// combines free and staked bandwidth.
 var feeSlack = decimal.New(16, -3)
 
 // Estimate reports what a transfer would cost without broadcasting anything.
@@ -432,8 +438,9 @@ func (s *Service) Estimate(ctx context.Context, from, to string, asset Asset, am
 	// the sender's own bandwidth and energy, and itemises the account-creation
 	// charges that the free allowance is not allowed to pay for.
 	est := Estimate{
-		Fee:        res.Fee.TRX(),
-		Activation: (res.Charges.AccountCreation + res.Charges.UnstakedCreation).TRX(),
+		Fee:          res.Fee.TRX(),
+		Activation:   (res.Charges.AccountCreation + res.Charges.UnstakedCreation).TRX(),
+		bandwidthFee: res.Charges.Bandwidth.TRX(),
 	}
 	s.estimates.Set(cacheKey, est, ttlcache.DefaultTTL)
 
@@ -448,9 +455,11 @@ func (s *Service) Estimate(ctx context.Context, from, to string, asset Asset, am
 // value the account cannot cover — which is exactly the case "send everything"
 // runs into when the recipient has to be created first.
 //
-// The figure is deliberately conservative. The fee assumes bandwidth is paid
-// for in TRX, while an account with its daily free bandwidth left spends none,
-// so a little may be left behind rather than a transfer refused.
+// The bandwidth padding applies only when the estimate actually burns TRX for
+// bandwidth. A zero fee means one of the sender's bandwidth pools covers the
+// whole transaction, so "send everything" must not leave an invented fee
+// behind. Activation is a flat system-contract charge and needs no per-byte
+// padding either.
 func (s *Service) Spendable(ctx context.Context, from, to string, asset Asset) (decimal.Decimal, Estimate, error) {
 	balances, errs := s.Balances(ctx, []string{from}, false)
 	if err, ok := errs[from]; ok {
@@ -485,7 +494,10 @@ func (s *Service) Spendable(ctx context.Context, from, to string, asset Asset) (
 		return decimal.Zero, Estimate{}, err
 	}
 
-	spendable := balance.TRX.Sub(est.Fee).Sub(feeSlack)
+	spendable := balance.TRX.Sub(est.Fee)
+	if est.bandwidthFee.IsPositive() {
+		spendable = spendable.Sub(feeSlack)
+	}
 	if spendable.LessThanOrEqual(decimal.Zero) {
 		return decimal.Zero, est, fmt.Errorf(
 			"%w: %s holds %s TRX, which does not cover the fee of about %s TRX",
