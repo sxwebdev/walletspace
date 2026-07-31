@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,9 +22,6 @@ func TestHomeManagerDefaultsAndRevisionConflicts(t *testing.T) {
 		t.Fatalf("NewHomeManager() error = %v", err)
 	}
 	initial := manager.Snapshot()
-	if initial.Config.UI.LastNetworkID != "tron-mainnet" {
-		t.Errorf("last network = %q", initial.Config.UI.LastNetworkID)
-	}
 	if initial.Config.NodeDiscovery.Enabled || initial.Config.NodeDiscovery.URL != "" {
 		t.Fatalf("node discovery defaults = %+v, want disabled with empty URL", initial.Config.NodeDiscovery)
 	}
@@ -47,6 +45,13 @@ func TestHomeManagerDefaultsAndRevisionConflicts(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("config mode = %o", info.Mode().Perm())
+	}
+	contents, err := os.ReadFile(filepath.Join(home, "config.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.yaml) error = %v", err)
+	}
+	if strings.Contains(string(contents), "last_network_id") {
+		t.Error("config still persists a global default network")
 	}
 	reloaded, err := config.NewHomeManager(home)
 	if err != nil {

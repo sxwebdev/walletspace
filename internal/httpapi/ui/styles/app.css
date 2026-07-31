@@ -255,9 +255,9 @@
 .account-card {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(260px, 1.4fr) minmax(180px, 0.8fr) auto;
-  gap: var(--space-5);
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: start;
   margin: -1px;
   padding: var(--space-5);
   border-radius: 0;
@@ -277,6 +277,7 @@
 
 .account-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   margin-bottom: 5px;
@@ -303,6 +304,44 @@
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 9px;
+}
+
+.account-networks {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: var(--space-3);
+}
+
+.wallet-network {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(180px, 1.1fr) auto;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(10, 14, 25, 0.42);
+}
+
+.wallet-network-identity,
+.wallet-balances {
+  min-width: 0;
+}
+
+.wallet-network-identity .network-badges {
+  align-items: center;
+  margin: 0 0 7px;
+}
+
+.wallet-balances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.wallet-actions {
+  display: flex;
+  gap: var(--space-2);
 }
 
 .badge {
@@ -647,8 +686,12 @@
   .account-card {
     grid-template-columns: 1fr auto;
   }
-  .account-card .balance {
+  .wallet-network {
+    grid-template-columns: 1fr auto;
+  }
+  .wallet-balances {
     grid-column: 1;
+    grid-row: 2;
   }
   .onboarding {
     grid-template-columns: 1fr;
@@ -684,6 +727,14 @@
   .account-card {
     gap: var(--space-3);
     padding: var(--space-4);
+  }
+  .wallet-network {
+    grid-template-columns: 1fr;
+  }
+  .wallet-balances,
+  .wallet-actions {
+    grid-column: 1;
+    grid-row: auto;
   }
   .onboarding {
     padding: 22px 14px;

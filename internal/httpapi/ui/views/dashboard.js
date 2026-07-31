@@ -2,6 +2,7 @@ import { listSpaces, lockSpace } from "../api/spaces.js";
 import { bindAccountNetwork, listAccounts } from "../api/accounts.js";
 import { doctorHealth, listNetworks, streamBalances } from "../api/networks.js";
 import { getSettings, listAssets } from "../api/settings.js";
+import { listPrices } from "../api/prices.js";
 import { estimateTransfer, sendTransfer, transactionStatus } from "../api/transfers.js";
 import { deployContract, estimateDeploy, resources, stakingOperation } from "../api/tron.js";
 import {
@@ -22,7 +23,6 @@ import {
 import { navigate } from "../router.js";
 import {
   balanceKey,
-  currentNetwork,
   currentSpace,
   state,
   update,
@@ -34,6 +34,7 @@ let balanceController;
 let doctorTimer;
 let lastDoctorSnapshot;
 let menuDismissalBound = false;
+let priceGeneration = 0;
 const targetedBalanceControllers = new Set();
 
 export async function render(root, signal) {
@@ -47,21 +48,18 @@ export async function render(root, signal) {
       return cleanup;
     }
     const preferredSpace = state.currentSpaceID || settings.ui.last_space_id;
-    const preferredNetwork = state.currentNetworkID || settings.ui.last_network_id || "tron-mainnet";
     const spaceID = spaces.some((item) => item.id === preferredSpace)
       ? preferredSpace
       : spaces[0].id;
-    const networkID = networks.some((item) => item.id === preferredNetwork && item.enabled)
-      ? preferredNetwork
-      : networks.find((item) => item.enabled)?.id;
+    const availableNetworks = networks.filter((item) => item.enabled);
     const accountFilter = state.accountFilter === "all" || state.accountFilter === "unassigned" ||
       networks.some((item) => item.id === state.accountFilter)
       ? state.accountFilter
       : "all";
     update({
-      spaces, networks, currentSpaceID: spaceID, currentNetworkID: networkID, accountFilter,
+      spaces, networks, currentSpaceID: spaceID, accountFilter,
     });
-    if (!networkID) {
+    if (!availableNetworks.length) {
       root.innerHTML = `<div class="boot">
         <strong>Нет включённых сетей</strong>
         <span>Включите хотя бы одну сеть на странице настроек.</span>
@@ -70,10 +68,15 @@ export async function render(root, signal) {
       root.querySelector("[data-open-settings]").addEventListener("click", () => navigate("/settings"));
       return cleanup;
     }
-    const [accounts, assets] = await Promise.all([
-      listAccounts(spaceID, signal), listAssets(networkID, signal),
+    const [accounts, assetGroups] = await Promise.all([
+      listAccounts(spaceID, signal),
+      Promise.all(availableNetworks.map((network) => listAssets(network.id, signal))),
     ]);
-    update({ accounts, assets });
+    update({
+      accounts, assets: assetGroups.flat(), balances: new Map(), balancesLoading: true,
+      balanceFailures: 0,
+      prices: new Map(), pricesLoading: true, pricesStale: false, pricesError: "",
+    });
     renderShell(root);
     bindShell(root);
     startBalances();
@@ -87,6 +90,7 @@ export async function render(root, signal) {
 }
 
 function cleanup() {
+  priceGeneration += 1;
   balanceController?.abort();
   balanceController = null;
   for (const controller of targetedBalanceControllers) controller.abort();
@@ -98,7 +102,6 @@ function cleanup() {
 
 function renderShell(root) {
   const space = currentSpace();
-  const network = currentNetwork();
   root.innerHTML = `
     <div class="shell">
       <header class="topbar">
@@ -121,17 +124,12 @@ function renderShell(root) {
             </div>
           </div>
         </div>
-        <div class="toolbar">
-          <label class="sr-only" for="network-select">Network</label>
-          <select class="control" id="network-select">${networkOptions()}</select>
-          ${network.testnet ? '<span class="badge testnet">TESTNET</span>' : ""}
-          <button class="button icon" type="button" data-settings title="Настройки">⚙</button>
-        </div>
+        <button class="button icon" type="button" data-settings title="Настройки">⚙</button>
       </header>
       <main class="page">
         <section class="page-heading">
           <div>
-            <p class="eyebrow">${escapeHTML(network.name)} · Chain ${escapeHTML(network.chain_id)}</p>
+            <p class="eyebrow">Secure Space · все сети</p>
             <h1>${escapeHTML(space.name)}</h1>
             <p class="muted">${space.locked ? "Read-only · разблокируйте space для подписи и ключей" : "Vault разблокирован локально"}</p>
           </div>
@@ -147,13 +145,13 @@ function renderShell(root) {
           </div>
         </section>
         <section class="summary-grid">
-          <article class="summary-card"><span>Wallets</span><strong data-account-count>${filteredAccounts().length} / ${state.accounts.length}</strong></article>
-          <article class="summary-card"><span>Network</span><strong>${escapeHTML(network.native.symbol)}</strong><small class="muted">${network.testnet ? "Test network" : "Main network"}</small></article>
+          <article class="summary-card"><span>Общий баланс · mainnet</span><strong data-total-usd>Считаем…</strong><small class="muted" data-market-change>Загружаем балансы и USD-котировки</small></article>
+          <article class="summary-card"><span>Активы с балансом</span><strong data-assets-with-balance>—</strong><small class="muted" data-unpriced-assets>без цены: —</small></article>
           <article class="summary-card"><span>Node doctor</span><strong data-rpc-status>Checking…</strong><small class="muted" data-rpc-detail>Проверяем все сети и RPC-ноды</small><button class="doctor-details" type="button" data-doctor-details>Детали</button></article>
         </section>
         <section class="panel">
           <header class="panel-header">
-            <div><h2>Кошельки</h2><span class="muted">Общий список space; баланс относится к активной сети</span></div>
+            <div><h2>Кошельки</h2><span class="muted">Space: ${escapeHTML(space.name)} · балансы сразу во всех подключённых сетях</span></div>
             <label class="filter-control">
               <span class="sr-only">Фильтр сети</span>
               <select class="control" data-account-filter>${accountFilterOptions()}</select>
@@ -164,6 +162,7 @@ function renderShell(root) {
       </main>
     </div>`;
   queueMicrotask(refreshNetworkHealth);
+  queueMicrotask(renderPortfolioSummary);
 }
 
 function spaceOptions() {
@@ -172,18 +171,8 @@ function spaceOptions() {
     .join("");
 }
 
-function networkOptions() {
-  const groups = new Map();
-  for (const item of state.networks.filter((item) => item.enabled)) {
-    const label = item.id.split("-")[0].replace(/^./, (char) => char.toUpperCase());
-    if (!groups.has(label)) groups.set(label, []);
-    groups.get(label).push(item);
-  }
-  return [...groups.entries()]
-    .map(([label, items]) => `<optgroup label="${escapeHTML(label)}">${items
-      .map((item) => `<option value="${item.id}" ${item.id === state.currentNetworkID ? "selected" : ""}>${escapeHTML(item.short_name)}${item.testnet ? " · testnet" : ""}</option>`)
-      .join("")}</optgroup>`)
-    .join("");
+function enabledNetworks() {
+  return state.networks.filter((item) => item.enabled);
 }
 
 function assetsFor(network) {
@@ -234,66 +223,224 @@ function upsertAccount(updated) {
 }
 
 function accountCards() {
-  const network = currentNetwork();
-  const family = network.family;
-  const assets = assetsFor(network);
   const accounts = filteredAccounts();
   if (!accounts.length) {
     return `<div class="empty">${state.accounts.length
       ? "В этом фильтре пока нет кошельков."
-      : "Кошельков пока нет. Выберите сеть и нажмите «Создать»."}</div>`;
+      : "Кошельков пока нет. Нажмите «Создать» и выберите сеть в модальном окне."}</div>`;
   }
   return accounts.map((account) => {
-    const bound = accountBoundTo(account, network.id);
-    const canBind = account.kind === "imported" || !account.family || account.family === family;
-    const addressFamily = bound ? family : (account.family || Object.keys(account.addresses)[0]);
-    const address = account.addresses[addressFamily] || "";
-    const balances = bound ? assets.map((asset) => {
-      const item = state.balances.get(balanceKey(state.currentSpaceID, network.id, account.id, asset.id));
-      if (!item) return `<div class="balance"><div class="skeleton"></div><span>${asset.symbol}</span></div>`;
-      if (item.error) return `<div class="balance"><strong>—</strong><span title="${escapeHTML(item.error)}">${asset.symbol} · ошибка</span></div>`;
-      return `<div class="balance ${item.stale ? "stale" : ""}"><strong>${escapeHTML(item.amount || "0")}</strong><span>${asset.symbol}${item.stale ? " · cached" : ""}</span></div>`;
-    }).join("") : `<span class="muted">${accountNetworks(account).length
-      ? `Не подключён к ${escapeHTML(network.name)}`
-      : "Назначьте исходную сеть"}</span>`;
-    const networkBadges = accountNetworks(account).map((networkID) => {
-      const item = state.networks.find((candidate) => candidate.id === networkID);
-      return `<span class="badge ${item?.testnet ? "testnet" : ""}">${escapeHTML(item?.name || networkID)}</span>`;
-    }).join("");
+    const connectable = connectableNetworks(account);
     return `
       <article class="account-card" data-account="${account.id}">
         <div class="account-identity">
           <div class="account-title">
             <strong>${escapeHTML(account.label || `Account ${account.index ?? ""}`)}</strong>
             <span class="badge ${account.kind === "imported" ? "imported" : ""}" title="${account.kind === "imported" ? "Не восстанавливается из мнемоники space" : "Восстанавливается из мнемоники space"}">${account.kind === "imported" ? "Импортирован" : "Derived"}</span>
+            <span class="badge">Space · ${escapeHTML(currentSpace().name)}</span>
           </div>
-          <button class="address" type="button" data-copy="${escapeHTML(address)}" title="Копировать адрес">${escapeHTML(shortAddress(address))}</button>
-          <div class="network-badges">${networkBadges || '<span class="badge danger">Сеть не назначена</span>'}</div>
         </div>
-        <div class="toolbar">${balances}</div>
         <div class="menu">
           <button class="button icon" type="button" data-account-menu aria-label="Действия" aria-haspopup="menu" aria-expanded="false">•••</button>
           <div class="menu-popover">
-            ${bound ? '<button type="button" data-action="send">Отправить</button>' : canBind
-              ? '<button type="button" data-action="bind">Подключить к активной сети</button>'
-              : '<button type="button" data-action="derive">Создать wallet для активной family</button>'}
-            ${bound && network.family === "tron" ? '<button type="button" data-action="resources">Resources & staking</button><button type="button" data-action="deploy">Deploy contract</button>' : ""}
+            ${connectable.length ? '<button type="button" data-action="bind">Подключить ещё одну сеть</button>' : ""}
             <button type="button" data-action="rename">Переименовать</button>
             <button type="button" data-action="export">Экспорт private key</button>
-            <button type="button" data-copy="${escapeHTML(address)}">Копировать адрес</button>
           </div>
         </div>
+        <div class="account-networks">${accountNetworkRows(account)}</div>
       </article>`;
   }).join("");
 }
 
+function connectableNetworks(account) {
+  return enabledNetworks().filter((network) => !accountBoundTo(account, network.id) &&
+    (account.kind === "imported" || !account.family || account.family === network.family));
+}
+
+function accountNetworkRows(account) {
+  const rows = accountNetworks(account).map((networkID) => {
+    const network = state.networks.find((item) => item.id === networkID);
+    if (!network) {
+      return `<div class="wallet-network"><div><strong>${escapeHTML(networkID)}</strong><small class="muted">Сеть отсутствует в конфигурации</small></div></div>`;
+    }
+    const address = account.addresses[network.family] || "";
+    const balances = network.enabled ? visibleAssets(account, network).map((asset) => {
+      const item = state.balances.get(balanceKey(state.currentSpaceID, network.id, account.id, asset.id));
+      const symbol = escapeHTML(asset.symbol);
+      if (!item) return `<div class="balance"><div class="skeleton"></div><span>${symbol}</span></div>`;
+      if (item.error) return `<div class="balance"><strong>—</strong><span title="${escapeHTML(item.error)}">${symbol} · ошибка</span></div>`;
+      return `<div class="balance ${item.stale ? "stale" : ""}"><strong>${escapeHTML(item.amount || "0")}</strong><span>${symbol}${item.stale ? " · cached" : ""}</span></div>`;
+    }).join("") : '<span class="muted">Сеть отключена в настройках</span>';
+    return `<section class="wallet-network" data-network="${escapeHTML(network.id)}">
+      <div class="wallet-network-identity">
+        <div class="network-badges"><strong>${escapeHTML(network.name)}</strong>${network.testnet ? '<span class="badge testnet">TESTNET</span>' : ""}${network.enabled ? "" : '<span class="badge danger">OFF</span>'}</div>
+        <button class="address" type="button" data-copy="${escapeHTML(address)}" title="Копировать адрес">${escapeHTML(shortAddress(address))}</button>
+      </div>
+      <div class="wallet-balances">${balances}</div>
+      <div class="wallet-actions">
+        ${network.enabled ? `<button class="button" type="button" data-action="send" data-network="${escapeHTML(network.id)}">Отправить</button>` : ""}
+        ${network.enabled && network.family === "tron" ? `<button class="button icon" type="button" data-action="resources" data-network="${escapeHTML(network.id)}" title="Resources & staking">R</button><button class="button icon" type="button" data-action="deploy" data-network="${escapeHTML(network.id)}" title="Deploy contract">D</button>` : ""}
+      </div>
+    </section>`;
+  });
+  return rows.length ? rows.join("") : '<div class="notice danger">Сеть не назначена. Подключите сеть через меню wallet.</div>';
+}
+
+function visibleAssets(account, network) {
+  return assetsFor(network).filter((asset) => {
+    if (asset.kind === "native") return true;
+    const balance = state.balances.get(
+      balanceKey(state.currentSpaceID, network.id, account.id, asset.id),
+    );
+    return balance?.error || !isZeroAmount(balance?.amount);
+  });
+}
+
+function isZeroAmount(amount) {
+  return amount === undefined || /^0(?:\.0+)?$/.test(String(amount).trim());
+}
+
 function renderAccounts() {
-  const count = document.querySelector("[data-account-count]");
-  if (count) count.textContent = `${filteredAccounts().length} / ${state.accounts.length}`;
   document.querySelector("[data-account-list]")?.replaceChildren(
     document.createRange().createContextualFragment(accountCards()),
   );
   bindAccountActions();
+  renderPortfolioSummary();
+}
+
+function renderPortfolioSummary() {
+  const totalElement = document.querySelector("[data-total-usd]");
+  const changeElement = document.querySelector("[data-market-change]");
+  const assetsElement = document.querySelector("[data-assets-with-balance]");
+  const unpricedElement = document.querySelector("[data-unpriced-assets]");
+  if (!totalElement || !changeElement || !assetsElement || !unpricedElement) return;
+
+  if (state.balancesLoading) {
+    totalElement.textContent = "Считаем…";
+    changeElement.textContent = "Загружаем mainnet-балансы";
+    assetsElement.textContent = "—";
+    unpricedElement.textContent = "без цены: —";
+    return;
+  }
+
+  const portfolio = calculatePortfolio();
+  const failedNetworks = state.balanceFailures || 0;
+  const failureSuffix = failedNetworks ? ` · ошибок сетей: ${failedNetworks}` : "";
+  assetsElement.textContent = String(portfolio.assets.size);
+  unpricedElement.textContent = `без цены: ${portfolio.unpriced.size}${failureSuffix}`;
+  if (!portfolio.assets.size) {
+    if (failedNetworks) {
+      totalElement.textContent = "—";
+      changeElement.textContent = `Не удалось загрузить балансы в ${failedNetworks} сетях`;
+      assetsElement.textContent = "—";
+      return;
+    }
+    totalElement.textContent = formatUSD(0);
+    changeElement.textContent = "Нет mainnet-активов с балансом";
+    return;
+  }
+  if (state.pricesLoading) {
+    totalElement.textContent = "Считаем…";
+    changeElement.textContent = "Загружаем USD-котировки";
+    return;
+  }
+  if (!portfolio.priced.size) {
+    totalElement.textContent = "—";
+    changeElement.textContent = state.pricesError || "Для активов не найдены котировки";
+    return;
+  }
+
+  totalElement.textContent = `${portfolio.unpriced.size || failedNetworks ? "≈ " : ""}${formatUSD(portfolio.current)}`;
+  const cached = state.pricesStale ? " · cached quotes" : "";
+  if (!portfolio.historyComplete || portfolio.previous <= 0) {
+    changeElement.textContent = `24ч: недостаточно исторических котировок${cached}${failureSuffix}`;
+    return;
+  }
+  const delta = portfolio.current - portfolio.previous;
+  const percent = delta / portfolio.previous * 100;
+  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+  changeElement.textContent = `Изменение цен: ${sign}${formatUSD(Math.abs(delta))} · ${sign}${Math.abs(percent).toFixed(2)}% за 24ч${cached}${failureSuffix}`;
+}
+
+function calculatePortfolio() {
+  const mainnetIDs = new Set(enabledNetworks().filter((network) => !network.testnet).map((network) => network.id));
+  const result = {
+    assets: new Set(), priced: new Set(), unpriced: new Set(),
+    current: 0, previous: 0, historyComplete: true,
+  };
+  for (const holding of mainnetHoldings(mainnetIDs)) {
+    result.assets.add(holding.asset.id);
+    const quote = state.prices.get(holding.asset.id);
+    const currentPrice = Number(quote?.current_usd);
+    if (!quote || !Number.isFinite(currentPrice)) {
+      result.unpriced.add(holding.asset.id);
+      continue;
+    }
+    result.priced.add(holding.asset.id);
+    result.current += holding.amount * currentPrice;
+    const previousPrice = Number(quote.previous_24h_usd);
+    if (!quote.has_previous_24h || !Number.isFinite(previousPrice)) {
+      result.historyComplete = false;
+      continue;
+    }
+    result.previous += holding.amount * previousPrice;
+  }
+  return result;
+}
+
+function mainnetHoldings(mainnetIDs = new Set(
+  enabledNetworks().filter((network) => !network.testnet).map((network) => network.id),
+)) {
+  const holdings = [];
+  for (const account of state.accounts) {
+    for (const networkID of accountNetworks(account)) {
+      if (!mainnetIDs.has(networkID)) continue;
+      const network = state.networks.find((item) => item.id === networkID);
+      for (const asset of assetsFor(network)) {
+        const balance = state.balances.get(balanceKey(state.currentSpaceID, networkID, account.id, asset.id));
+        if (!balance || balance.error || isZeroAmount(balance.amount)) continue;
+        const amount = Number(balance.amount);
+        if (Number.isFinite(amount) && amount > 0) holdings.push({ asset, amount });
+      }
+    }
+  }
+  return holdings;
+}
+
+function formatUSD(value) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(value);
+}
+
+async function loadPrices() {
+  const generation = priceGeneration + 1;
+  priceGeneration = generation;
+  const assetIDs = [...new Set(mainnetHoldings().map((holding) => holding.asset.id))];
+  if (!assetIDs.length) {
+    update({ prices: new Map(), pricesLoading: false, pricesStale: false, pricesError: "" });
+    renderPortfolioSummary();
+    return;
+  }
+  update({ pricesLoading: true, pricesError: "" });
+  renderPortfolioSummary();
+  try {
+    const result = await listPrices(assetIDs, routeSignal);
+    if (generation !== priceGeneration) return;
+    update({
+      prices: new Map(result.quotes.map((quote) => [quote.asset_id, quote])),
+      pricesLoading: false, pricesStale: Boolean(result.stale), pricesError: "",
+    });
+  } catch (cause) {
+    if (cause.name === "AbortError") return;
+    if (generation !== priceGeneration) return;
+    update({
+      prices: new Map(), pricesLoading: false, pricesStale: false,
+      pricesError: "Котировки временно недоступны",
+    });
+  }
+  renderPortfolioSummary();
 }
 
 function bindShell(root) {
@@ -301,12 +448,13 @@ function bindShell(root) {
   root.querySelector("[data-settings]").addEventListener("click", () => navigate("/settings"));
   root.querySelector("[data-doctor-details]").addEventListener("click", showDoctorDetails);
   root.querySelector("#space-select").addEventListener("change", switchSpace);
-  root.querySelector("#network-select").addEventListener("change", switchNetwork);
   root.querySelector("[data-account-filter]").addEventListener("change", (event) => {
     update({ accountFilter: event.target.value });
     renderAccounts();
   });
-  root.querySelector("[data-refresh]").addEventListener("click", () => startBalances(true));
+  root.querySelector("[data-refresh]").addEventListener("click", () => {
+    startBalances(true);
+  });
   root.querySelector("[data-lock]").addEventListener("click", toggleLock);
   root.querySelector("[data-new-space]").addEventListener("click", () => openCreateSpace((result) => {
     state.spaces.push(result.space);
@@ -317,7 +465,7 @@ function bindShell(root) {
   createMenu.querySelector("[data-menu-toggle]").addEventListener("click", () => toggleMenu(createMenu));
   createMenu.querySelector("[data-derive]").addEventListener("click", () => {
     closeMenus();
-    openDerive(state.currentSpaceID, currentNetwork(), nextDerivationIndex(state.currentNetworkID), (created) => {
+    openDerive(state.currentSpaceID, enabledNetworks(), nextDerivationIndex, (created) => {
       upsertAccount(created);
       renderAccounts();
       startBalances(true, [created.id]);
@@ -325,7 +473,7 @@ function bindShell(root) {
   });
   createMenu.querySelector("[data-import]").addEventListener("click", () => {
     closeMenus();
-    openImport(state.currentSpaceID, currentNetwork(), (created) => {
+    openImport(state.currentSpaceID, enabledNetworks(), (created) => {
       upsertAccount(created);
       toast("Ключ импортирован. Не забудьте backup.");
       renderAccounts();
@@ -366,15 +514,9 @@ function bindAccountActions() {
     button.addEventListener("click", () => {
       closeMenus();
       const account = state.accounts.find((item) => item.id === button.closest("[data-account]").dataset.account);
-      if (button.dataset.action === "send") showSend(account);
-      if (button.dataset.action === "bind") bindToCurrentNetwork(account);
-      if (button.dataset.action === "derive") {
-        openDerive(state.currentSpaceID, currentNetwork(), nextDerivationIndex(state.currentNetworkID), (created) => {
-          upsertAccount(created);
-          renderAccounts();
-          startBalances(true, [created.id]);
-        });
-      }
+      const network = state.networks.find((item) => item.id === button.dataset.network);
+      if (button.dataset.action === "send") showSend(account, network);
+      if (button.dataset.action === "bind") showBindNetwork(account);
       if (button.dataset.action === "rename") {
         openAccountRename(state.currentSpaceID, account, (updated) => {
           Object.assign(account, updated);
@@ -382,10 +524,10 @@ function bindAccountActions() {
         });
       }
       if (button.dataset.action === "export") {
-        openExport(state.currentSpaceID, account, currentNetwork().family);
+        openExport(state.currentSpaceID, account, account.family || "evm");
       }
-      if (button.dataset.action === "resources") showResources(account);
-      if (button.dataset.action === "deploy") showDeploy(account);
+      if (button.dataset.action === "resources") showResources(account, network);
+      if (button.dataset.action === "deploy") showDeploy(account, network);
     });
   });
 }
@@ -442,26 +584,31 @@ function closeMenus() {
   });
 }
 
-function bindToCurrentNetwork(account) {
-  const network = currentNetwork();
+function showBindNetwork(account) {
+  const candidates = connectableNetworks(account);
+  if (!candidates.length) return;
   const legacy = !accountNetworks(account).length;
   modal({
-    title: `Подключить к ${network.name}?`,
+    title: "Подключить сеть",
     subtitle: legacy
       ? "Это старая запись без network binding. Выберите только ту сеть, где вы действительно создавали этот wallet."
-      : "Тот же key source станет доступен для балансов и операций в этой сети.",
-    content: `<div class="form-stack">
+      : "Тот же key source станет доступен для балансов и операций в выбранной сети.",
+    content: `<form class="form-stack" data-form>
       ${legacy ? '<div class="notice danger">Назначение определит address family старой записи. Проверьте сеть перед продолжением.</div>' : ""}
+      <label class="field"><span>Сеть</span><select name="network_id">${candidates.map((network) => `<option value="${escapeHTML(network.id)}">${escapeHTML(network.name)}${network.testnet ? " · TESTNET" : ""}</option>`).join("")}</select></label>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="button" data-confirm>Подключить wallet</button>
-    </div>`,
+      <button class="button primary" type="submit">Подключить wallet</button>
+    </form>`,
     onMount(element, close) {
-      const button = element.querySelector("[data-confirm]");
-      button.addEventListener("click", async () => {
-        button.disabled = true;
+      const form = element.querySelector("[data-form]");
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const networkID = new FormData(form).get("network_id");
+        const network = candidates.find((item) => item.id === networkID);
+        setBusy(form, true);
         try {
           const updated = await bindAccountNetwork(
-            state.currentSpaceID, account.id, network.id,
+            state.currentSpaceID, account.id, networkID,
           );
           upsertAccount(updated);
           close();
@@ -470,7 +617,8 @@ function bindToCurrentNetwork(account) {
           toast(`Wallet подключён к ${network.name}`);
         } catch (cause) {
           element.querySelector("[data-error]").textContent = cause.message;
-          button.disabled = false;
+        } finally {
+          setBusy(form, false);
         }
       });
     },
@@ -480,7 +628,10 @@ function bindToCurrentNetwork(account) {
 async function switchSpace(event) {
   balanceController?.abort();
   const spaceID = event.target.value;
-  update({ currentSpaceID: spaceID, accounts: [] });
+  update({
+    currentSpaceID: spaceID, accounts: [], balances: new Map(),
+    balancesLoading: true, balanceFailures: 0,
+  });
   try {
     const accounts = await listAccounts(spaceID, routeSignal);
     if (spaceID !== state.currentSpaceID) return;
@@ -493,25 +644,6 @@ async function switchSpace(event) {
       toast(cause.message, "error");
     }
   }
-}
-
-async function switchNetwork(event) {
-  balanceController?.abort();
-  const networkID = event.target.value;
-  update({ currentNetworkID: networkID });
-  try {
-    const assets = await listAssets(networkID, routeSignal);
-    if (networkID !== state.currentNetworkID) return;
-    update({ assets });
-  } catch (cause) {
-    if (cause.name !== "AbortError" && networkID === state.currentNetworkID) {
-      toast(cause.message, "error");
-    }
-    if (networkID !== state.currentNetworkID) return;
-  }
-  renderShell(document.querySelector("#app"));
-  bindShell(document.querySelector("#app"));
-  startBalances();
 }
 
 async function refreshNetworkHealth() {
@@ -576,22 +708,16 @@ function startBalances(refresh = false, accountIDs = []) {
   targetedBalanceControllers.clear();
   balanceController = new AbortController();
   const generation = state.balanceGeneration + 1;
-  update({ balanceGeneration: generation });
-  const networkID = state.currentNetworkID;
+  update({ balanceGeneration: generation, balancesLoading: true, balanceFailures: 0 });
   const spaceID = state.currentSpaceID;
   const selected = accountIDs.length ? new Set(accountIDs) : null;
-  streamBalances(spaceID, networkID, {
-    signal: balanceController.signal,
-    refresh,
-    accountIDs,
-    onValue(result) {
-      if (generation !== state.balanceGeneration || networkID !== state.currentNetworkID) return;
-      if (selected && !selected.has(result.account_id)) return;
-      state.balances.set(balanceKey(spaceID, networkID, result.account_id, result.asset_id), result);
-      renderAccounts();
-    },
-  }).catch((cause) => {
-    if (cause.name !== "AbortError") toast(`Баланс: ${cause.message}`, "error");
+  const requests = balanceNetworks(selected).map((network) =>
+    streamNetworkBalances(network, balanceController, generation, spaceID, refresh, accountIDs, selected));
+  reportBalanceFailures(requests).then((failures) => {
+    if (generation !== state.balanceGeneration || spaceID !== state.currentSpaceID) return;
+    update({ balancesLoading: false, balanceFailures: failures });
+    renderPortfolioSummary();
+    loadPrices();
   });
 }
 
@@ -599,22 +725,58 @@ function startTargetedBalances(refresh, accountIDs) {
   const controller = new AbortController();
   targetedBalanceControllers.add(controller);
   const generation = state.balanceGeneration;
-  const networkID = state.currentNetworkID;
   const spaceID = state.currentSpaceID;
   const selected = new Set(accountIDs);
-  streamBalances(spaceID, networkID, {
+  const requests = balanceNetworks(selected).map((network) => streamBalances(spaceID, network.id, {
     signal: controller.signal,
     refresh,
     accountIDs,
     onValue(result) {
-      if (generation !== state.balanceGeneration || networkID !== state.currentNetworkID) return;
+      if (generation !== state.balanceGeneration || spaceID !== state.currentSpaceID) return;
       if (!selected.has(result.account_id)) return;
-      state.balances.set(balanceKey(spaceID, networkID, result.account_id, result.asset_id), result);
+      state.balances.set(balanceKey(spaceID, network.id, result.account_id, result.asset_id), result);
       renderAccounts();
     },
-  }).catch((cause) => {
-    if (cause.name !== "AbortError") toast(`Баланс: ${cause.message}`, "error");
-  }).finally(() => targetedBalanceControllers.delete(controller));
+  }));
+  reportBalanceFailures(requests).then((failures) => {
+    targetedBalanceControllers.delete(controller);
+    if (controller.signal.aborted || spaceID !== state.currentSpaceID) return;
+    if (failures) {
+      update({ balanceFailures: Math.max(state.balanceFailures || 0, failures) });
+      renderPortfolioSummary();
+    }
+    loadPrices();
+  });
+}
+
+function balanceNetworks(selected) {
+  return enabledNetworks().filter((network) => state.accounts.some((account) =>
+    accountBoundTo(account, network.id) && (!selected || selected.has(account.id))));
+}
+
+function streamNetworkBalances(network, controller, generation, spaceID, refresh, accountIDs, selected) {
+  return streamBalances(spaceID, network.id, {
+    signal: controller.signal,
+    refresh,
+    accountIDs,
+    onValue(result) {
+      if (generation !== state.balanceGeneration || spaceID !== state.currentSpaceID) return;
+      if (selected && !selected.has(result.account_id)) return;
+      state.balances.set(balanceKey(spaceID, network.id, result.account_id, result.asset_id), result);
+      renderAccounts();
+    },
+  });
+}
+
+function reportBalanceFailures(requests) {
+  return Promise.allSettled(requests).then((results) => {
+    const failures = results.filter((result) =>
+      result.status === "rejected" && result.reason?.name !== "AbortError");
+    if (failures.length) {
+      toast(`Не удалось обновить баланс в ${failures.length} сетях: ${failures[0].reason.message}`, "error");
+    }
+    return failures.length;
+  });
 }
 
 async function toggleLock() {
@@ -643,8 +805,7 @@ function rerenderShell() {
   startBalances();
 }
 
-function showSend(account) {
-  const network = currentNetwork();
+function showSend(account, network) {
   const assets = assetsFor(network);
   modal({
     title: `Отправить · ${network.name}`,
@@ -714,8 +875,7 @@ function showSend(account) {
   });
 }
 
-async function showResources(account) {
-  const network = currentNetwork();
+async function showResources(account, network) {
   const dialog = modal({
     title: "Tron resources",
     subtitle: `${network.name} · ${shortAddress(account.addresses.tron)}`,
@@ -800,8 +960,7 @@ async function showResources(account) {
   }
 }
 
-function showDeploy(account) {
-  const network = currentNetwork();
+function showDeploy(account, network) {
   modal({
     title: "Deploy Tron contract",
     subtitle: `${network.name} · deployment расходует энергию даже при failure`,
@@ -885,11 +1044,11 @@ async function trackReceipt(spaceID, networkID, txID, senderID, recipient) {
       if (status.status === "pending") continue;
       toast(status.status === "confirmed" ? "Транзакция подтверждена" : "Транзакция завершилась ошибкой",
         status.status === "confirmed" ? "" : "error");
-      if (spaceID !== state.currentSpaceID || networkID !== state.currentNetworkID) return;
+      if (spaceID !== state.currentSpaceID) return;
       const family = state.networks.find((item) => item.id === networkID)?.family;
       const recipientAccount = state.accounts.find((item) =>
         accountBoundTo(item, networkID) &&
-        item.addresses[family]?.toLowerCase() === recipient.toLowerCase());
+        item.addresses[family]?.toLowerCase() === recipient?.toLowerCase());
       startBalances(true, [senderID, recipientAccount?.id].filter(Boolean));
       return;
     } catch (cause) {

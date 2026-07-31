@@ -102,7 +102,6 @@ function generalCard() {
     <form data-general>
       <label class="field"><span>UI address</span><input name="addr" value="${escapeHTML(settings.server.addr)}" required></label>
       <label><input type="checkbox" name="open_browser" ${settings.server.open_browser ? "checked" : ""}> Открывать браузер при запуске</label>
-      <label class="field"><span>Default network</span><select name="last_network_id">${networks.map((item) => `<option value="${item.id}" ${settings.ui.last_network_id === item.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
       <label class="field"><span>Default space</span><select name="last_space_id"><option value="">Не задан</option>${spaces.map((item) => `<option value="${item.id}" ${settings.ui.last_space_id === item.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
       <div class="error-text" data-error></div>
       <div class="form-actions"><button class="button primary" type="submit">Сохранить общие</button></div>
@@ -241,7 +240,7 @@ async function submitGeneral(event) {
   await saveForm(form, async () => {
     settings = await saveGeneral({
       server: { addr: data.get("addr"), open_browser: data.get("open_browser") === "on" },
-      ui: { last_space_id: data.get("last_space_id"), last_network_id: data.get("last_network_id") },
+      ui: { last_space_id: data.get("last_space_id") },
     }, settings.revision);
     networkRevision = settings.revision;
   });

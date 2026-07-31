@@ -8,10 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/sxwebdev/walletspace/internal/asset"
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
 	tronchain "github.com/sxwebdev/walletspace/internal/chain/tron"
@@ -20,6 +23,7 @@ import (
 	"github.com/sxwebdev/walletspace/internal/httpapi"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
+	"github.com/sxwebdev/walletspace/internal/price"
 	"github.com/sxwebdev/walletspace/internal/rpcpool"
 	"github.com/sxwebdev/walletspace/internal/space"
 	"github.com/sxwebdev/walletspace/internal/vault"
@@ -31,6 +35,40 @@ type platformFixture struct {
 	evm     *evmchain.Adapter
 	tron    *tronchain.Adapter
 	doctor  *doctor.Doctor
+	prices  *priceFake
+}
+
+type priceFake struct {
+	mu        sync.Mutex
+	requested []string
+	calls     int
+}
+
+func (f *priceFake) Quotes(_ context.Context, identifiers []string) (price.Snapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.requested = append([]string(nil), identifiers...)
+	quotes := make(map[string]price.Quote, len(identifiers))
+	for _, identifier := range identifiers {
+		quotes[identifier] = price.Quote{
+			Current: decimal.NewFromInt(2), Previous: decimal.NewFromInt(1),
+			HasPrevious: true, Timestamp: time.Unix(100, 0).UTC(),
+		}
+	}
+	return price.Snapshot{Quotes: quotes}, nil
+}
+
+func (f *priceFake) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *priceFake) Requested() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.requested...)
 }
 
 func newPlatformFixture(t *testing.T) platformFixture {
@@ -69,8 +107,10 @@ func newPlatformFixture(t *testing.T) platformFixture {
 	if err != nil {
 		t.Fatalf("doctor.New() error = %v", err)
 	}
+	prices := &priceFake{}
 	handler, err := httpapi.NewPlatform(
 		spaces, settings, registry, operation.New(home), mustAssetStore(t, home), evm, tron, nodeDoctor,
+		prices,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
@@ -82,7 +122,9 @@ func newPlatformFixture(t *testing.T) platformFixture {
 		evm.Close()
 		spaces.Close()
 	})
-	return platformFixture{handler: handler, spaces: spaces, evm: evm, tron: tron, doctor: nodeDoctor}
+	return platformFixture{
+		handler: handler, spaces: spaces, evm: evm, tron: tron, doctor: nodeDoctor, prices: prices,
+	}
 }
 
 func mustAssetStore(t *testing.T, home string) *asset.Store {
@@ -320,6 +362,59 @@ func TestPlatformSettingsUseETagAndServeClientRoute(t *testing.T) {
 	page := platformRequest(t, fixture.handler, http.MethodGet, "/settings", nil)
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="app"`) {
 		t.Fatalf("GET /settings = %d %s", page.Code, page.Body.String())
+	}
+}
+
+func TestPlatformPricesOnlyRequestsMainnetAssets(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPlatformFixture(t)
+	empty := platformRequest(t, fixture.handler, http.MethodGet, "/api/prices", nil)
+	if empty.Code != http.StatusOK || fixture.prices.Calls() != 0 ||
+		!strings.Contains(empty.Body.String(), `"quotes":[]`) {
+		t.Fatalf("empty GET /api/prices = %d %s, provider calls = %d",
+			empty.Code, empty.Body.String(), fixture.prices.Calls())
+	}
+	if got := empty.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("GET /api/prices Cache-Control = %q, want no-store", got)
+	}
+	response := platformRequest(t, fixture.handler, http.MethodGet,
+		"/api/prices?asset_id=tron-mainnet:native&asset_id=ethereum-mainnet:native"+
+			"&asset_id=bsc-mainnet:native&asset_id=tron-nile:native", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /api/prices = %d %s", response.Code, response.Body.String())
+	}
+	requested := fixture.prices.Requested()
+	for _, want := range []string{"coingecko:tron", "coingecko:ethereum", "coingecko:binancecoin"} {
+		if !slices.Contains(requested, want) {
+			t.Errorf("price identifiers do not contain %q: %v", want, requested)
+		}
+	}
+	for _, identifier := range requested {
+		if strings.Contains(identifier, "nile") || strings.Contains(identifier, "sepolia") {
+			t.Errorf("testnet identifier requested: %q", identifier)
+		}
+	}
+	var payload struct {
+		Quotes []struct {
+			AssetID    string          `json:"asset_id"`
+			CurrentUSD decimal.Decimal `json:"current_usd"`
+		} `json:"quotes"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode prices: %v", err)
+	}
+	found := false
+	for _, quote := range payload.Quotes {
+		if quote.AssetID == "tron-mainnet:native" {
+			found = quote.CurrentUSD.Equal(decimal.NewFromInt(2))
+		}
+		if strings.Contains(quote.AssetID, "testnet") || strings.Contains(quote.AssetID, "tron-nile") {
+			t.Errorf("testnet quote returned: %+v", quote)
+		}
+	}
+	if !found {
+		t.Fatalf("Tron native quote missing: %+v", payload.Quotes)
 	}
 }
 

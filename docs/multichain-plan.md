@@ -868,7 +868,7 @@ network, поэтому безопасный delete flow проектирует�
 
 - label;
 - адрес и badges явно подключённых networks;
-- native и configured token balances выбранной network;
+- отдельные строки и balances всех явно подключённых networks;
 - badge `Derived` или `Импортирован`;
 - отдельный warning для imported account;
 - menu действий, зависящее от capabilities network;
@@ -892,16 +892,19 @@ Import dialog:
 Export dialog для derived wallet фиксирован на его family. Для imported
 secp256k1 wallet объясняет, что ключ общий для обеих families.
 
-### Balances и переключение network
+### Balances и portfolio summary
 
 - cache key: `(space_id, network_id, account_id, asset_id)`;
 - last known value показывается сразу;
 - stale value отмечается, refresh идёт в фоне;
-- смена network отменяет старый stream через `AbortController`;
-- late response старой network отбрасывается по generation/version;
+- все включённые networks загружаются параллельно без глобального network switch;
+- смена space отменяет старые streams через `AbortController`;
+- late response старого space отбрасывается по generation/version;
 - после send обновляются только sender и локально известный recipient;
-- summary не суммирует ETH, BNB, POL и AVAX в одно число без price feed;
-- portfolio summary относится только к выбранной network.
+- mainnet balances агрегируются в USD через keyless DefiLlama price feed;
+- price cache живёт пять минут, testnets исключаются, assets без цены считаются отдельно;
+- изменение цен за 24 часа использует текущие количества и historical quotes,
+  поэтому не является историческим P&L с учётом переводов.
 
 ### Страница настроек
 
@@ -913,7 +916,7 @@ secp256k1 wallet объясняет, что ключ общий для обеи�
 
 Разделы:
 
-1. **Общие** — адрес UI, открытие браузера при старте, default space/network.
+1. **Общие** — адрес UI, открытие браузера при старте, default space.
 2. **Безопасность** — auto-lock timeout и управление паролем выбранного space.
 3. **Node Discovery** — enabled, URL, refresh interval, timeout.
 4. **Сети и RPC** — список сетей, enabled state, RPC mode, endpoints, headers,
@@ -978,7 +981,6 @@ node_discovery:
 
 ui:
   last_space_id: ""
-  last_network_id: tron-mainnet
 ```
 
 Старые глобальные поля `NETWORK`, `NODES`, `USDT_CONTRACT`,
@@ -1162,8 +1164,8 @@ Native ES modules загружаются браузером без npm/build ste
 - `features/` владеет конкретным use case, его templates, actions и локальным
   state;
 - `api/` содержит только transport DTO, AbortSignal и нормализацию ошибок;
-- `state/` хранит session-wide normalized state: выбранные space/network,
-  accounts, balances и settings revision;
+- `state/` хранит session-wide normalized state: выбранный space, accounts,
+  multichain balances, USD quotes и settings revision;
 - `components/` — переиспользуемые presentation primitives без знания wallet
   domain;
 - `styles/tokens.css` — единый источник цветов, spacing и typography;

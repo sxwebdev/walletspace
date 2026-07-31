@@ -50,8 +50,7 @@ type rawDiscoverySettings struct {
 }
 
 type UISettings struct {
-	LastSpaceID   string `json:"last_space_id" yaml:"last_space_id"`
-	LastNetworkID string `json:"last_network_id" yaml:"last_network_id"`
+	LastSpaceID string `json:"last_space_id" yaml:"last_space_id"`
 }
 
 type HomeConfig struct {
@@ -112,7 +111,7 @@ func DefaultHomeConfig() HomeConfig {
 			Enabled: false, URL: "",
 			RefreshInterval: 30 * time.Minute, RequestTimeout: 5 * time.Second,
 		},
-		UI: UISettings{LastNetworkID: "tron-mainnet"},
+		UI: UISettings{},
 	}
 }
 

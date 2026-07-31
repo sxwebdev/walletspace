@@ -28,6 +28,8 @@ imported accounts, Tron и EVM-сети в одном UI. Приватные к�
 - native/ERC20/TRC20 balances и transfers;
 - Tron resources, staking, delegation и contract deployment;
 - прогрессивная фоновая загрузка балансов без перезагрузки всей таблицы;
+- общий mainnet-баланс в USD и изменение цен за 24 часа через бесплатный
+  keyless price feed DefiLlama с пятиминутным кэшем;
 - фоновый Node Doctor, проверяющий RPC-ноды всех включённых сетей;
 - typed settings UI для RPC, provider headers, explorer, discovery, assets,
   auto-lock и общих настроек.
@@ -106,6 +108,19 @@ go run ./cmd/walletspace migrate --from ./data --dry-run
 
 Custom RPC и provider headers задаются через `/settings`. API возвращает только
 признак наличия headers, но не их значения.
+
+## USD-оценка
+
+Portfolio summary учитывает ненулевые балансы во всех включённых mainnet-сетях;
+testnet-активы в USD total не входят. Текущие и исторические котировки получает
+backend от `coins.llama.fi` и кэширует на пять минут. Во внешний запрос попадают
+только публичные идентификаторы assets с ненулевым балансом — адреса кошельков,
+размеры балансов и идентификаторы spaces не передаются. Assets без котировки не
+добавляются в total и отдельно считаются как `без цены`.
+
+`Изменение цен за 24ч` пересчитывает текущие количества assets по котировкам
+сейчас и 24 часа назад. Это market movement, а не исторический P&L: переводы и
+изменение количества активов показатель не реконструирует.
 
 ## Безопасность
 

@@ -38,3 +38,22 @@ func TestBuiltinRegistry(t *testing.T) {
 		t.Errorf("base-mainnet = %+v", base)
 	}
 }
+
+func TestPolygonAmoyDefaultRPC(t *testing.T) {
+	t.Parallel()
+
+	registry, err := network.Builtin()
+	if err != nil {
+		t.Fatalf("Builtin() error = %v", err)
+	}
+	amoy, err := registry.Get("polygon-amoy")
+	if err != nil {
+		t.Fatalf("Get(polygon-amoy) error = %v", err)
+	}
+	if amoy.ChainID != "80002" {
+		t.Fatalf("polygon-amoy chain ID = %q, want 80002", amoy.ChainID)
+	}
+	if len(amoy.RPCFallbacks) != 1 || amoy.RPCFallbacks[0] != "https://polygon-amoy-bor-rpc.publicnode.com" {
+		t.Fatalf("polygon-amoy RPC fallbacks = %q, want PublicNode Amoy Bor RPC", amoy.RPCFallbacks)
+	}
+}

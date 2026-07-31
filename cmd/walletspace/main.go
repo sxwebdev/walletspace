@@ -29,6 +29,7 @@ import (
 	"github.com/sxwebdev/walletspace/internal/httpapi"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
+	"github.com/sxwebdev/walletspace/internal/price"
 	"github.com/sxwebdev/walletspace/internal/rpcpool"
 	"github.com/sxwebdev/walletspace/internal/space"
 	"github.com/sxwebdev/walletspace/internal/storage"
@@ -139,7 +140,8 @@ func run(log *slog.Logger) error {
 	}
 	defer nodeDoctor.Close()
 	handler, err := httpapi.NewPlatform(
-		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor, log,
+		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor,
+		price.New(price.Options{}), log,
 	)
 	if err != nil {
 		return err

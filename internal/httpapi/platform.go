@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/sxwebdev/walletspace/internal/doctor"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
+	"github.com/sxwebdev/walletspace/internal/price"
 	"github.com/sxwebdev/walletspace/internal/space"
 )
 
@@ -34,6 +36,7 @@ type Platform struct {
 	evm        *evmchain.Adapter
 	tron       *tronchain.Adapter
 	doctor     *doctor.Doctor
+	prices     price.Provider
 	log        *slog.Logger
 }
 
@@ -46,10 +49,11 @@ func NewPlatform(
 	evm *evmchain.Adapter,
 	tron *tronchain.Adapter,
 	nodeDoctor *doctor.Doctor,
+	prices price.Provider,
 	log *slog.Logger,
 ) (http.Handler, error) {
 	if spaces == nil || settings == nil || networks == nil || operations == nil ||
-		assets == nil || evm == nil || tron == nil || nodeDoctor == nil {
+		assets == nil || evm == nil || tron == nil || nodeDoctor == nil || prices == nil {
 		return nil, errors.New("all platform services are required")
 	}
 	if log == nil {
@@ -58,7 +62,7 @@ func NewPlatform(
 	p := &Platform{
 		spaces: spaces, settings: settings, networks: networks,
 		operations: operations, assets: assets, evm: evm, tron: tron,
-		doctor: nodeDoctor, log: log,
+		doctor: nodeDoctor, prices: prices, log: log,
 	}
 	ui, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -97,6 +101,7 @@ func NewPlatform(
 	mux.HandleFunc("GET /api/networks", p.listNetworks)
 	mux.HandleFunc("GET /api/networks/{network_id}/health", p.networkHealth)
 	mux.HandleFunc("GET /api/doctor", p.doctorHealth)
+	mux.HandleFunc("GET /api/prices", p.assetPrices)
 
 	mux.HandleFunc("GET /api/settings", p.getSettings)
 	mux.HandleFunc("PATCH /api/settings/general", p.patchGeneral)
@@ -712,6 +717,81 @@ func (p *Platform) listAssets(w http.ResponseWriter, r *http.Request) {
 	}
 	item = p.effectiveNetwork(item)
 	writeJSON(w, http.StatusOK, map[string]any{"assets": p.assets.List(item)})
+}
+
+type assetPriceDTO struct {
+	AssetID        string          `json:"asset_id"`
+	CurrentUSD     decimal.Decimal `json:"current_usd"`
+	Previous24hUSD decimal.Decimal `json:"previous_24h_usd"`
+	HasPrevious    bool            `json:"has_previous_24h"`
+	Timestamp      time.Time       `json:"timestamp"`
+}
+
+func (p *Platform) assetPrices(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	requested := make(map[string]struct{})
+	for _, assetID := range r.URL.Query()["asset_id"] {
+		requested[assetID] = struct{}{}
+	}
+	targets := make(map[string][]string)
+	for _, item := range p.networks.List() {
+		item = p.effectiveNetwork(item)
+		if !item.Enabled || item.Testnet {
+			continue
+		}
+		for _, itemAsset := range p.assets.List(item) {
+			if _, ok := requested[itemAsset.ID]; !ok {
+				continue
+			}
+			identifier := priceIdentifier(item, itemAsset)
+			if identifier != "" {
+				targets[identifier] = append(targets[identifier], itemAsset.ID)
+			}
+		}
+	}
+	identifiers := make([]string, 0, len(targets))
+	for identifier := range targets {
+		identifiers = append(identifiers, identifier)
+	}
+	sort.Strings(identifiers)
+	if len(identifiers) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"quotes": []assetPriceDTO{}, "stale": false})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+	snapshot, err := p.prices.Quotes(ctx, identifiers)
+	if err != nil {
+		p.log.Warn("price feed unavailable", "error", err)
+		writeError(w, http.StatusBadGateway, "price feed is unavailable")
+		return
+	}
+	quotes := make([]assetPriceDTO, 0, len(snapshot.Quotes))
+	for identifier, quote := range snapshot.Quotes {
+		for _, assetID := range targets[identifier] {
+			quotes = append(quotes, assetPriceDTO{
+				AssetID: assetID, CurrentUSD: quote.Current,
+				Previous24hUSD: quote.Previous, HasPrevious: quote.HasPrevious,
+				Timestamp: quote.Timestamp,
+			})
+		}
+	}
+	sort.Slice(quotes, func(i, j int) bool { return quotes[i].AssetID < quotes[j].AssetID })
+	writeJSON(w, http.StatusOK, map[string]any{"quotes": quotes, "stale": snapshot.Stale})
+}
+
+func priceIdentifier(item network.Network, itemAsset chain.Asset) string {
+	if itemAsset.Kind == "native" {
+		return item.NativePrice
+	}
+	if item.PriceChain == "" || itemAsset.Contract == "" {
+		return ""
+	}
+	contract := itemAsset.Contract
+	if item.Family == network.FamilyEVM {
+		contract = strings.ToLower(contract)
+	}
+	return item.PriceChain + ":" + contract
 }
 
 func (p *Platform) addAsset(w http.ResponseWriter, r *http.Request) {

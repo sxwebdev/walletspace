@@ -47,6 +47,8 @@ type Network struct {
 	Explorer     Explorer     `json:"explorer" yaml:"explorer"`
 	RPCFallbacks []string     `json:"rpc_fallbacks" yaml:"rpc_fallbacks"`
 	Capabilities Capabilities `json:"capabilities" yaml:"capabilities"`
+	PriceChain   string       `json:"-" yaml:"-"`
+	NativePrice  string       `json:"-" yaml:"-"`
 }
 
 var ErrUnknownNetwork = errors.New("unknown network")
@@ -105,6 +107,9 @@ func Validate(item Network) error {
 	} else if item.ChainID != "mainnet" && item.ChainID != "nile" {
 		return fmt.Errorf("invalid Tron network identity %q", item.ChainID)
 	}
+	if !item.Testnet && item.NativePrice == "" {
+		return errors.New("mainnet native price identifier is required")
+	}
 	for _, endpoint := range item.RPCFallbacks {
 		u, err := url.Parse(endpoint)
 		if err != nil || u.Scheme != "https" || u.Host == "" {
@@ -134,6 +139,7 @@ func evm(id, name, shortName, chainID, symbol, rpc, explorerBase string, testnet
 		Native: NativeAsset{Symbol: symbol, Decimals: 18}, Testnet: testnet, Enabled: true,
 		Explorer: explorer(explorerBase), RPCFallbacks: []string{rpc},
 		Capabilities: Capabilities{NativeTransfer: true, TokenTransfer: true},
+		PriceChain:   priceChains[id], NativePrice: nativePrices[id],
 	}
 }
 
@@ -147,6 +153,7 @@ func builtinNetworks() []Network {
 			Family: FamilyTron, ChainID: "mainnet", Native: NativeAsset{Symbol: "TRX", Decimals: 6},
 			Enabled: true, Explorer: explorer("https://tronscan.org"),
 			RPCFallbacks: []string{"https://tron-rpc.publicnode.com"}, Capabilities: tronCapabilities,
+			PriceChain: "tron", NativePrice: "coingecko:tron",
 		},
 		{
 			ID: "tron-nile", Name: "Tron Nile", ShortName: "Nile",
@@ -159,7 +166,7 @@ func builtinNetworks() []Network {
 		evm("bsc-mainnet", "BNB Smart Chain", "Mainnet", "56", "BNB", "https://bsc-rpc.publicnode.com", "https://bscscan.com", false),
 		evm("bsc-testnet", "BNB Smart Chain Testnet", "Testnet", "97", "tBNB", "https://bsc-testnet-rpc.publicnode.com", "https://testnet.bscscan.com", true),
 		evm("polygon-mainnet", "Polygon PoS", "Mainnet", "137", "POL", "https://polygon-bor-rpc.publicnode.com", "https://polygonscan.com", false),
-		evm("polygon-amoy", "Polygon Amoy", "Amoy", "80002", "POL", "https://rpc-amoy.polygon.technology", "https://amoy.polygonscan.com", true),
+		evm("polygon-amoy", "Polygon Amoy", "Amoy", "80002", "POL", "https://polygon-amoy-bor-rpc.publicnode.com", "https://amoy.polygonscan.com", true),
 		evm("optimism-mainnet", "OP Mainnet", "Mainnet", "10", "ETH", "https://optimism-rpc.publicnode.com", "https://optimistic.etherscan.io", false),
 		evm("optimism-sepolia", "OP Sepolia", "Sepolia", "11155420", "ETH", "https://optimism-sepolia-rpc.publicnode.com", "https://sepolia-optimism.etherscan.io", true),
 		evm("arbitrum-mainnet", "Arbitrum One", "Mainnet", "42161", "ETH", "https://arbitrum-one-rpc.publicnode.com", "https://arbiscan.io", false),
@@ -170,4 +177,25 @@ func builtinNetworks() []Network {
 		evm("avalanche-mainnet", "Avalanche C-Chain", "Mainnet", "43114", "AVAX", "https://api.avax.network/ext/bc/C/rpc", "https://snowtrace.io", false),
 		evm("avalanche-fuji", "Avalanche Fuji C-Chain", "Fuji", "43113", "AVAX", "https://api.avax-test.network/ext/bc/C/rpc", "https://testnet.snowtrace.io", true),
 	}
+}
+
+var priceChains = map[string]string{
+	"ethereum-mainnet":  "ethereum",
+	"bsc-mainnet":       "bsc",
+	"polygon-mainnet":   "polygon",
+	"optimism-mainnet":  "optimism",
+	"arbitrum-mainnet":  "arbitrum",
+	"base-mainnet":      "base",
+	"avalanche-mainnet": "avax",
+}
+
+var nativePrices = map[string]string{
+	"ethereum-mainnet":  "coingecko:ethereum",
+	"bsc-mainnet":       "coingecko:binancecoin",
+	"polygon-mainnet":   "coingecko:polygon-ecosystem-token",
+	"optimism-mainnet":  "coingecko:ethereum",
+	"arbitrum-mainnet":  "coingecko:ethereum",
+	"base-mainnet":      "coingecko:ethereum",
+	"robinhood-mainnet": "coingecko:ethereum",
+	"avalanche-mainnet": "coingecko:avalanche-2",
 }
