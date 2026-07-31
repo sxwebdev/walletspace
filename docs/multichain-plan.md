@@ -1,6 +1,8 @@
 # План реализации Walletspace: spaces и multichain
 
-Статус документа: целевая архитектура до начала миграции.
+Статус документа: core первой итерации реализован; документ остаётся
+архитектурным контрактом, а release hardening и gated live checks из раздела 20
+— обязательными воротами перед публикацией.
 
 Документ описывает переход от текущего локального Tron-only приложения к
 Walletspace первой итерации:
@@ -75,7 +77,7 @@ Walletspace первой итерации:
 
 ## 3. Сети первой итерации
 
-В первой итерации поддерживается 16 сетей.
+В первой итерации поддерживается 17 сетей.
 
 | Network ID          | Family | Сеть                    | Network/chain ID | Native asset | Testnet |
 | ------------------- | ------ | ----------------------- | ---------------: | ------------ | ------- |
@@ -91,6 +93,7 @@ Walletspace первой итерации:
 | `optimism-sepolia`  | EVM    | OP Sepolia              |       `11155420` | ETH          | да      |
 | `arbitrum-mainnet`  | EVM    | Arbitrum One            |          `42161` | ETH          | нет     |
 | `arbitrum-sepolia`  | EVM    | Arbitrum Sepolia        |         `421614` | ETH          | да      |
+| `base-mainnet`      | EVM    | Base                    |           `8453` | ETH          | нет     |
 | `robinhood-mainnet` | EVM    | Robinhood Chain         |           `4663` | ETH          | нет     |
 | `robinhood-testnet` | EVM    | Robinhood Chain Testnet |          `46630` | ETH          | да      |
 | `avalanche-mainnet` | EVM    | Avalanche C-Chain       |          `43114` | AVAX         | нет     |
@@ -130,7 +133,7 @@ chain ID, native asset или explorer.
 - native EVM send и ERC20 transfer;
 - оценка комиссии до подписи;
 - ожидание receipt и точечное фоновое обновление;
-- явный выбор любой из 16 сетей в UI;
+- явный выбор любой из 17 сетей в UI;
 - работа нескольких вкладок с разными выбранными сетями;
 - экспорт private key с явным указанием family;
 - безопасная ручная миграция текущих данных.
@@ -423,7 +426,7 @@ Raw export — отдельный auditable use case, а не метод общ�
 
 ## 9. Network registry
 
-Built-in registry компилируется в бинарь и покрывает 16 сетей. Пользовательский
+Built-in registry компилируется в бинарь и покрывает 17 сетей. Пользовательский
 `~/.walletspace/networks.yaml` может:
 
 - заменить/добавить RPC;
@@ -449,7 +452,7 @@ networks:
   tron-mainnet:
     rpc:
       urls:
-        - https://api.trongrid.io
+        - https://tron-rpc.publicnode.com
       headers:
         TRON-PRO-API-KEY: ${TRON_PRO_API_KEY}
 ```
@@ -784,6 +787,7 @@ Network selector группирует:
 - Polygon: Mainnet, Amoy;
 - Optimism: Mainnet, Sepolia;
 - Arbitrum: Mainnet, Sepolia;
+- Base: Mainnet;
 - Robinhood: Mainnet, Testnet;
 - Avalanche: Mainnet, Fuji.
 
@@ -1177,7 +1181,7 @@ streams и pending reads. Долговременная операция отпр
 ### Этап 0. Зафиксировать контракты и test vectors
 
 - утвердить термины и network IDs;
-- добавить built-in registry для 16 сетей;
+- добавить built-in registry для 17 сетей;
 - записать known address vectors для Tron и EVM derivation/import;
 - определить versioned schemas `space.json`, config и operations;
 - сделать threat model для vault, HTTP и dynamic RPC.
@@ -1228,7 +1232,7 @@ derived export Tron/EVM возвращает разные ожидаемые key
 
 ### Этап 4. Network registry, Node Discovery и RPC pools
 
-- built-in metadata 16 networks;
+- built-in metadata 17 networks;
 - network override merge;
 - Node Discovery client;
 - HTTPS/SSRF filtering;
@@ -1265,10 +1269,10 @@ mainnet UI.
 
 Сначала включить Ethereum mainnet/Sepolia как reference pair. После прохождения
 adapter conformance suite включить конфигом BSC, Polygon, Optimism, Arbitrum,
-Robinhood и Avalanche. Для каждой пары обязательны chain-specific smoke tests,
+Base, Robinhood и Avalanche. Для каждой пары обязательны chain-specific smoke tests,
 но не отдельная копия adapter.
 
-Готово, когда все 14 EVM networks проходят одинаковый read conformance suite,
+Готово, когда все 15 EVM networks проходят одинаковый read conformance suite,
 все testnets проходят gated send/receipt test, а mainnet send проверяется через
 offline signing vectors без траты средств.
 
@@ -1402,7 +1406,7 @@ native transfer, receipt и balance refresh. Mainnet tests — только read
 - storage backup/restore drill;
 - migration dry-run и real-run на fixture legacy data;
 - ни один secret не найден log-capture тестом;
-- все 16 network metadata проходят identity validation;
+- все 17 network metadata проходят identity validation;
 - приложение полностью работает при недоступном Node Discovery через fallback;
 - вся file-backed конфигурация доступна через settings UI;
 - `index.html` не содержит application business logic;
@@ -1446,7 +1450,7 @@ TON не следует заранее втискивать в `DerivedSource{In
 4. Первая итерация импортирует только secp256k1 private key.
 5. Network указывается в каждом on-chain request; глобального switch backend
    нет.
-6. Все 14 EVM networks используют один generic EVM adapter.
+6. Все 15 EVM networks используют один generic EVM adapter.
 7. Node Discovery не является hard dependency и не отменяет official fallback.
 8. Dynamic insecure HTTP RPC по умолчанию запрещены.
 9. Public metadata и encrypted vault space записываются атомарно одним файлом.
@@ -1490,6 +1494,8 @@ TON не следует заранее втискивать в `DerivedSource{In
   <https://docs.optimism.io/op-mainnet/network-information/connecting-to-op>
 - Arbitrum:
   <https://docs.arbitrum.io/>
+- Base:
+  <https://docs.base.org/base-chain/api-reference/rpc-overview>
 - Robinhood Chain:
   <https://docs.robinhood.com/chain/connecting/>
 - Avalanche C-Chain/Fuji:

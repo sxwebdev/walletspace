@@ -14,6 +14,7 @@ import (
 	"github.com/sxwebdev/gotron/pkg/client/abi"
 	"github.com/sxwebdev/gotron/schema/pb/api"
 	"github.com/sxwebdev/gotron/schema/pb/core"
+	"github.com/sxwebdev/walletspace/internal/chain"
 )
 
 const (
@@ -182,6 +183,39 @@ func (s *Service) Deploy(ctx context.Context, from string, d Deployment, key *ec
 	out := Deployed{TxID: txid, Address: contract}
 	s.awaitDeployment(ctx, &out)
 
+	return out, nil
+}
+
+func (s *Service) DeployWithSigner(
+	ctx context.Context,
+	from string,
+	d Deployment,
+	signer chain.Signer,
+) (Deployed, error) {
+	if signer == nil || signer.Family() != chain.FamilyTron {
+		return Deployed{}, errors.New("Tron signer is required")
+	}
+	req, err := deployRequest(from, d)
+	if err != nil {
+		return Deployed{}, err
+	}
+	tx, err := retry(ctx, s.nodes, func() (*api.TransactionExtention, error) {
+		return s.client.DeployContract(ctx, req)
+	})
+	if err != nil {
+		return Deployed{}, s.chainError("build deployment", err)
+	}
+	contract, err := client.DeployedContractAddress(tx.GetTransaction())
+	if err != nil {
+		return Deployed{}, fmt.Errorf("derive contract address: %w", err)
+	}
+	txid, err := s.submitWithSigner(ctx, tx, signer)
+	if err != nil {
+		return Deployed{}, err
+	}
+	s.invalidate(from)
+	out := Deployed{TxID: txid, Address: contract}
+	s.awaitDeployment(ctx, &out)
 	return out, nil
 }
 

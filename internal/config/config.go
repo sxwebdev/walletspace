@@ -28,7 +28,7 @@ type Config struct {
 	Passphrase string `yaml:"passphrase" env:"PASSPHRASE" secret:"true" usage:"BIP39 passphrase; changing it changes every address"`
 
 	Network      string `yaml:"network" default:"mainnet" env:"NETWORK" usage:"mainnet or nile"`
-	Nodes        string `yaml:"nodes" env:"NODES" usage:"comma-separated node list, e.g. grpcs://grpc.trongrid.io:50051,https://api.trongrid.io; empty uses network defaults"`
+	Nodes        string `yaml:"nodes" env:"NODES" usage:"comma-separated node list, e.g. https://tron-rpc.publicnode.com; empty uses network defaults"`
 	APIKey       string `yaml:"api_key" env:"TRON_PRO_API_KEY" secret:"true" usage:"TronGrid API key, optional"`
 	USDTContract string `yaml:"usdt_contract" env:"USDT_CONTRACT" usage:"TRC20 contract shown as USDT; empty uses network default"`
 	FeeLimitTRX  int64  `yaml:"fee_limit_trx" default:"50" env:"FEE_LIMIT_TRX" usage:"fee limit for TRC20 transfers, in TRX"`
@@ -53,11 +53,7 @@ var defaultsByNetwork = map[string]networkDefaults{
 		usdtContract: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
 		explorer:     "https://tronscan.org",
 		nodes: []Node{
-			// TronGrid serves plaintext gRPC on 50051; PublicNode requires TLS on 443.
-			{Address: "grpc.trongrid.io:50051", Tier: 0},
-			{Address: "https://api.trongrid.io", HTTP: true, Tier: 0},
-			{Address: "tron-grpc.publicnode.com:443", TLS: true, Tier: 1},
-			{Address: "https://tron-rpc.publicnode.com", HTTP: true, Tier: 1},
+			{Address: "https://tron-rpc.publicnode.com", HTTP: true},
 		},
 	},
 	NetworkNile: {

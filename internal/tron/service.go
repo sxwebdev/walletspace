@@ -5,6 +5,7 @@ package tron
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -18,8 +19,10 @@ import (
 	"github.com/sxwebdev/gotron/pkg/address"
 	"github.com/sxwebdev/gotron/pkg/client"
 	"github.com/sxwebdev/gotron/schema/pb/api"
+	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/config"
 	"golang.org/x/sync/singleflight"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -82,6 +85,109 @@ type TokenInfo struct {
 	Contract string
 	Symbol   string
 	Decimals int32
+}
+
+func (s *Service) Health(ctx context.Context) error {
+	_, err := retry(ctx, s.nodes, func() (*api.BlockExtention, error) {
+		return s.client.GetLastBlock(ctx)
+	})
+	return err
+}
+
+// TokenMetadata validates a TRC20 contract by reading its on-chain metadata.
+func (s *Service) TokenMetadata(ctx context.Context, contract string) (string, uint8, error) {
+	if err := address.Validate(contract); err != nil {
+		return "", 0, fmt.Errorf("%w: invalid TRC20 contract: %s", ErrInvalidRequest, err)
+	}
+	symbol, err := s.client.TRC20GetSymbol(ctx, contract)
+	if err != nil {
+		return "", 0, fmt.Errorf("read TRC20 symbol: %w", err)
+	}
+	decimals, err := s.client.TRC20GetDecimals(ctx, contract)
+	if err != nil {
+		return "", 0, fmt.Errorf("read TRC20 decimals: %w", err)
+	}
+	if !decimals.IsUint64() || decimals.Uint64() > 78 {
+		return "", 0, errors.New("TRC20 decimals are out of range")
+	}
+	return symbol, uint8(decimals.Uint64()), nil
+}
+
+func (s *Service) TokenBalance(
+	ctx context.Context,
+	holder, contract string,
+	decimals uint8,
+) (decimal.Decimal, error) {
+	if err := address.Validate(holder); err != nil {
+		return decimal.Zero, fmt.Errorf("%w: invalid holder address", ErrInvalidRequest)
+	}
+	if err := address.Validate(contract); err != nil {
+		return decimal.Zero, fmt.Errorf("%w: invalid TRC20 contract", ErrInvalidRequest)
+	}
+	value, err := retry(ctx, s.nodes, func() (client.TokenAmount, error) {
+		return s.client.TRC20ContractBalance(ctx, holder, contract)
+	})
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return value.Decimal(int32(decimals)), nil
+}
+
+func (s *Service) EstimateToken(
+	ctx context.Context,
+	from, to, contract string,
+	decimals uint8,
+	amount decimal.Decimal,
+) (Estimate, error) {
+	tokens, err := tokenAmount(amount, int32(decimals))
+	if err != nil {
+		return Estimate{}, err
+	}
+	result, err := retry(ctx, s.nodes, func() (*client.EstimateTransferResult, error) {
+		return s.client.EstimateTRC20Transfer(ctx, from, to, contract, tokens)
+	})
+	if err != nil {
+		return Estimate{}, s.chainError("estimate TRC20 transfer", err)
+	}
+	return Estimate{
+		Fee:          result.Fee.TRX(),
+		Activation:   (result.Charges.AccountCreation + result.Charges.UnstakedCreation).TRX(),
+		bandwidthFee: result.Charges.Bandwidth.TRX(),
+	}, nil
+}
+
+func (s *Service) SendTokenWithSigner(
+	ctx context.Context,
+	from, to, contract string,
+	decimals uint8,
+	amount decimal.Decimal,
+	signer chain.Signer,
+) (string, error) {
+	if signer == nil || signer.Family() != chain.FamilyTron {
+		return "", errors.New("Tron signer is required")
+	}
+	if err := address.Validate(to); err != nil {
+		return "", fmt.Errorf("%w: invalid recipient address", ErrInvalidRequest)
+	}
+	if err := address.Validate(contract); err != nil {
+		return "", fmt.Errorf("%w: invalid TRC20 contract", ErrInvalidRequest)
+	}
+	tokens, err := tokenAmount(amount, int32(decimals))
+	if err != nil {
+		return "", err
+	}
+	tx, err := retry(ctx, s.nodes, func() (*api.TransactionExtention, error) {
+		return s.client.TRC20Send(ctx, from, to, contract, tokens, s.feeLimit)
+	})
+	if err != nil {
+		return "", s.chainError("create TRC20 transfer", err)
+	}
+	txID, err := s.submitWithSigner(ctx, tx, signer)
+	if err != nil {
+		return "", err
+	}
+	s.invalidate(from, to)
+	return txID, nil
 }
 
 // Service talks to the Tron network.
@@ -694,14 +800,34 @@ func (s *Service) submit(ctx context.Context, tx *api.TransactionExtention, key 
 	return hex.EncodeToString(tx.GetTxid()), nil
 }
 
-// Send transfers TRX or the configured TRC20 token and returns the txid.
-func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
+func (s *Service) submitWithSigner(ctx context.Context, tx *api.TransactionExtention, signer chain.Signer) (string, error) {
+	rawData, err := proto.Marshal(tx.GetTransaction().GetRawData())
+	if err != nil {
+		return "", fmt.Errorf("encode transaction for signing: %w", err)
+	}
+	digest := sha256.Sum256(rawData)
+	signature, err := signer.SignDigest(ctx, digest[:])
+	if err != nil {
+		return "", fmt.Errorf("sign transaction: %w", err)
+	}
+	defer clear(signature)
+	if len(signature) != 65 {
+		return "", errors.New("sign transaction: secp256k1 signature must be 65 bytes")
+	}
+	tx.GetTransaction().Signature = append(tx.GetTransaction().Signature, append([]byte(nil), signature...))
+	if _, err := s.client.BroadcastTransaction(ctx, tx.GetTransaction()); err != nil {
+		return "", s.chainError("broadcast transaction", err)
+	}
+	return hex.EncodeToString(tx.GetTxid()), nil
+}
+
+func (s *Service) buildTransfer(ctx context.Context, from, to string, asset Asset, amount decimal.Decimal) (*api.TransactionExtention, error) {
 	if err := address.Validate(to); err != nil {
-		return "", fmt.Errorf("%w: invalid recipient address: %s", ErrInvalidRequest, err)
+		return nil, fmt.Errorf("%w: invalid recipient address: %s", ErrInvalidRequest, err)
 	}
 
 	if amount.LessThanOrEqual(decimal.Zero) {
-		return "", fmt.Errorf("%w: amount must be greater than zero", ErrInvalidRequest)
+		return nil, fmt.Errorf("%w: amount must be greater than zero", ErrInvalidRequest)
 	}
 
 	var (
@@ -713,7 +839,7 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 	case AssetTRX:
 		sun, convErr := trxAmount(amount)
 		if convErr != nil {
-			return "", convErr
+			return nil, convErr
 		}
 
 		// Building a transaction is a read-only call on the node, so it is safe
@@ -729,7 +855,7 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 	case AssetUSDT:
 		tokens, convErr := tokenAmount(amount, s.token.Decimals)
 		if convErr != nil {
-			return "", convErr
+			return nil, convErr
 		}
 
 		tx, err = retry(ctx, s.nodes, func() (*api.TransactionExtention, error) {
@@ -740,8 +866,17 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 		}
 
 	default:
-		return "", fmt.Errorf("%w: unknown asset %q", ErrInvalidRequest, asset)
+		return nil, fmt.Errorf("%w: unknown asset %q", ErrInvalidRequest, asset)
 	}
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// Send transfers TRX or the configured TRC20 token and returns the txid.
+func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
+	tx, err := s.buildTransfer(ctx, from, to, asset, amount)
 	if err != nil {
 		return "", err
 	}
@@ -753,6 +888,29 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 
 	s.invalidate(from, to)
 
+	return txid, nil
+}
+
+// SendWithSigner is the key-isolated equivalent used by the multichain adapter.
+func (s *Service) SendWithSigner(
+	ctx context.Context,
+	from, to string,
+	asset Asset,
+	amount decimal.Decimal,
+	signer chain.Signer,
+) (string, error) {
+	if signer == nil || signer.Family() != chain.FamilyTron {
+		return "", errors.New("Tron signer is required")
+	}
+	tx, err := s.buildTransfer(ctx, from, to, asset, amount)
+	if err != nil {
+		return "", err
+	}
+	txid, err := s.submitWithSigner(ctx, tx, signer)
+	if err != nil {
+		return "", err
+	}
+	s.invalidate(from, to)
 	return txid, nil
 }
 
