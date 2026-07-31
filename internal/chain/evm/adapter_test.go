@@ -111,6 +111,46 @@ func TestNativeBalanceAndChainIdentity(t *testing.T) {
 	}
 }
 
+func TestEstimateMaxTransferReservesNativeFee(t *testing.T) {
+	t.Parallel()
+
+	server := rpcServer(t, func(request rpcRequest) (any, error) {
+		switch request.Method {
+		case "eth_chainId":
+			return "0x1", nil
+		case "eth_blockNumber":
+			return "0x100", nil
+		case "eth_getBalance":
+			return "0xde0b6b3a7640000", nil // 1 ETH
+		case "eth_estimateGas":
+			return "0x5208", nil // 21,000 gas
+		case "eth_getBlockByNumber", "eth_maxPriorityFeePerGas":
+			return nil, fmt.Errorf("legacy node")
+		case "eth_gasPrice":
+			return "0x3b9aca00", nil // 1 gwei
+		default:
+			return nil, fmt.Errorf("unexpected method %s", request.Method)
+		}
+	})
+	adapter := newAdapter(t, server.URL)
+	estimate, err := adapter.EstimateMaxTransfer(t.Context(), "ethereum-mainnet", chain.TransferRequest{
+		AccountID: "acc_test",
+		From:      "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+		To:        "0x000000000000000000000000000000000000dEaD",
+		Amount:    "max",
+		Asset: chain.Asset{
+			ID: "ethereum-mainnet:native", NetworkID: "ethereum-mainnet",
+			Kind: "native", Decimals: 18,
+		},
+	})
+	if err != nil {
+		t.Fatalf("EstimateMaxTransfer() error = %v", err)
+	}
+	if estimate.Amount != "0.999979" || estimate.Fee != "0.000021" {
+		t.Fatalf("EstimateMaxTransfer() = %+v", estimate)
+	}
+}
+
 func TestWrongChainIDIsRejected(t *testing.T) {
 	t.Parallel()
 

@@ -354,6 +354,72 @@ func (a *Adapter) EstimateTransfer(
 	}, nil
 }
 
+// EstimateMaxTransfer returns the largest currently sendable amount. Native
+// TRX reserves paid bandwidth and activation fees; TRC20 transfers can use the
+// whole token balance because their fee is paid in TRX.
+func (a *Adapter) EstimateMaxTransfer(
+	ctx context.Context,
+	networkID string,
+	req chain.TransferRequest,
+) (chain.TransferEstimate, error) {
+	if req.Asset.NetworkID != networkID {
+		return chain.TransferEstimate{}, fmt.Errorf(
+			"%w: asset belongs to another network", chain.ErrInvalidRequest,
+		)
+	}
+	service, err := a.service(networkID)
+	if err != nil {
+		return chain.TransferEstimate{}, err
+	}
+	var amount decimal.Decimal
+	var estimate legacy.Estimate
+	switch req.Asset.Kind {
+	case "native":
+		amount, estimate, err = service.Spendable(ctx, req.From, req.To, legacy.AssetTRX)
+	case "trc20":
+		if req.Asset.Contract == service.Token().Contract {
+			amount, estimate, err = service.Spendable(ctx, req.From, req.To, legacy.AssetUSDT)
+			break
+		}
+		amount, err = service.TokenBalance(ctx, req.From, req.Asset.Contract, req.Asset.Decimals)
+		if err == nil && !amount.IsPositive() {
+			err = fmt.Errorf(
+				"%w: account holds no %s", chain.ErrInvalidRequest, req.Asset.Symbol,
+			)
+		}
+		if err == nil {
+			estimate, err = service.EstimateToken(
+				ctx, req.From, req.To, req.Asset.Contract, req.Asset.Decimals, amount,
+			)
+		}
+	default:
+		return chain.TransferEstimate{}, fmt.Errorf(
+			"%w: unsupported Tron asset", chain.ErrInvalidRequest,
+		)
+	}
+	if err != nil {
+		return chain.TransferEstimate{}, err
+	}
+	if req.Asset.Kind == "trc20" {
+		shortfall, shortfallErr := service.Shortfall(
+			ctx, req.From, legacy.AssetUSDT, amount, estimate,
+		)
+		if shortfallErr != nil {
+			return chain.TransferEstimate{}, shortfallErr
+		}
+		if shortfall.IsPositive() {
+			return chain.TransferEstimate{}, fmt.Errorf(
+				"%w: TRX balance is short by %s for the transfer fee",
+				chain.ErrInvalidRequest, shortfall,
+			)
+		}
+	}
+	return chain.TransferEstimate{
+		NetworkID: networkID, Amount: amount.String(), Fee: estimate.Fee.String(),
+		FeeModel: "tron-resources",
+	}, nil
+}
+
 func (a *Adapter) Send(
 	ctx context.Context,
 	networkID string,

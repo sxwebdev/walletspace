@@ -146,7 +146,7 @@ function renderShell(root) {
         </section>
         <section class="summary-grid">
           <article class="summary-card"><span>Общий баланс · mainnet</span><strong data-total-usd>Считаем…</strong><small class="muted" data-market-change>Загружаем балансы и USD-котировки</small></article>
-          <article class="summary-card"><span>Активы с балансом</span><strong data-assets-with-balance>—</strong><small class="muted" data-unpriced-assets>без цены: —</small></article>
+          <article class="summary-card"><span>Кошельки с балансом</span><strong data-funded-wallets>—</strong><small class="muted" data-holding-detail>позиций: — · mainnet без цены: —</small></article>
           <article class="summary-card"><span>Node doctor</span><strong data-rpc-status>Checking…</strong><small class="muted" data-rpc-detail>Проверяем все сети и RPC-ноды</small><button class="doctor-details" type="button" data-doctor-details>Детали</button></article>
         </section>
         <section class="panel">
@@ -312,32 +312,38 @@ function renderAccounts() {
 function renderPortfolioSummary() {
   const totalElement = document.querySelector("[data-total-usd]");
   const changeElement = document.querySelector("[data-market-change]");
-  const assetsElement = document.querySelector("[data-assets-with-balance]");
-  const unpricedElement = document.querySelector("[data-unpriced-assets]");
-  if (!totalElement || !changeElement || !assetsElement || !unpricedElement) return;
+  const fundedElement = document.querySelector("[data-funded-wallets]");
+  const holdingDetailElement = document.querySelector("[data-holding-detail]");
+  if (!totalElement || !changeElement || !fundedElement || !holdingDetailElement) return;
 
   if (state.balancesLoading) {
     totalElement.textContent = "Считаем…";
     changeElement.textContent = "Загружаем mainnet-балансы";
-    assetsElement.textContent = "—";
-    unpricedElement.textContent = "без цены: —";
+    fundedElement.textContent = "—";
+    holdingDetailElement.textContent = "позиций: — · mainnet без цены: —";
     return;
   }
 
   const portfolio = calculatePortfolio();
+  const holdings = holdingsWithBalance();
+  const fundedWallets = new Set(holdings.map((holding) => holding.account.id));
+  const testnetPositions = holdings.filter((holding) => holding.network.testnet).length;
   const failedNetworks = state.balanceFailures || 0;
   const failureSuffix = failedNetworks ? ` · ошибок сетей: ${failedNetworks}` : "";
-  assetsElement.textContent = String(portfolio.assets.size);
-  unpricedElement.textContent = `без цены: ${portfolio.unpriced.size}${failureSuffix}`;
+  fundedElement.textContent = failedNetworks
+    ? fundedWallets.size ? `≥ ${fundedWallets.size}` : "—"
+    : String(fundedWallets.size);
+  holdingDetailElement.textContent = `позиций: ${holdings.length} · mainnet без цены: ${portfolio.unpriced.size}${failureSuffix}`;
   if (!portfolio.assets.size) {
     if (failedNetworks) {
       totalElement.textContent = "—";
       changeElement.textContent = `Не удалось загрузить балансы в ${failedNetworks} сетях`;
-      assetsElement.textContent = "—";
       return;
     }
     totalElement.textContent = formatUSD(0);
-    changeElement.textContent = "Нет mainnet-активов с балансом";
+    changeElement.textContent = testnetPositions
+      ? "Testnet-балансы не входят в USD total"
+      : "Нет mainnet-активов с балансом";
     return;
   }
   if (state.pricesLoading) {
@@ -392,16 +398,22 @@ function calculatePortfolio() {
 function mainnetHoldings(mainnetIDs = new Set(
   enabledNetworks().filter((network) => !network.testnet).map((network) => network.id),
 )) {
+  return holdingsWithBalance(mainnetIDs);
+}
+
+function holdingsWithBalance(networkIDs = new Set(
+  enabledNetworks().map((network) => network.id),
+)) {
   const holdings = [];
   for (const account of state.accounts) {
     for (const networkID of accountNetworks(account)) {
-      if (!mainnetIDs.has(networkID)) continue;
+      if (!networkIDs.has(networkID)) continue;
       const network = state.networks.find((item) => item.id === networkID);
       for (const asset of assetsFor(network)) {
         const balance = state.balances.get(balanceKey(state.currentSpaceID, networkID, account.id, asset.id));
         if (!balance || balance.error || isZeroAmount(balance.amount)) continue;
         const amount = Number(balance.amount);
-        if (Number.isFinite(amount) && amount > 0) holdings.push({ asset, amount });
+        if (Number.isFinite(amount) && amount > 0) holdings.push({ account, network, asset, amount });
       }
     }
   }
@@ -814,39 +826,69 @@ function showSend(account, network) {
       ${network.testnet ? '<div class="notice">Это testnet. Токены не имеют mainnet-стоимости.</div>' : ""}
       <label class="field"><span>Asset</span><select name="asset_id">${assets.map((asset) => `<option value="${asset.id}">${escapeHTML(asset.name || asset.symbol)} · ${escapeHTML(asset.symbol)}</option>`).join("")}</select></label>
       <label class="field"><span>Recipient</span><input name="to" required spellcheck="false" autocomplete="off"></label>
-      <label class="field"><span>Amount</span><input name="amount" required inputmode="decimal" placeholder="0.0"></label>
+      <div class="field"><label for="send-amount">Amount</label><div class="input-action"><input id="send-amount" name="amount" required inputmode="decimal" placeholder="0.0"><button class="button" type="button" data-max>MAX</button></div></div>
       <div data-estimate></div>
       <div class="error-text" data-error></div>
       <button class="button primary" type="submit">Рассчитать комиссию</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
+      const maxButton = form.querySelector("[data-max]");
       let confirmedBody;
       let idempotencyKey;
+      const transferBody = (amount = new FormData(form).get("amount")) => {
+        const data = new FormData(form);
+        return {
+          account_id: account.id, asset_id: data.get("asset_id"),
+          to: data.get("to"), amount,
+        };
+      };
+      const showEstimate = (body, estimate) => {
+        confirmedBody = body;
+        form.querySelector("[data-estimate]").innerHTML = `
+          <div class="notice">
+            <strong>Проверьте перед подписью</strong><br>
+            ${escapeHTML(network.name)} · Chain ${escapeHTML(network.chain_id)}<br>
+            From: <span class="mono">${escapeHTML(shortAddress(account.addresses[network.family]))}</span><br>
+            To: <span class="mono">${escapeHTML(shortAddress(body.to))}</span><br>
+            Amount: ${escapeHTML(body.amount)} · Max fee: ${escapeHTML(estimate.fee)} ${escapeHTML(network.native.symbol)}
+          </div>`;
+        form.querySelector('[type="submit"]').dataset.label = "Подписать и отправить";
+        form.querySelector('[type="submit"]').textContent = "Подписать и отправить";
+      };
+      maxButton.addEventListener("click", async () => {
+        const requestBody = transferBody("max");
+        form.querySelector("[data-error]").textContent = "";
+        if (!String(requestBody.to).trim()) {
+          form.querySelector("[data-error]").textContent = "Сначала укажите получателя — от него зависит комиссия";
+          return;
+        }
+        maxButton.disabled = true;
+        maxButton.textContent = "…";
+        try {
+          const estimate = await estimateTransfer(
+            state.currentSpaceID, network.id, requestBody, routeSignal,
+          );
+          form.querySelector('[name="amount"]').value = estimate.amount;
+          idempotencyKey = undefined;
+          showEstimate({ ...requestBody, amount: estimate.amount }, estimate);
+        } catch (cause) {
+          form.querySelector("[data-error]").textContent = cause.message;
+        } finally {
+          maxButton.disabled = false;
+          maxButton.textContent = "MAX";
+        }
+      });
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const data = new FormData(form);
-        const body = {
-          account_id: account.id, asset_id: data.get("asset_id"),
-          to: data.get("to"), amount: data.get("amount"),
-        };
+        const body = transferBody();
         setBusy(form, true, confirmedBody ? "Подписываем…" : "Считаем…");
         form.querySelector("[data-error]").textContent = "";
         try {
           if (!confirmedBody || JSON.stringify(confirmedBody) !== JSON.stringify(body)) {
             const estimate = await estimateTransfer(state.currentSpaceID, network.id, body, routeSignal);
-            confirmedBody = body;
-            form.querySelector("[data-estimate]").innerHTML = `
-              <div class="notice">
-                <strong>Проверьте перед подписью</strong><br>
-                ${escapeHTML(network.name)} · Chain ${escapeHTML(network.chain_id)}<br>
-                From: <span class="mono">${escapeHTML(shortAddress(account.addresses[network.family]))}</span><br>
-                To: <span class="mono">${escapeHTML(shortAddress(body.to))}</span><br>
-                Amount: ${escapeHTML(body.amount)} · Max fee: ${escapeHTML(estimate.fee)} ${escapeHTML(network.native.symbol)}
-              </div>`;
+            showEstimate(body, estimate);
             setBusy(form, false);
-            form.querySelector('[type="submit"]').dataset.label = "Подписать и отправить";
-            form.querySelector('[type="submit"]').textContent = "Подписать и отправить";
             return;
           }
           idempotencyKey ||= crypto.randomUUID();
@@ -873,6 +915,24 @@ function showSend(account, network) {
       });
     },
   });
+}
+
+function stakingRequestBody(action, data) {
+  if (action === "stake" || action === "unstake") {
+    return { resource: data.get("resource"), amount: data.get("amount") };
+  }
+  if (action === "delegate") {
+    return {
+      resource: data.get("resource"), amount: data.get("amount"), to: data.get("to"),
+    };
+  }
+  if (action === "reclaim") {
+    return {
+      resource: data.get("resource"), amount: data.get("amount"),
+      to: data.get("to"), all: data.get("all") === "on",
+    };
+  }
+  return {};
 }
 
 async function showResources(account, network) {
@@ -909,17 +969,24 @@ async function showResources(account, network) {
       </form>`;
     const form = dialog.element.querySelector("[data-form]");
     const action = form.querySelector('[name="action"]');
+    const all = form.querySelector('[name="all"]');
     let operationKey;
     let operationSignature;
     const syncFields = () => {
       const delegation = action.value === "delegate" || action.value === "reclaim";
       const bodyless = action.value === "withdraw" || action.value === "cancel-unstakes";
-      form.querySelector("[data-to]").hidden = !delegation;
+      const reclaimAll = action.value === "reclaim" && all.checked;
+      const receiver = form.querySelector("[data-to]");
+      const amount = form.querySelector("[data-amount]");
+      receiver.hidden = !delegation;
+      receiver.querySelector("input").required = delegation;
       form.querySelector("[data-all]").hidden = action.value !== "reclaim";
       form.querySelector("[data-resource]").hidden = bodyless;
-      form.querySelector("[data-amount]").hidden = bodyless;
+      amount.hidden = bodyless || reclaimAll;
+      amount.querySelector("input").required = !bodyless && !reclaimAll;
     };
     action.addEventListener("change", syncFields);
+    all.addEventListener("change", syncFields);
     syncFields();
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -927,10 +994,7 @@ async function showResources(account, network) {
       const actionName = data.get("action");
       setBusy(form, true, "Подписываем…");
       try {
-        const operationBody = actionName === "withdraw" || actionName === "cancel-unstakes" ? {} : {
-          resource: data.get("resource"), amount: data.get("amount"),
-          to: data.get("to"), all: data.get("all") === "on",
-        };
+        const operationBody = stakingRequestBody(actionName, data);
         const signature = JSON.stringify({ actionName, operationBody });
         if (signature !== operationSignature) {
           operationSignature = signature;

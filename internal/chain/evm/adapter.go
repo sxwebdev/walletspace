@@ -327,6 +327,87 @@ func (a *Adapter) EstimateTransfer(
 	}, nil
 }
 
+// EstimateMaxTransfer returns the largest currently sendable amount. Token
+// fees are paid in the native asset, while a native transfer must reserve its
+// maximum gas fee before exposing the amount to the caller.
+func (a *Adapter) EstimateMaxTransfer(
+	ctx context.Context,
+	networkID string,
+	req chain.TransferRequest,
+) (chain.TransferEstimate, error) {
+	balanceValue, err := a.Balance(ctx, networkID, req.From, req.Asset)
+	if err != nil {
+		return chain.TransferEstimate{}, err
+	}
+	balance, err := decimal.NewFromString(balanceValue)
+	if err != nil || !balance.IsPositive() {
+		return chain.TransferEstimate{}, fmt.Errorf(
+			"%w: account holds no %s", chain.ErrInvalidRequest, req.Asset.Symbol,
+		)
+	}
+	if req.Asset.Kind != "native" {
+		req.Amount = balance.String()
+		estimate, estimateErr := a.EstimateTransfer(ctx, networkID, req)
+		if estimateErr != nil {
+			return chain.TransferEstimate{}, estimateErr
+		}
+		item, itemErr := a.registry.Get(networkID)
+		if itemErr != nil {
+			return chain.TransferEstimate{}, itemErr
+		}
+		nativeBalanceValue, balanceErr := a.Balance(ctx, networkID, req.From, chain.Asset{
+			ID: networkID + ":native", NetworkID: networkID, Kind: "native",
+			Symbol: item.Native.Symbol, Decimals: item.Native.Decimals,
+		})
+		if balanceErr != nil {
+			return chain.TransferEstimate{}, balanceErr
+		}
+		nativeBalance, nativeErr := decimal.NewFromString(nativeBalanceValue)
+		fee, feeErr := decimal.NewFromString(estimate.Fee)
+		if nativeErr != nil || feeErr != nil {
+			return chain.TransferEstimate{}, errors.New("EVM estimate returned an invalid balance or fee")
+		}
+		if nativeBalance.LessThan(fee) {
+			return chain.TransferEstimate{}, fmt.Errorf(
+				"%w: %s balance %s does not cover the maximum fee %s",
+				chain.ErrInvalidRequest, item.Native.Symbol, nativeBalance, fee,
+			)
+		}
+		return estimate, nil
+	}
+
+	reservedFee := decimal.Zero
+	candidate := decimal.New(1, -int32(req.Asset.Decimals))
+	for range 4 {
+		req.Amount = candidate.String()
+		estimate, estimateErr := a.EstimateTransfer(ctx, networkID, req)
+		if estimateErr != nil {
+			return chain.TransferEstimate{}, estimateErr
+		}
+		fee, parseErr := decimal.NewFromString(estimate.Fee)
+		if parseErr != nil || fee.IsNegative() {
+			return chain.TransferEstimate{}, errors.New("EVM estimate returned an invalid fee")
+		}
+		if fee.GreaterThan(reservedFee) {
+			reservedFee = fee
+		}
+		next := balance.Sub(reservedFee)
+		if !next.IsPositive() {
+			return chain.TransferEstimate{}, fmt.Errorf(
+				"%w: balance %s does not cover the maximum fee %s",
+				chain.ErrInvalidRequest, balance, reservedFee,
+			)
+		}
+		if next.Equal(candidate) {
+			estimate.Amount = candidate.String()
+			estimate.Fee = reservedFee.String()
+			return estimate, nil
+		}
+		candidate = next
+	}
+	return chain.TransferEstimate{}, errors.New("EVM maximum fee did not stabilize; retry")
+}
+
 func (a *Adapter) Send(
 	ctx context.Context,
 	networkID string,

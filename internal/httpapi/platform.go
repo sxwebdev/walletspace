@@ -915,7 +915,13 @@ func (p *Platform) estimateTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	estimate, err := p.chainEstimate(ctx, networkItem, transfer)
+	var estimate chain.TransferEstimate
+	var err error
+	if transfer.Amount == "max" {
+		estimate, err = p.chainEstimateMax(ctx, networkItem, transfer)
+	} else {
+		estimate, err = p.chainEstimate(ctx, networkItem, transfer)
+	}
 	if err != nil {
 		p.writePlatformError(w, err)
 		return
@@ -1536,6 +1542,13 @@ func (p *Platform) chainEstimate(ctx context.Context, item network.Network, requ
 		return p.evm.EstimateTransfer(ctx, item.ID, request)
 	}
 	return p.tron.EstimateTransfer(ctx, item.ID, request)
+}
+
+func (p *Platform) chainEstimateMax(ctx context.Context, item network.Network, request chain.TransferRequest) (chain.TransferEstimate, error) {
+	if item.Family == network.FamilyEVM {
+		return p.evm.EstimateMaxTransfer(ctx, item.ID, request)
+	}
+	return p.tron.EstimateMaxTransfer(ctx, item.ID, request)
 }
 
 func (p *Platform) chainSend(
