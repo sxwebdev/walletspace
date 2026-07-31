@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	tronchain "github.com/sxwebdev/walletspace/internal/chain/tron"
 	"github.com/sxwebdev/walletspace/internal/network"
@@ -54,6 +55,55 @@ func TestWrongTronNetworkIdentityIsRejectedBeforeUse(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "expected 0x2b6653dc") {
 		t.Fatalf("VerifyEndpoint() error = %v", err)
+	}
+}
+
+func TestProbeEndpointRequiresARecentHeadBlock(t *testing.T) {
+	t.Parallel()
+
+	var stale atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("TRON-PRO-API-KEY"); got != "secret" {
+			t.Errorf("TRON-PRO-API-KEY = %q", got)
+		}
+		switch r.URL.Path {
+		case "/jsonrpc":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0", "id": 1, "result": "0x2b6653dc",
+			})
+		case "/wallet/getnowblock":
+			blockTime := time.Now()
+			if stale.Load() {
+				blockTime = blockTime.Add(-10 * time.Minute)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"block_header": map[string]any{"raw_data": map[string]any{
+					"number": 123, "timestamp": blockTime.UnixMilli(),
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	registry, err := network.Builtin()
+	if err != nil {
+		t.Fatalf("network.Builtin() error = %v", err)
+	}
+	mainnet, err := registry.Get("tron-mainnet")
+	if err != nil {
+		t.Fatalf("registry.Get() error = %v", err)
+	}
+	if err := tronchain.ProbeEndpoint(
+		t.Context(), mainnet, server.URL, "secret", server.Client(),
+	); err != nil {
+		t.Fatalf("ProbeEndpoint() error = %v", err)
+	}
+	stale.Store(true)
+	if err := tronchain.ProbeEndpoint(
+		t.Context(), mainnet, server.URL, "secret", server.Client(),
+	); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("ProbeEndpoint(stale) error = %v", err)
 	}
 }
 

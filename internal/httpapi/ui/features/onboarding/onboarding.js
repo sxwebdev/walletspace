@@ -1,5 +1,6 @@
 import { createSpace } from "../../api/spaces.js";
 import { navigate } from "../../router.js";
+import { update } from "../../state/store.js";
 import { modal, setBusy, toast } from "../../components/ui.js";
 
 export function renderOnboarding(root, signal) {
@@ -14,12 +15,11 @@ export function renderOnboarding(root, signal) {
       </section>
       <section class="onboarding-card">
         <p class="eyebrow">Первый запуск</p>
-        <h2>Создать space</h2>
-        <p class="muted">Название и мнемоника необязательны. Если оставить их пустыми, будет создан <strong>default</strong> с новой фразой.</p>
+        <h2>Создать Secure Space</h2>
         <form class="form-stack" data-form autocomplete="off">
           <label class="field">
-            <span>Название space</span>
-            <input name="name" placeholder="default" maxlength="80">
+            <span>Название space <small class="muted">(необязательно)</small></span>
+            <input name="name" value="default" maxlength="80">
           </label>
           <label class="field">
             <span>Своя мнемоника <small class="muted">(необязательно)</small></span>
@@ -43,7 +43,7 @@ export function renderOnboarding(root, signal) {
             <input type="password" name="confirmation" required minlength="8" autocomplete="new-password">
           </label>
           <div class="error-text" data-error role="alert"></div>
-          <button class="button primary" type="submit">Создать space</button>
+          <button class="button primary" type="submit">Создать Secure Space</button>
         </form>
       </section>
     </main>`;
@@ -73,6 +73,9 @@ export function renderOnboarding(root, signal) {
         password,
         first: true,
       }, signal);
+      update({
+        currentSpaceID: result.space.id,
+      });
       form.reset();
       if (result.mnemonic_generated) {
         showRecovery(result.mnemonic, () => navigate("/", { replace: true }));

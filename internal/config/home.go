@@ -109,7 +109,7 @@ func DefaultHomeConfig() HomeConfig {
 		Server:        ServerSettings{Addr: "127.0.0.1:8080", OpenBrowser: true},
 		Security:      SecuritySettings{AutoLock: 15 * time.Minute},
 		NodeDiscovery: DiscoverySettings{
-			Enabled: true, URL: "https://node-discovery.neuvox.dev",
+			Enabled: false, URL: "",
 			RefreshInterval: 30 * time.Minute, RequestTimeout: 5 * time.Second,
 		},
 		UI: UISettings{LastNetworkID: "tron-mainnet"},
@@ -163,6 +163,11 @@ func (m *HomeManager) SaveConfig(next HomeConfig, expectedRevision string) (Sett
 	defer m.mu.Unlock()
 	if expectedRevision != "" && expectedRevision != m.revision {
 		return SettingsSnapshot{}, ErrRevisionConflict
+	}
+	for id, override := range m.networks {
+		if err := validateNetworkOverride(id, override, next.NodeDiscovery.AllowInsecureRPC); err != nil {
+			return SettingsSnapshot{}, fmt.Errorf("validate network override %s: %w", id, err)
+		}
 	}
 	data, err := marshalConfig(next)
 	if err != nil {
@@ -283,6 +288,12 @@ func ValidateHomeConfig(config HomeConfig) error {
 	}
 	if config.NodeDiscovery.RefreshInterval <= 0 || config.NodeDiscovery.RequestTimeout <= 0 {
 		return fmt.Errorf("%w: node discovery durations must be positive", ErrInvalidSettings)
+	}
+	if config.NodeDiscovery.URL == "" {
+		if config.NodeDiscovery.Enabled {
+			return fmt.Errorf("%w: node discovery URL is required when enabled", ErrInvalidSettings)
+		}
+		return nil
 	}
 	discoveryURL, err := url.Parse(config.NodeDiscovery.URL)
 	if err != nil || discoveryURL.Scheme != "https" || discoveryURL.Host == "" || discoveryURL.User != nil {

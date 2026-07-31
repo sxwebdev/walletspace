@@ -19,6 +19,7 @@ import (
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
 	tronchain "github.com/sxwebdev/walletspace/internal/chain/tron"
 	"github.com/sxwebdev/walletspace/internal/config"
+	"github.com/sxwebdev/walletspace/internal/doctor"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
 	"github.com/sxwebdev/walletspace/internal/space"
@@ -32,6 +33,7 @@ type Platform struct {
 	assets     *asset.Store
 	evm        *evmchain.Adapter
 	tron       *tronchain.Adapter
+	doctor     *doctor.Doctor
 	log        *slog.Logger
 }
 
@@ -43,9 +45,11 @@ func NewPlatform(
 	assets *asset.Store,
 	evm *evmchain.Adapter,
 	tron *tronchain.Adapter,
+	nodeDoctor *doctor.Doctor,
 	log *slog.Logger,
 ) (http.Handler, error) {
-	if spaces == nil || settings == nil || networks == nil || operations == nil || assets == nil || evm == nil || tron == nil {
+	if spaces == nil || settings == nil || networks == nil || operations == nil ||
+		assets == nil || evm == nil || tron == nil || nodeDoctor == nil {
 		return nil, errors.New("all platform services are required")
 	}
 	if log == nil {
@@ -53,7 +57,8 @@ func NewPlatform(
 	}
 	p := &Platform{
 		spaces: spaces, settings: settings, networks: networks,
-		operations: operations, assets: assets, evm: evm, tron: tron, log: log,
+		operations: operations, assets: assets, evm: evm, tron: tron,
+		doctor: nodeDoctor, log: log,
 	}
 	ui, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -86,10 +91,12 @@ func NewPlatform(
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/derive", p.deriveAccount)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/import", p.importAccount)
 	mux.HandleFunc("PATCH /api/spaces/{space_id}/accounts/{account_id}", p.renameAccount)
+	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/{account_id}/networks", p.bindAccountNetwork)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/{account_id}/private-key", p.exportPrivateKey)
 
 	mux.HandleFunc("GET /api/networks", p.listNetworks)
 	mux.HandleFunc("GET /api/networks/{network_id}/health", p.networkHealth)
+	mux.HandleFunc("GET /api/doctor", p.doctorHealth)
 
 	mux.HandleFunc("GET /api/settings", p.getSettings)
 	mux.HandleFunc("PATCH /api/settings/general", p.patchGeneral)
@@ -133,6 +140,9 @@ func (p *Platform) createSpace(w http.ResponseWriter, r *http.Request) {
 		Password        string `json:"password"`
 		ImportedOnly    bool   `json:"imported_only"`
 		First           bool   `json:"first"`
+		// NetworkID is accepted for compatibility with older clients, but space
+		// creation never derives a wallet. Wallets are created explicitly later.
+		NetworkID string `json:"network_id"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -256,13 +266,21 @@ func (p *Platform) listAccounts(w http.ResponseWriter, r *http.Request) {
 
 func (p *Platform) deriveAccount(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Label string `json:"label"`
+		Label     string `json:"label"`
+		NetworkID string `json:"network_id"`
 	}
 	if err := decodeOptionalJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	created, err := p.spaces.Derive(r.PathValue("space_id"), request.Label)
+	item, err := p.enabledNetwork(request.NetworkID)
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	created, err := p.spaces.Derive(
+		r.PathValue("space_id"), item.ID, account.Family(item.Family), request.Label,
+	)
 	if err != nil {
 		p.writePlatformError(w, err)
 		return
@@ -275,6 +293,7 @@ func (p *Platform) importAccount(w http.ResponseWriter, r *http.Request) {
 		Curve      string `json:"curve"`
 		PrivateKey string `json:"private_key"`
 		Label      string `json:"label"`
+		NetworkID  string `json:"network_id"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -284,7 +303,16 @@ func (p *Platform) importAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "only secp256k1 private keys are supported")
 		return
 	}
-	result, err := p.spaces.Import(r.PathValue("space_id"), request.Label, request.PrivateKey)
+	item, err := p.enabledNetwork(request.NetworkID)
+	if err != nil {
+		request.PrivateKey = ""
+		p.writePlatformError(w, err)
+		return
+	}
+	result, err := p.spaces.Import(
+		r.PathValue("space_id"), item.ID, account.Family(item.Family),
+		request.Label, request.PrivateKey,
+	)
 	request.PrivateKey = ""
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -302,6 +330,30 @@ func (p *Platform) renameAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, err := p.spaces.RenameAccount(r.PathValue("space_id"), r.PathValue("account_id"), request.Label)
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (p *Platform) bindAccountNetwork(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		NetworkID string `json:"network_id"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item, err := p.enabledNetwork(request.NetworkID)
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	updated, err := p.spaces.BindNetwork(
+		r.PathValue("space_id"), r.PathValue("account_id"),
+		item.ID, account.Family(item.Family),
+	)
 	if err != nil {
 		p.writePlatformError(w, err)
 		return
@@ -349,22 +401,20 @@ func (p *Platform) networkHealth(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
-	defer cancel()
-	if item.Family == network.FamilyEVM {
-		err = p.evm.Health(ctx, item.ID)
-	} else {
-		err = p.tron.Health(ctx, item.ID)
-	}
-	status := "healthy"
-	if err != nil {
-		// Provider URLs and responses can contain tenant identifiers, so the
-		// public health endpoint intentionally returns only a coarse state.
-		status = "unhealthy"
+	snapshot := p.doctor.Snapshot()
+	for _, status := range snapshot.Networks {
+		if status.NetworkID == item.ID {
+			writeJSON(w, http.StatusOK, status)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"network_id": item.ID, "status": status,
+		"network_id": item.ID, "status": "checking",
 	})
+}
+
+func (p *Platform) doctorHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, p.doctor.Snapshot())
 }
 
 type settingsDTO struct {
@@ -477,10 +527,26 @@ func (p *Platform) patchDiscovery(w http.ResponseWriter, r *http.Request) {
 	snapshot := p.settings.Snapshot()
 	next := snapshot.Config
 	next.NodeDiscovery = config.DiscoverySettings{
-		Enabled: request.Enabled, URL: request.URL, RefreshInterval: refresh,
+		Enabled: request.Enabled, URL: strings.TrimSpace(request.URL), RefreshInterval: refresh,
 		RequestTimeout: timeout, AllowInsecureRPC: request.AllowInsecureRPC,
 	}
-	p.saveSettings(w, next, revisionHeader(r))
+	saved, err := p.settings.SaveConfig(next, revisionHeader(r))
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	// A changed discovery policy must take effect immediately. Drop both the
+	// adapter clients and resolver entries learned under the previous policy.
+	for _, item := range p.networks.List() {
+		if item.Family == network.FamilyEVM {
+			p.evm.Invalidate(item.ID)
+		} else {
+			p.tron.Invalidate(item.ID)
+		}
+	}
+	p.doctor.Refresh()
+	w.Header().Set("ETag", `"`+saved.Revision+`"`)
+	writeJSON(w, http.StatusOK, settingsResponse(saved))
 }
 
 func (p *Platform) saveSettings(w http.ResponseWriter, next config.HomeConfig, revision string) {
@@ -553,6 +619,7 @@ func (p *Platform) putNetworkSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	p.evm.Invalidate(r.PathValue("network_id"))
 	p.tron.Invalidate(r.PathValue("network_id"))
+	p.doctor.Refresh()
 	w.Header().Set("ETag", `"`+snapshot.Revision+`"`)
 	writeJSON(w, http.StatusOK, map[string]any{"networks": snapshot.Networks, "revision": snapshot.Revision})
 }
@@ -565,6 +632,7 @@ func (p *Platform) deleteNetworkSettings(w http.ResponseWriter, r *http.Request)
 	}
 	p.evm.Invalidate(r.PathValue("network_id"))
 	p.tron.Invalidate(r.PathValue("network_id"))
+	p.doctor.Refresh()
 	w.Header().Set("ETag", `"`+snapshot.Revision+`"`)
 	writeJSON(w, http.StatusOK, map[string]any{"networks": snapshot.Networks, "revision": snapshot.Revision})
 }
@@ -807,7 +875,7 @@ func (p *Platform) sendTransfer(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	var transaction chain.Transaction
-	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), request.AccountID,
+	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), request.AccountID, networkItem.ID,
 		account.Family(networkItem.Family), func(signer chain.Signer) error {
 			var sendErr error
 			transaction, sendErr = p.chainSend(ctx, networkItem, transfer, signer)
@@ -929,7 +997,7 @@ func (p *Platform) tronStakeChange(w http.ResponseWriter, r *http.Request, unsta
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	var txID string
-	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, account.FamilyTron,
+	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, item.ID, account.FamilyTron,
 		func(signer chain.Signer) error {
 			var operationErr error
 			if unstake {
@@ -994,7 +1062,7 @@ func (p *Platform) tronDelegation(w http.ResponseWriter, r *http.Request, reclai
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	var txID string
-	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, account.FamilyTron,
+	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, item.ID, account.FamilyTron,
 		func(signer chain.Signer) error {
 			var operationErr error
 			if reclaim {
@@ -1044,7 +1112,7 @@ func (p *Platform) tronWithdrawChange(w http.ResponseWriter, r *http.Request, ca
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	var txID string
-	err := p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, account.FamilyTron,
+	err := p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, item.ID, account.FamilyTron,
 		func(signer chain.Signer) error {
 			var operationErr error
 			txID, operationErr = p.tron.Withdraw(ctx, item.ID, address, cancelUnstakes, signer)
@@ -1106,7 +1174,7 @@ func (p *Platform) tronDeploy(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), deployTimeout)
 	defer cancel()
 	var deployed tronchain.Deployed
-	err := p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, account.FamilyTron,
+	err := p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, item.ID, account.FamilyTron,
 		func(signer chain.Signer) error {
 			var deployErr error
 			deployed, deployErr = p.tron.Deploy(ctx, item.ID, address, deployment, signer)
@@ -1229,7 +1297,7 @@ func (p *Platform) tronAccount(
 		return network.Network{}, account.Account{}, "", false
 	}
 	for _, itemAccount := range accounts {
-		if itemAccount.ID == r.PathValue("account_id") {
+		if itemAccount.ID == r.PathValue("account_id") && itemAccount.BoundTo(item.ID) {
 			address := itemAccount.Addresses[account.FamilyTron]
 			if address != "" {
 				return item, itemAccount, address, true
@@ -1260,20 +1328,24 @@ func (p *Platform) networkContext(
 		return network.Network{}, nil, nil, false
 	}
 	family := account.Family(item.Family)
+	networkID := item.ID
 	holders := make([]chain.AccountAddress, 0, len(accounts))
 	filter := make(map[string]struct{})
 	for _, id := range r.URL.Query()["account_id"] {
 		filter[id] = struct{}{}
 	}
-	for _, item := range accounts {
+	for _, accountItem := range accounts {
 		if len(filter) > 0 {
-			if _, selected := filter[item.ID]; !selected {
+			if _, selected := filter[accountItem.ID]; !selected {
 				continue
 			}
 		}
-		address := item.Addresses[family]
+		if !accountItem.BoundTo(networkID) {
+			continue
+		}
+		address := accountItem.Addresses[family]
 		if address != "" {
-			holders = append(holders, chain.AccountAddress{AccountID: item.ID, Address: address})
+			holders = append(holders, chain.AccountAddress{AccountID: accountItem.ID, Address: address})
 		}
 	}
 	return item, holders, p.assets.List(item), true
@@ -1305,7 +1377,7 @@ func (p *Platform) decodePlatformTransfer(
 	}
 	var from string
 	for _, candidate := range accounts {
-		if candidate.ID == request.AccountID {
+		if candidate.ID == request.AccountID && candidate.BoundTo(item.ID) {
 			from = candidate.Addresses[account.Family(item.Family)]
 			break
 		}
@@ -1355,6 +1427,21 @@ func (p *Platform) effectiveNetwork(item network.Network) network.Network {
 	return item
 }
 
+func (p *Platform) enabledNetwork(id string) (network.Network, error) {
+	if id == "" {
+		return network.Network{}, errors.New("network_id is required")
+	}
+	item, err := p.networks.Get(id)
+	if err != nil {
+		return network.Network{}, err
+	}
+	item = p.effectiveNetwork(item)
+	if !item.Enabled {
+		return network.Network{}, errors.New("network is disabled")
+	}
+	return item, nil
+}
+
 func (p *Platform) chainBalanceStream(
 	ctx context.Context, item network.Network, holders []chain.AccountAddress, assets []chain.Asset, refresh bool,
 ) <-chan chain.Balance {
@@ -1391,7 +1478,7 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	switch {
 	case errors.Is(err, space.ErrNotFound), errors.Is(err, space.ErrAccountNotFound),
-		errors.Is(err, network.ErrUnknownNetwork):
+		errors.Is(err, space.ErrNetworkBinding), errors.Is(err, network.ErrUnknownNetwork):
 		status = http.StatusNotFound
 	case errors.Is(err, space.ErrLocked):
 		status = http.StatusLocked

@@ -35,6 +35,7 @@ var (
 	ErrDuplicateKey     = errors.New("private key is already imported")
 	ErrNoSeed           = errors.New("space does not have a mnemonic")
 	ErrAccountNotFound  = errors.New("account not found")
+	ErrNetworkBinding   = errors.New("account is not available for this network")
 	ErrFirstSpaceExists = errors.New("the first space was already created")
 	ErrWeakPassword     = errors.New("space password is too short")
 )
@@ -281,23 +282,6 @@ func (m *Manager) Create(req CreateRequest) (CreateResult, error) {
 		ImportedKeys: make(map[string]KeyEntry), CreatedAt: now,
 	}
 	file := File{SchemaVersion: SchemaVersion, ID: id, Name: name, CreatedAt: now, UpdatedAt: now}
-	if !req.ImportedOnly {
-		addresses, err := account.DerivedAddresses(mnemonic, req.BIP39Passphrase, 0)
-		if err != nil {
-			clearPayload(&payload)
-			return CreateResult{}, err
-		}
-		accountID, err := newID("acc_")
-		if err != nil {
-			clearPayload(&payload)
-			return CreateResult{}, err
-		}
-		index := uint32(0)
-		file.Accounts = []account.Account{{
-			ID: accountID, Kind: account.KindDerived, Addresses: addresses, Index: &index,
-			DerivationProfile: "bip44-v1", CreatedAt: now, UpdatedAt: now,
-		}}
-	}
 	container, err := vault.SealJSON(req.Password, payload, aad(id), m.params)
 	if err != nil {
 		clearPayload(&payload)
@@ -543,7 +527,17 @@ func validateNewPassword(password string) error {
 	return nil
 }
 
-func (m *Manager) Derive(id, label string) (account.Account, error) {
+func (m *Manager) Derive(
+	id, networkID string,
+	family account.Family,
+	label string,
+) (account.Account, error) {
+	if networkID == "" {
+		return account.Account{}, errors.New("network is required")
+	}
+	if family != account.FamilyTron && family != account.FamilyEVM {
+		return account.Account{}, fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	file, payload, err := m.unlockedLocked(id)
@@ -553,16 +547,46 @@ func (m *Manager) Derive(id, label string) (account.Account, error) {
 	if len(payload.Mnemonic) == 0 {
 		return account.Account{}, ErrNoSeed
 	}
-	var next uint32
+	used := make(map[uint32]struct{})
 	for _, item := range file.Accounts {
-		if item.Kind == account.KindDerived && item.Index != nil && *item.Index >= next {
-			if *item.Index == ^uint32(0) {
-				return account.Account{}, errors.New("derivation index exhausted")
-			}
-			next = *item.Index + 1
+		if item.Kind == account.KindDerived && item.BoundTo(networkID) && item.Index != nil {
+			used[*item.Index] = struct{}{}
 		}
 	}
-	addresses, err := account.DerivedAddresses(string(payload.Mnemonic), string(payload.BIP39Passphrase), next)
+	var next uint32
+	for {
+		if _, exists := used[next]; !exists {
+			break
+		}
+		if next == ^uint32(0) {
+			return account.Account{}, errors.New("derivation index exhausted")
+		}
+		next++
+	}
+	// BIP44 has a family coin type but no standard per-network component.
+	// Thus index 0 on two EVM networks is the same key. Reuse the wallet and
+	// add a binding instead of persisting duplicate key identities.
+	for i := range file.Accounts {
+		item := &file.Accounts[i]
+		if item.Kind != account.KindDerived || item.Family != family ||
+			item.Index == nil || *item.Index != next {
+			continue
+		}
+		item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
+		if item.Label == "" {
+			item.Label = strings.TrimSpace(label)
+		}
+		item.UpdatedAt = m.now()
+		file.UpdatedAt = item.UpdatedAt
+		if err := m.saveLocked(file); err != nil {
+			return account.Account{}, err
+		}
+		m.files[id] = file
+		return cloneAccount(*item), nil
+	}
+	address, err := account.DerivedAddress(
+		string(payload.Mnemonic), string(payload.BIP39Passphrase), family, next,
+	)
 	if err != nil {
 		return account.Account{}, err
 	}
@@ -573,7 +597,9 @@ func (m *Manager) Derive(id, label string) (account.Account, error) {
 	now := m.now()
 	created := account.Account{
 		ID: accountID, Label: strings.TrimSpace(label), Kind: account.KindDerived,
-		Addresses: addresses, Index: &next, DerivationProfile: "bip44-v1",
+		Family: family, NetworkIDs: []string{networkID},
+		Addresses: map[account.Family]string{family: address},
+		Index:     &next, DerivationProfile: "bip44-v1",
 		CreatedAt: now, UpdatedAt: now,
 	}
 	file.Accounts = append(file.Accounts, created)
@@ -585,7 +611,17 @@ func (m *Manager) Derive(id, label string) (account.Account, error) {
 	return cloneAccount(created), nil
 }
 
-func (m *Manager) Import(id, label, privateKey string) (ImportResult, error) {
+func (m *Manager) Import(
+	id, networkID string,
+	family account.Family,
+	label, privateKey string,
+) (ImportResult, error) {
+	if networkID == "" {
+		return ImportResult{}, errors.New("network is required")
+	}
+	if family != account.FamilyTron && family != account.FamilyEVM {
+		return ImportResult{}, fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	}
 	key, raw, err := account.ParsePrivateKey(privateKey)
 	if err != nil {
 		return ImportResult{}, err
@@ -606,9 +642,23 @@ func (m *Manager) Import(id, label, privateKey string) (ImportResult, error) {
 	if err != nil {
 		return ImportResult{}, err
 	}
-	for _, item := range file.Accounts {
+	for i := range file.Accounts {
+		item := &file.Accounts[i]
 		if item.Kind == account.KindImported && item.Fingerprint == fingerprint {
-			return ImportResult{}, ErrDuplicateKey
+			if item.BoundTo(networkID) {
+				return ImportResult{}, ErrDuplicateKey
+			}
+			item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
+			if item.Label == "" {
+				item.Label = strings.TrimSpace(label)
+			}
+			item.UpdatedAt = m.now()
+			file.UpdatedAt = item.UpdatedAt
+			if err := m.saveLocked(file); err != nil {
+				return ImportResult{}, err
+			}
+			m.files[id] = file
+			return ImportResult{Account: cloneAccount(*item)}, nil
 		}
 	}
 	keyRef, err := newID("key_")
@@ -623,7 +673,8 @@ func (m *Manager) Import(id, label, privateKey string) (ImportResult, error) {
 	importedAt := now
 	created := account.Account{
 		ID: accountID, Label: strings.TrimSpace(label), Kind: account.KindImported,
-		Addresses: addresses, KeyRef: keyRef, Fingerprint: fingerprint, ImportedAt: &importedAt,
+		NetworkIDs: []string{networkID}, Addresses: addresses,
+		KeyRef: keyRef, Fingerprint: fingerprint, ImportedAt: &importedAt,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	payload.ImportedKeys[keyRef] = KeyEntry{
@@ -640,6 +691,9 @@ func (m *Manager) Import(id, label, privateKey string) (ImportResult, error) {
 }
 
 func (m *Manager) ExportPrivateKey(id, accountID string, family account.Family) (string, error) {
+	if family != account.FamilyTron && family != account.FamilyEVM {
+		return "", fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	file, payload, err := m.unlockedLocked(id)
@@ -655,6 +709,9 @@ func (m *Manager) ExportPrivateKey(id, accountID string, family account.Family) 
 	case account.KindDerived:
 		if item.Index == nil {
 			return "", errors.New("derived account has no index")
+		}
+		if item.Family != "" && item.Family != family {
+			return "", ErrNetworkBinding
 		}
 		key, err := account.DerivePrivateKey(string(payload.Mnemonic), string(payload.BIP39Passphrase), family, *item.Index)
 		if err != nil {
@@ -676,7 +733,7 @@ func (m *Manager) ExportPrivateKey(id, accountID string, family account.Family) 
 
 func (m *Manager) WithSigner(
 	ctx context.Context,
-	id, accountID string,
+	id, accountID, networkID string,
 	family account.Family,
 	fn func(chain.Signer) error,
 ) error {
@@ -693,6 +750,10 @@ func (m *Manager) WithSigner(
 	if err != nil {
 		m.mu.Unlock()
 		return err
+	}
+	if !item.BoundTo(networkID) {
+		m.mu.Unlock()
+		return ErrNetworkBinding
 	}
 	key, err := privateKeyFor(item, payload, family)
 	m.mu.Unlock()
@@ -736,6 +797,60 @@ func (m *Manager) Accounts(id string) ([]account.Account, error) {
 	return accounts, err
 }
 
+// BindNetwork explicitly makes an existing wallet available on a network.
+// Derived wallets can only be bound to networks from their derivation family;
+// imported secp256k1 keys can be bound to either supported family.
+func (m *Manager) BindNetwork(
+	id, accountID, networkID string,
+	family account.Family,
+) (account.Account, error) {
+	if networkID == "" {
+		return account.Account{}, errors.New("network is required")
+	}
+	if family != account.FamilyTron && family != account.FamilyEVM {
+		return account.Account{}, fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	file, ok := m.files[id]
+	if !ok {
+		return account.Account{}, fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	file.Accounts = cloneAccounts(file.Accounts)
+	for i := range file.Accounts {
+		item := &file.Accounts[i]
+		if item.ID != accountID {
+			continue
+		}
+		if item.Kind == account.KindDerived {
+			if item.Family == "" {
+				// Safe migration for pre-binding records: the user chooses the
+				// original network, then the obsolete other-family projection
+				// is removed from this wallet.
+				if item.Addresses[family] == "" {
+					return account.Account{}, ErrNetworkBinding
+				}
+				item.Family = family
+				item.Addresses = map[account.Family]string{family: item.Addresses[family]}
+			} else if item.Family != family {
+				return account.Account{}, ErrNetworkBinding
+			}
+		}
+		if item.Addresses[family] == "" {
+			return account.Account{}, ErrNetworkBinding
+		}
+		item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
+		item.UpdatedAt = m.now()
+		file.UpdatedAt = item.UpdatedAt
+		if err := m.saveLocked(file); err != nil {
+			return account.Account{}, err
+		}
+		m.files[id] = file
+		return cloneAccount(*item), nil
+	}
+	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
+}
+
 func (m *Manager) RenameAccount(id, accountID, label string) (account.Account, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -743,6 +858,7 @@ func (m *Manager) RenameAccount(id, accountID, label string) (account.Account, e
 	if !ok {
 		return account.Account{}, fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
+	file.Accounts = cloneAccounts(file.Accounts)
 	for i := range file.Accounts {
 		if file.Accounts[i].ID != accountID {
 			continue
@@ -770,6 +886,11 @@ func (m *Manager) unlockedLocked(id string) (File, *Payload, error) {
 		return File{}, nil, ErrLocked
 	}
 	active.lastUsed = m.now()
+	// File is a value, but its Accounts slice and the maps inside each account
+	// otherwise still alias the authoritative entry in m.files. Mutating a
+	// shallow copy before an AtomicWrite failure would publish an in-memory
+	// state that was never persisted.
+	file.Accounts = cloneAccounts(file.Accounts)
 	return file, &active.payload, nil
 }
 
@@ -897,12 +1018,29 @@ func verifyPayload(file File, payload Payload) error {
 			if item.Index == nil || len(payload.Mnemonic) == 0 {
 				return errors.New("derived account cannot be verified")
 			}
-			addresses, err := account.DerivedAddresses(string(payload.Mnemonic), string(payload.BIP39Passphrase), *item.Index)
+			if item.Family == "" {
+				// Pre-binding records projected one index into both families.
+				// They remain readable but unavailable to networks until the
+				// user explicitly assigns their original network.
+				addresses, err := account.DerivedAddresses(
+					string(payload.Mnemonic), string(payload.BIP39Passphrase), *item.Index,
+				)
+				if err != nil {
+					return err
+				}
+				if addresses[account.FamilyTron] != item.Addresses[account.FamilyTron] ||
+					addresses[account.FamilyEVM] != item.Addresses[account.FamilyEVM] {
+					return errors.New("derived account address does not match vault")
+				}
+				continue
+			}
+			address, err := account.DerivedAddress(
+				string(payload.Mnemonic), string(payload.BIP39Passphrase), item.Family, *item.Index,
+			)
 			if err != nil {
 				return err
 			}
-			if addresses[account.FamilyTron] != item.Addresses[account.FamilyTron] ||
-				addresses[account.FamilyEVM] != item.Addresses[account.FamilyEVM] {
+			if address != item.Addresses[item.Family] {
 				return errors.New("derived account address does not match vault")
 			}
 		case account.KindImported:
@@ -939,6 +1077,9 @@ func privateKeyFor(item account.Account, payload *Payload, family account.Family
 	case account.KindDerived:
 		if item.Index == nil {
 			return nil, errors.New("derived account has no index")
+		}
+		if item.Family != "" && item.Family != family {
+			return nil, ErrNetworkBinding
 		}
 		return account.DerivePrivateKey(
 			string(payload.Mnemonic), string(payload.BIP39Passphrase), family, *item.Index,
@@ -1010,6 +1151,7 @@ func cloneAccounts(items []account.Account) []account.Account {
 }
 
 func cloneAccount(item account.Account) account.Account {
+	item.NetworkIDs = append([]string(nil), item.NetworkIDs...)
 	addresses := item.Addresses
 	item.Addresses = make(map[account.Family]string, len(addresses))
 	for family, address := range addresses {
@@ -1024,6 +1166,17 @@ func cloneAccount(item account.Account) account.Account {
 		item.ImportedAt = &importedAt
 	}
 	return item
+}
+
+func appendNetwork(ids []string, networkID string) []string {
+	for _, id := range ids {
+		if id == networkID {
+			return ids
+		}
+	}
+	ids = append(ids, networkID)
+	sort.Strings(ids)
+	return ids
 }
 
 func aad(id string) []byte {

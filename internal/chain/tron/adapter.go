@@ -166,6 +166,64 @@ func VerifyEndpoint(
 	return nil
 }
 
+// ProbeEndpoint verifies both Tron chain identity and a recent head block.
+// Adapter initialization intentionally uses the lighter VerifyEndpoint to stay
+// within public-provider startup rate limits; the background Doctor uses this
+// complete probe on its slower cadence.
+func ProbeEndpoint(
+	ctx context.Context,
+	item network.Network,
+	endpoint string,
+	apiKey string,
+	httpClient *http.Client,
+) error {
+	if err := VerifyEndpoint(ctx, item, endpoint, apiKey, httpClient); err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(
+		ctx, http.MethodPost,
+		strings.TrimSuffix(endpoint, "/")+"/wallet/getnowblock",
+		bytes.NewReader([]byte("{}")),
+	)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		request.Header.Set("TRON-PRO-API-KEY", apiKey)
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("read Tron head block: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Tron head block returned HTTP %d", response.StatusCode)
+	}
+	var block struct {
+		BlockHeader struct {
+			RawData struct {
+				Number    int64 `json:"number"`
+				Timestamp int64 `json:"timestamp"`
+			} `json:"raw_data"`
+		} `json:"block_header"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&block); err != nil {
+		return fmt.Errorf("decode Tron head block: %w", err)
+	}
+	if block.BlockHeader.RawData.Number <= 0 || block.BlockHeader.RawData.Timestamp <= 0 {
+		return errors.New("Tron head block is incomplete")
+	}
+	age := time.Since(time.UnixMilli(block.BlockHeader.RawData.Timestamp))
+	if age < -2*time.Minute || age > 5*time.Minute {
+		return fmt.Errorf("Tron head block is stale: age %s", age.Round(time.Second))
+	}
+	return nil
+}
+
 func (a *Adapter) VerifyEndpoint(
 	ctx context.Context,
 	item network.Network,

@@ -24,8 +24,13 @@ func TestHomeManagerDefaultsAndRevisionConflicts(t *testing.T) {
 	if initial.Config.UI.LastNetworkID != "tron-mainnet" {
 		t.Errorf("last network = %q", initial.Config.UI.LastNetworkID)
 	}
+	if initial.Config.NodeDiscovery.Enabled || initial.Config.NodeDiscovery.URL != "" {
+		t.Fatalf("node discovery defaults = %+v, want disabled with empty URL", initial.Config.NodeDiscovery)
+	}
 	next := initial.Config
 	next.Security.AutoLock = 30 * time.Minute
+	next.NodeDiscovery.Enabled = true
+	next.NodeDiscovery.URL = "https://discovery.example"
 	saved, err := manager.SaveConfig(next, initial.Revision)
 	if err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -43,6 +48,13 @@ func TestHomeManagerDefaultsAndRevisionConflicts(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("config mode = %o", info.Mode().Perm())
 	}
+	reloaded, err := config.NewHomeManager(home)
+	if err != nil {
+		t.Fatalf("NewHomeManager(saved settings) error = %v", err)
+	}
+	if discovery := reloaded.Snapshot().Config.NodeDiscovery; !discovery.Enabled || discovery.URL != "https://discovery.example" {
+		t.Fatalf("reloaded node discovery = %+v", discovery)
+	}
 }
 
 func TestInvalidHomeSettingsHaveTypedError(t *testing.T) {
@@ -52,6 +64,11 @@ func TestInvalidHomeSettingsHaveTypedError(t *testing.T) {
 	current.Server.Addr = "0.0.0.0:8080"
 	if err := config.ValidateHomeConfig(current); !errors.Is(err, config.ErrInvalidSettings) {
 		t.Fatalf("ValidateHomeConfig() error = %v, want ErrInvalidSettings", err)
+	}
+	current = config.DefaultHomeConfig()
+	current.NodeDiscovery.Enabled = true
+	if err := config.ValidateHomeConfig(current); !errors.Is(err, config.ErrInvalidSettings) {
+		t.Fatalf("ValidateHomeConfig() missing discovery URL error = %v, want ErrInvalidSettings", err)
 	}
 	current = config.DefaultHomeConfig()
 	current.NodeDiscovery.URL = "https://"
@@ -77,6 +94,49 @@ func TestNetworkHeadersAreRedacted(t *testing.T) {
 	}
 	if snapshot.Networks["ethereum-mainnet"].Headers != nil {
 		t.Error("secret headers leaked through settings snapshot")
+	}
+}
+
+func TestTighteningRPCPolicyRejectsExistingInsecureOverrides(t *testing.T) {
+	t.Parallel()
+
+	manager, err := config.NewHomeManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewHomeManager() error = %v", err)
+	}
+	snapshot := manager.Snapshot()
+	permissive := snapshot.Config
+	permissive.NodeDiscovery.AllowInsecureRPC = true
+	snapshot, err = manager.SaveConfig(permissive, snapshot.Revision)
+	if err != nil {
+		t.Fatalf("SaveConfig(permissive) error = %v", err)
+	}
+	snapshot, err = manager.SaveNetwork("ethereum-mainnet", config.NetworkOverride{
+		RPCURLs: []string{"http://rpc.example"},
+	}, snapshot.Revision)
+	if err != nil {
+		t.Fatalf("SaveNetwork(http) error = %v", err)
+	}
+
+	strict := snapshot.Config
+	strict.NodeDiscovery.AllowInsecureRPC = false
+	if _, err := manager.SaveConfig(strict, snapshot.Revision); !errors.Is(err, config.ErrInvalidSettings) {
+		t.Fatalf("SaveConfig(strict) error = %v, want ErrInvalidSettings", err)
+	}
+	afterFailure := manager.Snapshot()
+	if !afterFailure.Config.NodeDiscovery.AllowInsecureRPC ||
+		len(afterFailure.Networks["ethereum-mainnet"].RPCURLs) != 1 {
+		t.Fatalf("failed policy change mutated settings: %+v", afterFailure)
+	}
+
+	snapshot, err = manager.DeleteNetworkOverride("ethereum-mainnet", afterFailure.Revision)
+	if err != nil {
+		t.Fatalf("DeleteNetworkOverride() error = %v", err)
+	}
+	strict = snapshot.Config
+	strict.NodeDiscovery.AllowInsecureRPC = false
+	if _, err := manager.SaveConfig(strict, snapshot.Revision); err != nil {
+		t.Fatalf("SaveConfig(strict after cleanup) error = %v", err)
 	}
 }
 

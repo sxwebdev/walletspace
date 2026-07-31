@@ -91,6 +91,12 @@ func (r *Resolver) Endpoints(ctx context.Context, item network.Network) ([]strin
 		}
 		return unique(append(resolved, item.RPCFallbacks...)), nil
 	}
+	if !snapshot.Config.NodeDiscovery.Enabled {
+		return append([]string(nil), item.RPCFallbacks...), nil
+	}
+	if override, ok := r.settings.NetworkOverride(item.ID); ok && override.Discovery != nil && !*override.Discovery {
+		return append([]string(nil), item.RPCFallbacks...), nil
+	}
 
 	r.mu.Lock()
 	cached := r.cache[item.ID]
@@ -105,13 +111,6 @@ func (r *Resolver) Endpoints(ctx context.Context, item network.Network) ([]strin
 		if len(safe) > 0 {
 			return unique(append(safe, item.RPCFallbacks...)), nil
 		}
-	}
-
-	if !snapshot.Config.NodeDiscovery.Enabled {
-		return append([]string(nil), item.RPCFallbacks...), nil
-	}
-	if override, ok := r.settings.NetworkOverride(item.ID); ok && override.Discovery != nil && !*override.Discovery {
-		return append([]string(nil), item.RPCFallbacks...), nil
 	}
 
 	discovered, err := r.discover(ctx, snapshot.Config.NodeDiscovery, item)

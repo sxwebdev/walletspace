@@ -40,7 +40,7 @@ export function showUnlock(space, onUnlocked) {
 export function showCreateSpace(onCreated) {
   modal({
     title: "Новый space",
-    subtitle: "Отдельный vault, пароль и коллекция аккаунтов.",
+    subtitle: "Отдельный vault без кошельков. Wallet можно создать позже в нужной сети.",
     content: `<form class="form-stack" data-form autocomplete="off">
       <label class="field"><span>Название</span><input name="name" placeholder="default"></label>
       <label class="field"><span>Мнемоника (необязательно)</span><textarea name="mnemonic" spellcheck="false"></textarea></label>

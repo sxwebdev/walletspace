@@ -10,6 +10,9 @@ imported accounts, Tron и EVM-сети в одном UI. Приватные к�
 - создание новой BIP39 recovery phrase или восстановление существующей;
 - BIP44 derivation для Tron (`m/44'/195'/0'/0/i`) и EVM
   (`m/44'/60'/0'/0/i`);
+- явные network bindings: wallet существует только в сетях, куда пользователь
+  его создал или подключил; derivation index начинается с `0` отдельно в каждой
+  сети, а совместимый ключ не дублируется;
 - импорт secp256k1 private key с явной меткой `Imported` в UI;
 - экспорт private key и recovery phrase только из разблокированного space;
 - одновременная работа с 17 сетями:
@@ -25,6 +28,7 @@ imported accounts, Tron и EVM-сети в одном UI. Приватные к�
 - native/ERC20/TRC20 balances и transfers;
 - Tron resources, staking, delegation и contract deployment;
 - прогрессивная фоновая загрузка балансов без перезагрузки всей таблицы;
+- фоновый Node Doctor, проверяющий RPC-ноды всех включённых сетей;
 - typed settings UI для RPC, provider headers, explorer, discovery, assets,
   auto-lock и общих настроек.
 
@@ -39,7 +43,8 @@ go run ./cmd/walletspace
 
 По умолчанию UI открывается на <http://127.0.0.1:8080>. При первом запуске
 приложение предлагает создать space. Если оставить имя и мнемонику пустыми,
-будет создан `default` с новой 24-word recovery phrase.
+будет создан `default` с новой 24-word recovery phrase и пустым списком
+кошельков. Первый wallet создаётся отдельно после выбора сети.
 
 Runtime-only overrides:
 
@@ -91,8 +96,8 @@ go run ./cmd/walletspace migrate --from ./data --dry-run
 ## RPC и сети
 
 Для каждой операции `network_id` передаётся явно — глобальной mutable network
-в backend нет. Кандидаты берутся из Node Discovery и объединяются с
-официальными fallback. Перед использованием:
+в backend нет. Если Node Discovery настроен и включён через `/settings`, его
+кандидаты объединяются с официальными fallback. Перед использованием:
 
 - URL фильтруется от небезопасных схем и SSRF;
 - EVM RPC проверяется через `eth_chainId` и `eth_blockNumber`;

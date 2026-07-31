@@ -6,10 +6,10 @@ import {
 } from "../../api/accounts.js";
 import { escapeHTML, modal, setBusy, toast } from "../../components/ui.js";
 
-export function showDerive(spaceID, nextIndex, onCreated) {
+export function showDerive(spaceID, network, nextIndex, onCreated) {
   modal({
-    title: "Новый derived account",
-    subtitle: "Tron и EVM получат разные BIP44-ключи с одним индексом.",
+    title: `Новый wallet · ${network.name}`,
+    subtitle: `Индекс начинается с 0 независимо для ${network.name}. Совместимый ключ в другой сети будет подключён без дубликата.`,
     content: `<form class="form-stack" data-form>
       <label class="field"><span>Label</span><input name="label" placeholder="Account ${nextIndex}"></label>
       <div class="error-text" data-error></div>
@@ -21,7 +21,9 @@ export function showDerive(spaceID, nextIndex, onCreated) {
         event.preventDefault();
         setBusy(form, true);
         try {
-          const created = await deriveAccount(spaceID, new FormData(form).get("label"));
+          const created = await deriveAccount(
+            spaceID, network.id, new FormData(form).get("label"),
+          );
           close();
           onCreated(created);
         } catch (cause) {
@@ -34,10 +36,10 @@ export function showDerive(spaceID, nextIndex, onCreated) {
   });
 }
 
-export function showImport(spaceID, onCreated) {
+export function showImport(spaceID, network, onCreated) {
   modal({
     title: "Импорт private key",
-    subtitle: "Один secp256k1-ключ создаст адреса Tron и EVM.",
+    subtitle: `Ключ будет явно подключён к ${network.name}. Его можно подключить и к другим сетям позже.`,
     content: `<form class="form-stack" data-form autocomplete="off">
       <div class="notice">Этот account не восстанавливается из мнемоники space. Сделайте backup space или сохраните ключ отдельно.</div>
       <label class="field"><span>Private key</span><input type="password" name="private_key" required autocomplete="new-password" spellcheck="false"></label>
@@ -52,7 +54,9 @@ export function showImport(spaceID, onCreated) {
         const data = new FormData(form);
         setBusy(form, true);
         try {
-          const created = await importAccount(spaceID, data.get("private_key"), data.get("label"));
+          const created = await importAccount(
+            spaceID, network.id, data.get("private_key"), data.get("label"),
+          );
           form.reset();
           close();
           onCreated(created);
@@ -92,16 +96,18 @@ export function showRename(spaceID, account, onRenamed) {
 }
 
 export function showExport(spaceID, account, defaultFamily) {
+  const families = account.kind === "derived" && account.family
+    ? [account.family]
+    : ["tron", "evm"];
   modal({
     title: "Экспорт private key",
     subtitle: account.kind === "imported"
       ? "Для импортированного account ключ общий в Tron и EVM."
-      : "Derived account использует разные ключи для Tron и EVM.",
+      : `Derived wallet использует BIP44 family ${account.family?.toUpperCase() || "legacy"}.`,
     content: `<form class="form-stack" data-form>
       <div class="notice danger">Private key даёт полный контроль над средствами. Не показывайте его никому.</div>
       <label class="field"><span>Address family</span><select name="family">
-        <option value="tron" ${defaultFamily === "tron" ? "selected" : ""}>Tron</option>
-        <option value="evm" ${defaultFamily === "evm" ? "selected" : ""}>EVM</option>
+        ${families.map((family) => `<option value="${family}" ${defaultFamily === family ? "selected" : ""}>${family === "tron" ? "Tron" : "EVM"}</option>`).join("")}
       </select></label>
       <div class="error-text" data-error></div>
       <button class="button danger" type="submit">Показать ключ</button>

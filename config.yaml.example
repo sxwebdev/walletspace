@@ -12,8 +12,9 @@ security:
   auto_lock: 15m0s
 
 node_discovery:
-  enabled: true
-  url: https://node-discovery.neuvox.dev
+  # Configure the service URL through /settings before enabling discovery.
+  enabled: false
+  url: ""
   refresh_interval: 30m0s
   request_timeout: 5s
   # HTTP and private-address RPC endpoints stay disabled by default.

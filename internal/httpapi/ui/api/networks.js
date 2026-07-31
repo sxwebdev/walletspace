@@ -6,6 +6,9 @@ export const listNetworks = (signal) =>
 export const networkHealth = (networkID, signal) =>
   request(`/api/networks/${networkID}/health`, { signal }).then((r) => r.data);
 
+export const doctorHealth = (signal) =>
+  request("/api/doctor", { signal }).then((r) => r.data);
+
 export const streamBalances = (
   spaceID,
   networkID,

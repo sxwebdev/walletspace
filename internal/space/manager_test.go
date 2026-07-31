@@ -2,6 +2,7 @@ package space_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sxwebdev/walletspace/internal/account"
+	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/space"
 	"github.com/sxwebdev/walletspace/internal/storage"
 	"github.com/sxwebdev/walletspace/internal/vault"
@@ -26,6 +28,20 @@ func newManager(t *testing.T, home string) *space.Manager {
 	return manager
 }
 
+func createWithNileWallet(t *testing.T, manager *space.Manager, password string) space.CreateResult {
+	t.Helper()
+	result, err := manager.Create(space.CreateRequest{Password: password})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	wallet, err := manager.Derive(result.Space.ID, "tron-nile", account.FamilyTron, "")
+	if err != nil {
+		t.Fatalf("Derive(Tron Nile) error = %v", err)
+	}
+	result.Accounts = []account.Account{wallet}
+	return result
+}
+
 func TestCreateDefaultIsAtomicAndUnlocked(t *testing.T) {
 	t.Parallel()
 
@@ -40,12 +56,8 @@ func TestCreateDefaultIsAtomicAndUnlocked(t *testing.T) {
 	if !result.MnemonicGenerated || result.Mnemonic == "" {
 		t.Error("generated mnemonic was not returned")
 	}
-	if len(result.Accounts) != 1 || result.Accounts[0].Kind != account.KindDerived {
-		t.Fatalf("accounts = %+v", result.Accounts)
-	}
-	if result.Accounts[0].Addresses[account.FamilyTron] == "" ||
-		result.Accounts[0].Addresses[account.FamilyEVM] == "" {
-		t.Errorf("addresses = %+v", result.Accounts[0].Addresses)
+	if len(result.Accounts) != 0 || result.Space.AccountCount != 0 {
+		t.Fatalf("new space created wallets: result=%+v summary=%+v", result.Accounts, result.Space)
 	}
 }
 
@@ -77,12 +89,23 @@ func TestLockUnlockAndFamilyExport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	accountID := result.Accounts[0].ID
+	tronAccount, err := manager.Derive(result.Space.ID, "tron-nile", account.FamilyTron, "")
+	if err != nil {
+		t.Fatalf("Derive(tron) error = %v", err)
+	}
+	accountID := tronAccount.ID
 	tronKey, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyTron)
 	if err != nil {
 		t.Fatalf("ExportPrivateKey(tron) error = %v", err)
 	}
-	evmKey, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyEVM)
+	if _, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyEVM); !errors.Is(err, space.ErrNetworkBinding) {
+		t.Fatalf("ExportPrivateKey(evm) error = %v, want ErrNetworkBinding", err)
+	}
+	evmAccount, err := manager.Derive(result.Space.ID, "ethereum-mainnet", account.FamilyEVM, "EVM")
+	if err != nil {
+		t.Fatalf("Derive(evm) error = %v", err)
+	}
+	evmKey, err := manager.ExportPrivateKey(result.Space.ID, evmAccount.ID, account.FamilyEVM)
 	if err != nil {
 		t.Fatalf("ExportPrivateKey(evm) error = %v", err)
 	}
@@ -103,6 +126,150 @@ func TestLockUnlockAndFamilyExport(t *testing.T) {
 	}
 }
 
+func TestDerivationStartsAtZeroPerNetworkAndReusesCompatibleWallet(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	created := createWithNileWallet(t, manager, "password")
+	nileZero := created.Accounts[0]
+	nileOne, err := manager.Derive(created.Space.ID, "tron-nile", account.FamilyTron, "Nile 1")
+	if err != nil {
+		t.Fatalf("Derive(Nile) error = %v", err)
+	}
+	if nileOne.Index == nil || *nileOne.Index != 1 {
+		t.Fatalf("Nile index = %v, want 1", nileOne.Index)
+	}
+
+	mainnetZero, err := manager.Derive(
+		created.Space.ID, "tron-mainnet", account.FamilyTron, "Mainnet 0",
+	)
+	if err != nil {
+		t.Fatalf("Derive(Tron Mainnet) error = %v", err)
+	}
+	if mainnetZero.ID != nileZero.ID || !mainnetZero.BoundTo("tron-mainnet") {
+		t.Fatalf("Tron index 0 was duplicated instead of bound: %+v", mainnetZero)
+	}
+
+	evmZero, err := manager.Derive(
+		created.Space.ID, "ethereum-mainnet", account.FamilyEVM, "Ethereum 0",
+	)
+	if err != nil {
+		t.Fatalf("Derive(Ethereum) error = %v", err)
+	}
+	if evmZero.Index == nil || *evmZero.Index != 0 || evmZero.ID == nileZero.ID {
+		t.Fatalf("Ethereum wallet = %+v", evmZero)
+	}
+	bscZero, err := manager.Derive(
+		created.Space.ID, "bsc-mainnet", account.FamilyEVM, "BSC 0",
+	)
+	if err != nil {
+		t.Fatalf("Derive(BSC) error = %v", err)
+	}
+	if bscZero.ID != evmZero.ID || !bscZero.BoundTo("bsc-mainnet") {
+		t.Fatalf("EVM index 0 was duplicated instead of bound: %+v", bscZero)
+	}
+}
+
+func TestDerivationUsesLowestFreeIndexAfterOutOfOrderBinding(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	created, err := manager.Create(space.CreateRequest{Password: "password"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	ethereum := make([]account.Account, 3)
+	for index := range ethereum {
+		ethereum[index], err = manager.Derive(
+			created.Space.ID, "ethereum-mainnet", account.FamilyEVM, "",
+		)
+		if err != nil {
+			t.Fatalf("Derive(Ethereum %d) error = %v", index, err)
+		}
+	}
+	if _, err := manager.BindNetwork(
+		created.Space.ID, ethereum[2].ID, "bsc-mainnet", account.FamilyEVM,
+	); err != nil {
+		t.Fatalf("BindNetwork(BSC index 2) error = %v", err)
+	}
+
+	bscZero, err := manager.Derive(created.Space.ID, "bsc-mainnet", account.FamilyEVM, "")
+	if err != nil {
+		t.Fatalf("Derive(BSC 0) error = %v", err)
+	}
+	if bscZero.ID != ethereum[0].ID || bscZero.Index == nil || *bscZero.Index != 0 {
+		t.Fatalf("first free BSC wallet = %+v, want Ethereum index 0", bscZero)
+	}
+	bscOne, err := manager.Derive(created.Space.ID, "bsc-mainnet", account.FamilyEVM, "")
+	if err != nil {
+		t.Fatalf("Derive(BSC 1) error = %v", err)
+	}
+	if bscOne.ID != ethereum[1].ID || bscOne.Index == nil || *bscOne.Index != 1 {
+		t.Fatalf("second free BSC wallet = %+v, want Ethereum index 1", bscOne)
+	}
+}
+
+func TestSignerRequiresAnExplicitNetworkBinding(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	created := createWithNileWallet(t, manager, "password")
+	accountID := created.Accounts[0].ID
+	called := 0
+	callback := func(signer chain.Signer) error {
+		called++
+		if signer.Family() != chain.FamilyTron {
+			t.Errorf("signer family = %q", signer.Family())
+		}
+		return nil
+	}
+	if err := manager.WithSigner(
+		t.Context(), created.Space.ID, accountID, "tron-mainnet", account.FamilyTron, callback,
+	); !errors.Is(err, space.ErrNetworkBinding) {
+		t.Fatalf("WithSigner(unbound) error = %v, want ErrNetworkBinding", err)
+	}
+	if called != 0 {
+		t.Fatalf("callback calls after rejected binding = %d", called)
+	}
+	if err := manager.WithSigner(
+		t.Context(), created.Space.ID, accountID, "tron-nile", account.FamilyTron, callback,
+	); err != nil {
+		t.Fatalf("WithSigner(bound) error = %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("callback calls = %d, want 1", called)
+	}
+}
+
+func TestFailedBindingDoesNotMutateInMemoryState(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	manager := newManager(t, home)
+	created := createWithNileWallet(t, manager, "password")
+	accountID := created.Accounts[0].ID
+	spacePath := filepath.Join(home, "spaces", created.Space.ID)
+	if err := os.RemoveAll(spacePath); err != nil {
+		t.Fatalf("RemoveAll(space) error = %v", err)
+	}
+	if err := os.WriteFile(spacePath, []byte("blocks directory recreation"), 0o600); err != nil {
+		t.Fatalf("WriteFile(space path) error = %v", err)
+	}
+
+	if _, err := manager.BindNetwork(
+		created.Space.ID, accountID, "tron-mainnet", account.FamilyTron,
+	); err == nil {
+		t.Fatal("BindNetwork() error = nil")
+	}
+	accounts, err := manager.Accounts(created.Space.ID)
+	if err != nil {
+		t.Fatalf("Accounts() error = %v", err)
+	}
+	if accounts[0].BoundTo("tron-mainnet") {
+		t.Fatal("failed binding leaked into in-memory state")
+	}
+}
+
 func TestImportedKeyPersistsAndDeduplicates(t *testing.T) {
 	t.Parallel()
 
@@ -113,15 +280,28 @@ func TestImportedKeyPersistsAndDeduplicates(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	privateKey := "0000000000000000000000000000000000000000000000000000000000000001"
-	imported, err := manager.Import(result.Space.ID, "Treasury", privateKey)
+	imported, err := manager.Import(
+		result.Space.ID, "ethereum-mainnet", account.FamilyEVM, "Treasury", privateKey,
+	)
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
 	if imported.Account.Kind != account.KindImported {
 		t.Errorf("kind = %q", imported.Account.Kind)
 	}
-	if _, err := manager.Import(result.Space.ID, "Duplicate", privateKey); !errors.Is(err, space.ErrDuplicateKey) {
+	if _, err := manager.Import(
+		result.Space.ID, "ethereum-mainnet", account.FamilyEVM, "Duplicate", privateKey,
+	); !errors.Is(err, space.ErrDuplicateKey) {
 		t.Fatalf("duplicate Import() error = %v", err)
+	}
+	bound, err := manager.Import(
+		result.Space.ID, "bsc-mainnet", account.FamilyEVM, "Duplicate", privateKey,
+	)
+	if err != nil {
+		t.Fatalf("Import(BSC binding) error = %v", err)
+	}
+	if bound.Account.ID != imported.Account.ID || !bound.Account.BoundTo("bsc-mainnet") {
+		t.Fatalf("imported wallet was duplicated: %+v", bound.Account)
 	}
 	if err := manager.Lock(result.Space.ID); err != nil {
 		t.Fatalf("Lock() error = %v", err)
@@ -136,16 +316,18 @@ func TestImportedKeyPersistsAndDeduplicates(t *testing.T) {
 	if exported != privateKey {
 		t.Errorf("exported key = %q", exported)
 	}
+	if _, err := manager.ExportPrivateKey(
+		result.Space.ID, imported.Account.ID, account.Family("unknown"),
+	); !errors.Is(err, account.ErrUnsupportedFamily) {
+		t.Fatalf("ExportPrivateKey(unknown) error = %v, want ErrUnsupportedFamily", err)
+	}
 }
 
 func TestChangePasswordPreservesAddresses(t *testing.T) {
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	result, err := manager.Create(space.CreateRequest{Password: "old-password"})
-	if err != nil {
-		t.Fatalf("Create() error = %v", err)
-	}
+	result := createWithNileWallet(t, manager, "old-password")
 	before := result.Accounts[0].Addresses
 	if err := manager.ChangePassword(result.Space.ID, "old-password", "new-password"); err != nil {
 		t.Fatalf("ChangePassword() error = %v", err)
@@ -229,6 +411,44 @@ func TestImportLegacyVerifiesEverythingBeforePublishing(t *testing.T) {
 	}
 	if got := len(manager.List()); got != 0 {
 		t.Fatalf("spaces after failed import = %d, want 0", got)
+	}
+}
+
+func TestLegacyWalletRequiresExplicitNetworkAssignment(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	addresses, err := account.DerivedAddresses(mnemonic, "", 0)
+	if err != nil {
+		t.Fatalf("DerivedAddresses() error = %v", err)
+	}
+	created, err := manager.ImportLegacy(space.CreateRequest{
+		Name: "legacy", Password: "password", Mnemonic: mnemonic,
+	}, []space.LegacyAccount{{
+		Index: 0, Label: "Nile", TronAddress: addresses[account.FamilyTron],
+	}})
+	if err != nil {
+		t.Fatalf("ImportLegacy() error = %v", err)
+	}
+	legacy := created.Accounts[0]
+	if legacy.BoundTo("tron-nile") {
+		t.Fatal("legacy wallet was assigned without user input")
+	}
+	assigned, err := manager.BindNetwork(
+		created.Space.ID, legacy.ID, "tron-nile", account.FamilyTron,
+	)
+	if err != nil {
+		t.Fatalf("BindNetwork() error = %v", err)
+	}
+	if assigned.Family != account.FamilyTron || !assigned.BoundTo("tron-nile") ||
+		assigned.Addresses[account.FamilyEVM] != "" {
+		t.Fatalf("assigned legacy wallet = %+v", assigned)
+	}
+	if _, err := manager.BindNetwork(
+		created.Space.ID, legacy.ID, "ethereum-mainnet", account.FamilyEVM,
+	); !errors.Is(err, space.ErrNetworkBinding) {
+		t.Fatalf("BindNetwork(wrong family) error = %v, want ErrNetworkBinding", err)
 	}
 }
 

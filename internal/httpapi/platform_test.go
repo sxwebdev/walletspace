@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
 	tronchain "github.com/sxwebdev/walletspace/internal/chain/tron"
 	"github.com/sxwebdev/walletspace/internal/config"
+	"github.com/sxwebdev/walletspace/internal/doctor"
 	"github.com/sxwebdev/walletspace/internal/httpapi"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
@@ -28,6 +30,7 @@ type platformFixture struct {
 	spaces  *space.Manager
 	evm     *evmchain.Adapter
 	tron    *tronchain.Adapter
+	doctor  *doctor.Doctor
 }
 
 func newPlatformFixture(t *testing.T) platformFixture {
@@ -58,19 +61,28 @@ func newPlatformFixture(t *testing.T) platformFixture {
 	if err != nil {
 		t.Fatalf("tron.New() error = %v", err)
 	}
+	nodeDoctor, err := doctor.New(
+		t.Context(), registry, rpcpool.New(settings),
+		func(context.Context, network.Network, string) error { return nil },
+		doctor.Options{Interval: time.Hour},
+	)
+	if err != nil {
+		t.Fatalf("doctor.New() error = %v", err)
+	}
 	handler, err := httpapi.NewPlatform(
-		spaces, settings, registry, operation.New(home), mustAssetStore(t, home), evm, tron,
+		spaces, settings, registry, operation.New(home), mustAssetStore(t, home), evm, tron, nodeDoctor,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
 		t.Fatalf("httpapi.NewPlatform() error = %v", err)
 	}
 	t.Cleanup(func() {
+		nodeDoctor.Close()
 		tron.Close()
 		evm.Close()
 		spaces.Close()
 	})
-	return platformFixture{handler: handler, spaces: spaces, evm: evm, tron: tron}
+	return platformFixture{handler: handler, spaces: spaces, evm: evm, tron: tron, doctor: nodeDoctor}
 }
 
 func mustAssetStore(t *testing.T, home string) *asset.Store {
@@ -120,6 +132,7 @@ func TestPlatformFirstRunAndSecretHeaders(t *testing.T) {
 	}
 	created := platformRequest(t, fixture.handler, http.MethodPost, "/api/spaces", map[string]any{
 		"name": "", "mnemonic": "", "password": "password",
+		"network_id": "tron-mainnet",
 	})
 	if created.Code != http.StatusCreated {
 		t.Fatalf("POST /api/spaces = %d %s", created.Code, created.Body.String())
@@ -136,7 +149,8 @@ func TestPlatformFirstRunAndSecretHeaders(t *testing.T) {
 		MnemonicGenerated bool   `json:"mnemonic_generated"`
 		Mnemonic          string `json:"mnemonic"`
 		Accounts          []struct {
-			Addresses map[string]string `json:"addresses"`
+			NetworkIDs []string          `json:"network_ids"`
+			Addresses  map[string]string `json:"addresses"`
 		} `json:"accounts"`
 	}
 	if err := json.Unmarshal(created.Body.Bytes(), &payload); err != nil {
@@ -146,9 +160,8 @@ func TestPlatformFirstRunAndSecretHeaders(t *testing.T) {
 		!payload.MnemonicGenerated || payload.Mnemonic == "" {
 		t.Errorf("created payload = %+v", payload)
 	}
-	if len(payload.Accounts) != 1 || payload.Accounts[0].Addresses["tron"] == "" ||
-		payload.Accounts[0].Addresses["evm"] == "" {
-		t.Errorf("accounts = %+v", payload.Accounts)
+	if len(payload.Accounts) != 0 {
+		t.Errorf("space creation unexpectedly created accounts: %+v", payload.Accounts)
 	}
 }
 
@@ -167,6 +180,7 @@ func TestPlatformImportBadgeAndLockedSecrets(t *testing.T) {
 			"curve":       "secp256k1",
 			"private_key": "0000000000000000000000000000000000000000000000000000000000000001",
 			"label":       "Treasury",
+			"network_id":  "ethereum-mainnet",
 		})
 	if imported.Code != http.StatusCreated || !strings.Contains(imported.Body.String(), `"kind":"imported"`) {
 		t.Fatalf("import response = %d %s", imported.Code, imported.Body.String())
@@ -190,6 +204,86 @@ func TestPlatformImportBadgeAndLockedSecrets(t *testing.T) {
 	}
 }
 
+func TestPlatformDerivesPerNetworkAndReusesCompatibleWallet(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPlatformFixture(t)
+	created := platformRequest(t, fixture.handler, http.MethodPost, "/api/spaces", map[string]any{
+		"password": "password", "network_id": "tron-nile",
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST /api/spaces = %d %s", created.Code, created.Body.String())
+	}
+	var spacePayload struct {
+		Space struct {
+			ID string `json:"id"`
+		} `json:"space"`
+		Accounts []struct {
+			ID    string  `json:"id"`
+			Index *uint32 `json:"index"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &spacePayload); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	spaceID := spacePayload.Space.ID
+	if len(spacePayload.Accounts) != 0 {
+		t.Fatalf("space creation unexpectedly created accounts: %+v", spacePayload.Accounts)
+	}
+	type accountPayload struct {
+		ID         string   `json:"id"`
+		Index      *uint32  `json:"index"`
+		NetworkIDs []string `json:"network_ids"`
+	}
+
+	nileZero := platformRequest(
+		t, fixture.handler, http.MethodPost,
+		"/api/spaces/"+spaceID+"/accounts/derive",
+		map[string]string{"network_id": "tron-nile", "label": "Nile 0"},
+	)
+	if nileZero.Code != http.StatusCreated {
+		t.Fatalf("derive Nile 0 = %d %s", nileZero.Code, nileZero.Body.String())
+	}
+	nileZeroAccount := decodeBody[accountPayload](t, nileZero)
+	if nileZeroAccount.Index == nil || *nileZeroAccount.Index != 0 {
+		t.Fatalf("first Nile index = %v, want 0", nileZeroAccount.Index)
+	}
+
+	nileOne := platformRequest(
+		t, fixture.handler, http.MethodPost,
+		"/api/spaces/"+spaceID+"/accounts/derive",
+		map[string]string{"network_id": "tron-nile", "label": "Nile 1"},
+	)
+	if nileOne.Code != http.StatusCreated {
+		t.Fatalf("derive Nile = %d %s", nileOne.Code, nileOne.Body.String())
+	}
+	nileAccount := decodeBody[accountPayload](t, nileOne)
+	if nileAccount.Index == nil || *nileAccount.Index != 1 {
+		t.Fatalf("Nile index = %v, want 1", nileAccount.Index)
+	}
+
+	ethereum := platformRequest(
+		t, fixture.handler, http.MethodPost,
+		"/api/spaces/"+spaceID+"/accounts/derive",
+		map[string]string{"network_id": "ethereum-mainnet", "label": "EVM 0"},
+	)
+	bsc := platformRequest(
+		t, fixture.handler, http.MethodPost,
+		"/api/spaces/"+spaceID+"/accounts/derive",
+		map[string]string{"network_id": "bsc-mainnet", "label": "BSC 0"},
+	)
+	if ethereum.Code != http.StatusCreated || bsc.Code != http.StatusCreated {
+		t.Fatalf("derive EVM = %d/%d: %s %s", ethereum.Code, bsc.Code, ethereum.Body, bsc.Body)
+	}
+	ethereumAccount := decodeBody[accountPayload](t, ethereum)
+	bscAccount := decodeBody[accountPayload](t, bsc)
+	if ethereumAccount.Index == nil || *ethereumAccount.Index != 0 ||
+		ethereumAccount.ID != bscAccount.ID ||
+		len(bscAccount.NetworkIDs) != 2 {
+		t.Fatalf("compatible EVM wallets were not reused: ETH=%+v BSC=%+v", ethereumAccount, bscAccount)
+	}
+}
+
 func TestPlatformSettingsUseETagAndServeClientRoute(t *testing.T) {
 	t.Parallel()
 
@@ -200,6 +294,28 @@ func TestPlatformSettingsUseETagAndServeClientRoute(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "TRON-PRO-API-KEY") {
 		t.Error("settings response leaked provider header")
+	}
+	var initial struct {
+		NodeDiscovery struct {
+			Enabled bool   `json:"enabled"`
+			URL     string `json:"url"`
+		} `json:"node_discovery"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &initial); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	if initial.NodeDiscovery.Enabled || initial.NodeDiscovery.URL != "" {
+		t.Fatalf("default discovery settings = %+v", initial.NodeDiscovery)
+	}
+	updated := platformRequest(t, fixture.handler, http.MethodPatch,
+		"/api/settings/node-discovery", map[string]any{
+			"enabled": true, "url": "  https://discovery.example  ",
+			"refresh_interval": "30m", "request_timeout": "5s",
+			"allow_insecure_rpc": false,
+		})
+	if updated.Code != http.StatusOK ||
+		!strings.Contains(updated.Body.String(), `"url":"https://discovery.example"`) {
+		t.Fatalf("PATCH discovery = %d %s", updated.Code, updated.Body.String())
 	}
 	page := platformRequest(t, fixture.handler, http.MethodGet, "/settings", nil)
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="app"`) {

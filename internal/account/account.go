@@ -36,6 +36,8 @@ type Account struct {
 	ID                string            `json:"id"`
 	Label             string            `json:"label"`
 	Kind              Kind              `json:"kind"`
+	Family            Family            `json:"family,omitempty"`
+	NetworkIDs        []string          `json:"network_ids,omitempty"`
 	Addresses         map[Family]string `json:"addresses"`
 	Index             *uint32           `json:"index,omitempty"`
 	DerivationProfile string            `json:"derivation_profile,omitempty"`
@@ -44,6 +46,19 @@ type Account struct {
 	ImportedAt        *time.Time        `json:"imported_at,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+// BoundTo reports whether the wallet was explicitly enabled for networkID.
+// Empty NetworkIDs are intentionally not treated as "all networks": records
+// written before network bindings were introduced must be assigned by the
+// user, because guessing their original network can expose the wrong wallet.
+func (a Account) BoundTo(networkID string) bool {
+	for _, id := range a.NetworkIDs {
+		if id == networkID {
+			return true
+		}
+	}
+	return false
 }
 
 type hdNetParams struct{}
@@ -132,6 +147,14 @@ func DerivedAddresses(mnemonic, passphrase string, index uint32) (map[Family]str
 		out[family] = addr
 	}
 	return out, nil
+}
+
+func DerivedAddress(mnemonic, passphrase string, family Family, index uint32) (string, error) {
+	key, err := DerivePrivateKey(mnemonic, passphrase, family, index)
+	if err != nil {
+		return "", err
+	}
+	return AddressFromPrivateKey(key, family)
 }
 
 func ParsePrivateKey(value string) (*ecdsa.PrivateKey, []byte, error) {

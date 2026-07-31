@@ -25,6 +25,7 @@ import (
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
 	tronchain "github.com/sxwebdev/walletspace/internal/chain/tron"
 	"github.com/sxwebdev/walletspace/internal/config"
+	"github.com/sxwebdev/walletspace/internal/doctor"
 	"github.com/sxwebdev/walletspace/internal/httpapi"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
@@ -105,8 +106,40 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	nodeDoctor, err := doctor.New(
+		ctx, registry, resolver,
+		func(checkCtx context.Context, item network.Network, endpoint string) error {
+			headers, headerErr := resolver.Headers(item)
+			if headerErr != nil {
+				return headerErr
+			}
+			if item.Family == network.FamilyEVM {
+				return evmchain.VerifyEndpoint(
+					checkCtx, item, endpoint, headers, resolver.HTTPClient(item),
+				)
+			}
+			return tronchain.ProbeEndpoint(
+				checkCtx, item, endpoint, headers.Get("TRON-PRO-API-KEY"),
+				resolver.HTTPClient(item),
+			)
+		},
+		doctor.Options{Networks: func() []network.Network {
+			items := registry.List()
+			for i := range items {
+				if override, ok := settings.NetworkOverride(items[i].ID); ok &&
+					override.Enabled != nil {
+					items[i].Enabled = *override.Enabled
+				}
+			}
+			return items
+		}},
+	)
+	if err != nil {
+		return err
+	}
+	defer nodeDoctor.Close()
 	handler, err := httpapi.NewPlatform(
-		spaces, settings, registry, operation.New(home), assets, evm, tron, log,
+		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor, log,
 	)
 	if err != nil {
 		return err
@@ -259,6 +292,7 @@ func runMigration(log *slog.Logger, args []string) error {
 	)
 	fmt.Fprintf(os.Stdout,
 		"Migration complete. Open Walletspace and verify every address.\n"+
+			"Assign the original Tron network to the migrated wallets in the UI before using them.\n"+
 			"Legacy files were not changed: %s\n"+
 			"Archive or delete them manually only after verification.\n", *from)
 	return nil

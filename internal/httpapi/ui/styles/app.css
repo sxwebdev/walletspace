@@ -195,6 +195,36 @@
   font-size: 24px;
 }
 
+.doctor-details {
+  display: block;
+  margin-top: 10px;
+  border: 0;
+  padding: 0;
+  color: var(--accent-2);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.doctor-list {
+  display: grid;
+  gap: 8px;
+}
+
+.doctor-row {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.doctor-row > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .panel {
   overflow: visible;
   border-radius: var(--radius-lg);
@@ -212,6 +242,10 @@
 .panel-header h2 {
   margin: 0;
   font-size: 18px;
+}
+
+.filter-control .control {
+  min-width: 220px;
 }
 
 .account-list {
@@ -264,6 +298,13 @@
   white-space: nowrap;
 }
 
+.network-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
 .badge {
   display: inline-flex;
   min-height: 24px;
@@ -292,6 +333,12 @@
 
 .badge.locked {
   color: var(--danger);
+}
+
+.badge.danger {
+  border-color: rgba(251, 113, 133, 0.3);
+  color: var(--danger);
+  background: rgba(251, 113, 133, 0.08);
 }
 
 .balance {

@@ -127,7 +127,7 @@ function discoveryCard() {
     <h2>Node Discovery</h2><p class="muted">Discovery предоставляет кандидатов. Chain ID и безопасность адреса проверяются локально.</p>
     <form data-discovery>
       <label><input type="checkbox" name="enabled" ${value.enabled ? "checked" : ""}> Использовать Node Discovery</label>
-      <label class="field"><span>Service URL</span><input name="url" value="${escapeHTML(value.url)}" required></label>
+      <label class="field"><span>Service URL</span><input name="url" value="${escapeHTML(value.url)}" placeholder="https://discovery.example"><small class="hint">URL хранится в config.yaml и обязателен только когда Discovery включён.</small></label>
       <label class="field"><span>Refresh interval</span><input name="refresh_interval" value="${escapeHTML(value.refresh_interval)}" required></label>
       <label class="field"><span>Request timeout</span><input name="request_timeout" value="${escapeHTML(value.request_timeout)}" required></label>
       <label><input type="checkbox" name="allow_insecure_rpc" ${value.allow_insecure_rpc ? "checked" : ""}> Разрешить HTTP RPC <span class="badge testnet">не рекомендуется</span></label>
@@ -182,7 +182,13 @@ function bindPage(root) {
   }));
   root.querySelector("[data-general]").addEventListener("submit", submitGeneral);
   root.querySelector("[data-security]").addEventListener("submit", submitSecurity);
-  root.querySelector("[data-discovery]").addEventListener("submit", submitDiscovery);
+  const discoveryForm = root.querySelector("[data-discovery]");
+  const syncDiscoveryRequired = () => {
+    discoveryForm.elements.url.required = discoveryForm.elements.enabled.checked;
+  };
+  discoveryForm.elements.enabled.addEventListener("change", syncDiscoveryRequired);
+  syncDiscoveryRequired();
+  discoveryForm.addEventListener("submit", submitDiscovery);
   root.querySelectorAll("[data-network]").forEach((form) => {
     form.addEventListener("submit", submitNetwork);
     form.querySelector("[data-reset]")?.addEventListener("click", () => resetNetwork(form));

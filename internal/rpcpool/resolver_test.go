@@ -178,6 +178,32 @@ func TestUnsafeCachedEndpointIsNeverReturned(t *testing.T) {
 	}
 }
 
+func TestDisabledDiscoveryIgnoresSafeCachedEndpoint(t *testing.T) {
+	t.Parallel()
+
+	settings := settingsStub{snapshot: config.SettingsSnapshot{Config: config.DefaultHomeConfig()}}
+	resolver := New(settings)
+	registry, err := network.Builtin()
+	if err != nil {
+		t.Fatalf("network.Builtin() error = %v", err)
+	}
+	item, err := registry.Get("ethereum-mainnet")
+	if err != nil {
+		t.Fatalf("registry.Get() error = %v", err)
+	}
+	resolver.cache[item.ID] = cacheEntry{
+		Endpoints: []string{"https://cached-discovery.example"},
+		Expires:   time.Now().Add(time.Hour),
+	}
+	got, err := resolver.Endpoints(t.Context(), item)
+	if err != nil {
+		t.Fatalf("Endpoints() error = %v", err)
+	}
+	if len(got) != len(item.RPCFallbacks) || got[0] != item.RPCFallbacks[0] {
+		t.Fatalf("Endpoints() = %#v, want only official fallback", got)
+	}
+}
+
 func TestInvalidateRemovesEndpointFromMemoryAndDisk(t *testing.T) {
 	t.Parallel()
 

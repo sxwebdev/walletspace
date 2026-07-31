@@ -5,6 +5,7 @@ export const state = {
   currentSpaceID: sessionStorage.getItem("walletspace:space") || "",
   networks: [],
   currentNetworkID: sessionStorage.getItem("walletspace:network") || "",
+  accountFilter: sessionStorage.getItem("walletspace:account-filter") || "all",
   accounts: [],
   assets: [],
   balances: new Map(),
@@ -18,6 +19,9 @@ export function update(patch) {
   }
   if (patch.currentNetworkID !== undefined) {
     sessionStorage.setItem("walletspace:network", patch.currentNetworkID);
+  }
+  if (patch.accountFilter !== undefined) {
+    sessionStorage.setItem("walletspace:account-filter", patch.accountFilter);
   }
   for (const listener of listeners) listener(state);
 }

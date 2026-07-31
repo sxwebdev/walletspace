@@ -1,6 +1,6 @@
 import { listSpaces, lockSpace } from "../api/spaces.js";
-import { listAccounts } from "../api/accounts.js";
-import { listNetworks, networkHealth, streamBalances } from "../api/networks.js";
+import { bindAccountNetwork, listAccounts } from "../api/accounts.js";
+import { doctorHealth, listNetworks, streamBalances } from "../api/networks.js";
 import { getSettings, listAssets } from "../api/settings.js";
 import { estimateTransfer, sendTransfer, transactionStatus } from "../api/transfers.js";
 import { deployContract, estimateDeploy, resources, stakingOperation } from "../api/tron.js";
@@ -31,6 +31,8 @@ import { escapeHTML, modal, setBusy, shortAddress, toast } from "../components/u
 
 let routeSignal;
 let balanceController;
+let doctorTimer;
+let lastDoctorSnapshot;
 let menuDismissalBound = false;
 const targetedBalanceControllers = new Set();
 
@@ -52,7 +54,13 @@ export async function render(root, signal) {
     const networkID = networks.some((item) => item.id === preferredNetwork && item.enabled)
       ? preferredNetwork
       : networks.find((item) => item.enabled)?.id;
-    update({ spaces, networks, currentSpaceID: spaceID, currentNetworkID: networkID });
+    const accountFilter = state.accountFilter === "all" || state.accountFilter === "unassigned" ||
+      networks.some((item) => item.id === state.accountFilter)
+      ? state.accountFilter
+      : "all";
+    update({
+      spaces, networks, currentSpaceID: spaceID, currentNetworkID: networkID, accountFilter,
+    });
     if (!networkID) {
       root.innerHTML = `<div class="boot">
         <strong>Нет включённых сетей</strong>
@@ -69,6 +77,7 @@ export async function render(root, signal) {
     renderShell(root);
     bindShell(root);
     startBalances();
+    doctorTimer = window.setInterval(refreshNetworkHealth, 15000);
   } catch (cause) {
     if (cause.name !== "AbortError") {
       root.innerHTML = `<div class="boot"><strong>Walletspace не загрузился</strong><span>${escapeHTML(cause.message)}</span></div>`;
@@ -82,6 +91,9 @@ function cleanup() {
   balanceController = null;
   for (const controller of targetedBalanceControllers) controller.abort();
   targetedBalanceControllers.clear();
+  window.clearInterval(doctorTimer);
+  doctorTimer = null;
+  lastDoctorSnapshot = null;
 }
 
 function renderShell(root) {
@@ -135,14 +147,17 @@ function renderShell(root) {
           </div>
         </section>
         <section class="summary-grid">
-          <article class="summary-card"><span>Accounts</span><strong data-account-count>${state.accounts.length}</strong></article>
+          <article class="summary-card"><span>Wallets</span><strong data-account-count>${filteredAccounts().length} / ${state.accounts.length}</strong></article>
           <article class="summary-card"><span>Network</span><strong>${escapeHTML(network.native.symbol)}</strong><small class="muted">${network.testnet ? "Test network" : "Main network"}</small></article>
-          <article class="summary-card"><span>RPC status</span><strong data-rpc-status>Checking…</strong><small class="muted" data-rpc-detail>Проверяем chain identity и свежий блок</small></article>
+          <article class="summary-card"><span>Node doctor</span><strong data-rpc-status>Checking…</strong><small class="muted" data-rpc-detail>Проверяем все сети и RPC-ноды</small><button class="doctor-details" type="button" data-doctor-details>Детали</button></article>
         </section>
         <section class="panel">
           <header class="panel-header">
-            <div><h2>Аккаунты</h2><span class="muted">Баланс обновляется по строкам в фоне</span></div>
-            <span class="badge">${escapeHTML(network.family.toUpperCase())}</span>
+            <div><h2>Кошельки</h2><span class="muted">Общий список space; баланс относится к активной сети</span></div>
+            <label class="filter-control">
+              <span class="sr-only">Фильтр сети</span>
+              <select class="control" data-account-filter>${accountFilterOptions()}</select>
+            </label>
           </header>
           <div class="account-list" data-account-list>${accountCards()}</div>
         </section>
@@ -175,18 +190,75 @@ function assetsFor(network) {
   return state.assets.filter((item) => item.network_id === network.id);
 }
 
+function accountFilterOptions() {
+  return [
+    `<option value="all" ${state.accountFilter === "all" ? "selected" : ""}>Все сети</option>`,
+    `<option value="unassigned" ${state.accountFilter === "unassigned" ? "selected" : ""}>Нужно назначить сеть</option>`,
+    ...state.networks.map((item) =>
+      `<option value="${item.id}" ${state.accountFilter === item.id ? "selected" : ""}>${escapeHTML(item.name)}${item.enabled ? "" : " · disabled"}</option>`),
+  ].join("");
+}
+
+function accountNetworks(account) {
+  return account.network_ids || [];
+}
+
+function accountBoundTo(account, networkID) {
+  return accountNetworks(account).includes(networkID);
+}
+
+function nextDerivationIndex(networkID) {
+  const used = new Set();
+  for (const account of state.accounts) {
+    if (account.kind !== "derived" || !accountBoundTo(account, networkID) ||
+        !Number.isInteger(account.index)) continue;
+    used.add(account.index);
+  }
+  let next = 0;
+  while (used.has(next)) next += 1;
+  return next;
+}
+
+function filteredAccounts() {
+  if (state.accountFilter === "all") return state.accounts;
+  if (state.accountFilter === "unassigned") {
+    return state.accounts.filter((account) => !accountNetworks(account).length);
+  }
+  return state.accounts.filter((account) => accountBoundTo(account, state.accountFilter));
+}
+
+function upsertAccount(updated) {
+  const index = state.accounts.findIndex((item) => item.id === updated.id);
+  if (index === -1) state.accounts.push(updated);
+  else state.accounts[index] = updated;
+}
+
 function accountCards() {
   const network = currentNetwork();
   const family = network.family;
   const assets = assetsFor(network);
-  if (!state.accounts.length) return '<div class="empty">В этом space пока нет аккаунтов.</div>';
-  return state.accounts.map((account) => {
-    const address = account.addresses[family] || "";
-    const balances = assets.map((asset) => {
+  const accounts = filteredAccounts();
+  if (!accounts.length) {
+    return `<div class="empty">${state.accounts.length
+      ? "В этом фильтре пока нет кошельков."
+      : "Кошельков пока нет. Выберите сеть и нажмите «Создать»."}</div>`;
+  }
+  return accounts.map((account) => {
+    const bound = accountBoundTo(account, network.id);
+    const canBind = account.kind === "imported" || !account.family || account.family === family;
+    const addressFamily = bound ? family : (account.family || Object.keys(account.addresses)[0]);
+    const address = account.addresses[addressFamily] || "";
+    const balances = bound ? assets.map((asset) => {
       const item = state.balances.get(balanceKey(state.currentSpaceID, network.id, account.id, asset.id));
       if (!item) return `<div class="balance"><div class="skeleton"></div><span>${asset.symbol}</span></div>`;
       if (item.error) return `<div class="balance"><strong>—</strong><span title="${escapeHTML(item.error)}">${asset.symbol} · ошибка</span></div>`;
       return `<div class="balance ${item.stale ? "stale" : ""}"><strong>${escapeHTML(item.amount || "0")}</strong><span>${asset.symbol}${item.stale ? " · cached" : ""}</span></div>`;
+    }).join("") : `<span class="muted">${accountNetworks(account).length
+      ? `Не подключён к ${escapeHTML(network.name)}`
+      : "Назначьте исходную сеть"}</span>`;
+    const networkBadges = accountNetworks(account).map((networkID) => {
+      const item = state.networks.find((candidate) => candidate.id === networkID);
+      return `<span class="badge ${item?.testnet ? "testnet" : ""}">${escapeHTML(item?.name || networkID)}</span>`;
     }).join("");
     return `
       <article class="account-card" data-account="${account.id}">
@@ -196,13 +268,16 @@ function accountCards() {
             <span class="badge ${account.kind === "imported" ? "imported" : ""}" title="${account.kind === "imported" ? "Не восстанавливается из мнемоники space" : "Восстанавливается из мнемоники space"}">${account.kind === "imported" ? "Импортирован" : "Derived"}</span>
           </div>
           <button class="address" type="button" data-copy="${escapeHTML(address)}" title="Копировать адрес">${escapeHTML(shortAddress(address))}</button>
+          <div class="network-badges">${networkBadges || '<span class="badge danger">Сеть не назначена</span>'}</div>
         </div>
         <div class="toolbar">${balances}</div>
         <div class="menu">
           <button class="button icon" type="button" data-account-menu aria-label="Действия" aria-haspopup="menu" aria-expanded="false">•••</button>
           <div class="menu-popover">
-            <button type="button" data-action="send">Отправить</button>
-            ${network.family === "tron" ? '<button type="button" data-action="resources">Resources & staking</button><button type="button" data-action="deploy">Deploy contract</button>' : ""}
+            ${bound ? '<button type="button" data-action="send">Отправить</button>' : canBind
+              ? '<button type="button" data-action="bind">Подключить к активной сети</button>'
+              : '<button type="button" data-action="derive">Создать wallet для активной family</button>'}
+            ${bound && network.family === "tron" ? '<button type="button" data-action="resources">Resources & staking</button><button type="button" data-action="deploy">Deploy contract</button>' : ""}
             <button type="button" data-action="rename">Переименовать</button>
             <button type="button" data-action="export">Экспорт private key</button>
             <button type="button" data-copy="${escapeHTML(address)}">Копировать адрес</button>
@@ -214,7 +289,7 @@ function accountCards() {
 
 function renderAccounts() {
   const count = document.querySelector("[data-account-count]");
-  if (count) count.textContent = String(state.accounts.length);
+  if (count) count.textContent = `${filteredAccounts().length} / ${state.accounts.length}`;
   document.querySelector("[data-account-list]")?.replaceChildren(
     document.createRange().createContextualFragment(accountCards()),
   );
@@ -224,8 +299,13 @@ function renderAccounts() {
 function bindShell(root) {
   bindMenuDismissal();
   root.querySelector("[data-settings]").addEventListener("click", () => navigate("/settings"));
+  root.querySelector("[data-doctor-details]").addEventListener("click", showDoctorDetails);
   root.querySelector("#space-select").addEventListener("change", switchSpace);
   root.querySelector("#network-select").addEventListener("change", switchNetwork);
+  root.querySelector("[data-account-filter]").addEventListener("change", (event) => {
+    update({ accountFilter: event.target.value });
+    renderAccounts();
+  });
   root.querySelector("[data-refresh]").addEventListener("click", () => startBalances(true));
   root.querySelector("[data-lock]").addEventListener("click", toggleLock);
   root.querySelector("[data-new-space]").addEventListener("click", () => openCreateSpace((result) => {
@@ -237,16 +317,16 @@ function bindShell(root) {
   createMenu.querySelector("[data-menu-toggle]").addEventListener("click", () => toggleMenu(createMenu));
   createMenu.querySelector("[data-derive]").addEventListener("click", () => {
     closeMenus();
-    openDerive(state.currentSpaceID, state.accounts.length, (created) => {
-      state.accounts.push(created);
+    openDerive(state.currentSpaceID, currentNetwork(), nextDerivationIndex(state.currentNetworkID), (created) => {
+      upsertAccount(created);
       renderAccounts();
       startBalances(true, [created.id]);
     });
   });
   createMenu.querySelector("[data-import]").addEventListener("click", () => {
     closeMenus();
-    openImport(state.currentSpaceID, (created) => {
-      state.accounts.push(created);
+    openImport(state.currentSpaceID, currentNetwork(), (created) => {
+      upsertAccount(created);
       toast("Ключ импортирован. Не забудьте backup.");
       renderAccounts();
       startBalances(true, [created.id]);
@@ -287,6 +367,14 @@ function bindAccountActions() {
       closeMenus();
       const account = state.accounts.find((item) => item.id === button.closest("[data-account]").dataset.account);
       if (button.dataset.action === "send") showSend(account);
+      if (button.dataset.action === "bind") bindToCurrentNetwork(account);
+      if (button.dataset.action === "derive") {
+        openDerive(state.currentSpaceID, currentNetwork(), nextDerivationIndex(state.currentNetworkID), (created) => {
+          upsertAccount(created);
+          renderAccounts();
+          startBalances(true, [created.id]);
+        });
+      }
       if (button.dataset.action === "rename") {
         openAccountRename(state.currentSpaceID, account, (updated) => {
           Object.assign(account, updated);
@@ -354,6 +442,41 @@ function closeMenus() {
   });
 }
 
+function bindToCurrentNetwork(account) {
+  const network = currentNetwork();
+  const legacy = !accountNetworks(account).length;
+  modal({
+    title: `Подключить к ${network.name}?`,
+    subtitle: legacy
+      ? "Это старая запись без network binding. Выберите только ту сеть, где вы действительно создавали этот wallet."
+      : "Тот же key source станет доступен для балансов и операций в этой сети.",
+    content: `<div class="form-stack">
+      ${legacy ? '<div class="notice danger">Назначение определит address family старой записи. Проверьте сеть перед продолжением.</div>' : ""}
+      <div class="error-text" data-error></div>
+      <button class="button primary" type="button" data-confirm>Подключить wallet</button>
+    </div>`,
+    onMount(element, close) {
+      const button = element.querySelector("[data-confirm]");
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          const updated = await bindAccountNetwork(
+            state.currentSpaceID, account.id, network.id,
+          );
+          upsertAccount(updated);
+          close();
+          renderAccounts();
+          startBalances(true, [updated.id]);
+          toast(`Wallet подключён к ${network.name}`);
+        } catch (cause) {
+          element.querySelector("[data-error]").textContent = cause.message;
+          button.disabled = false;
+        }
+      });
+    },
+  });
+}
+
 async function switchSpace(event) {
   balanceController?.abort();
   const spaceID = event.target.value;
@@ -392,23 +515,55 @@ async function switchNetwork(event) {
 }
 
 async function refreshNetworkHealth() {
-  const networkID = state.currentNetworkID;
   const status = document.querySelector("[data-rpc-status]");
   const detail = document.querySelector("[data-rpc-detail]");
   try {
-    const health = await networkHealth(networkID, routeSignal);
-    if (networkID !== state.currentNetworkID || !status?.isConnected) return;
-    status.textContent = health.status === "healthy" ? "● Healthy" : "● Unavailable";
-    status.style.color = health.status === "healthy" ? "var(--success)" : "var(--danger)";
-    detail.textContent = health.status === "healthy"
-      ? "Chain identity подтверждён"
-      : "Проверьте RPC в Settings";
+    const health = await doctorHealth(routeSignal);
+    lastDoctorSnapshot = health;
+    if (!status?.isConnected) return;
+    const labels = {
+      healthy: "● Healthy",
+      degraded: "● Degraded",
+      unavailable: "● Unavailable",
+      checking: "● Checking",
+    };
+    status.textContent = labels[health.status] || "● Checking";
+    status.style.color = health.status === "healthy"
+      ? "var(--success)"
+      : health.status === "checking" ? "var(--muted)" : "var(--danger)";
+    detail.textContent = health.status === "checking"
+      ? "Первичная проверка всех RPC-ноды"
+      : `${health.healthy}/${health.total} сетей healthy · ${health.failed_nodes} нод недоступно`;
   } catch (cause) {
-    if (cause.name === "AbortError" || networkID !== state.currentNetworkID || !status?.isConnected) return;
+    if (cause.name === "AbortError" || !status?.isConnected) return;
     status.textContent = "● Unavailable";
     status.style.color = "var(--danger)";
-    detail.textContent = "Проверьте RPC в Settings";
+    detail.textContent = "Doctor API недоступен";
   }
+}
+
+function showDoctorDetails() {
+  const snapshot = lastDoctorSnapshot;
+  if (!snapshot) {
+    toast("Doctor ещё выполняет первичную проверку");
+    return;
+  }
+  const rows = snapshot.networks.map((networkStatus) => {
+    const network = state.networks.find((item) => item.id === networkStatus.network_id);
+    const failed = networkStatus.nodes.filter((node) => node.status !== "healthy");
+    return `<article class="doctor-row">
+      <div><strong>${escapeHTML(network?.name || networkStatus.network_id)}</strong><span class="badge ${networkStatus.status === "healthy" ? "" : "danger"}">${escapeHTML(networkStatus.status)}</span></div>
+      <small class="muted">${networkStatus.healthy}/${networkStatus.total} nodes healthy${failed.length
+        ? ` · недоступны: ${failed.map((node) => escapeHTML(node.label)).join(", ")}`
+        : ""}</small>
+    </article>`;
+  }).join("");
+  modal({
+    title: "Node Doctor",
+    subtitle: "Фоновая проверка chain identity и доступности всех RPC endpoints.",
+    wide: true,
+    content: `<div class="doctor-list">${rows}</div>`,
+  });
 }
 
 function startBalances(refresh = false, accountIDs = []) {
@@ -733,6 +888,7 @@ async function trackReceipt(spaceID, networkID, txID, senderID, recipient) {
       if (spaceID !== state.currentSpaceID || networkID !== state.currentNetworkID) return;
       const family = state.networks.find((item) => item.id === networkID)?.family;
       const recipientAccount = state.accounts.find((item) =>
+        accountBoundTo(item, networkID) &&
         item.addresses[family]?.toLowerCase() === recipient.toLowerCase());
       startBalances(true, [senderID, recipientAccount?.id].filter(Boolean));
       return;
