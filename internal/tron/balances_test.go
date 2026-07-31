@@ -167,6 +167,7 @@ func TestBalancesRespectsWorkerLimit(t *testing.T) {
 		return Balance{}, nil
 	})
 	s.workers = 2
+	s.balanceSlots = make(chan struct{}, s.workers)
 
 	addrs := make([]string, 0, 8)
 	for i := range 8 {
@@ -182,13 +183,163 @@ func TestBalancesRespectsWorkerLimit(t *testing.T) {
 	}
 }
 
+func TestBalanceStreamEmitsWithoutWaitingForSlowWallets(t *testing.T) {
+	t.Parallel()
+
+	releaseSlow := make(chan struct{})
+	s := newTestService(func(ctx context.Context, addr string) (Balance, error) {
+		if addr == "TSlow" {
+			select {
+			case <-releaseSlow:
+			case <-ctx.Done():
+				return Balance{}, ctx.Err()
+			}
+		}
+		return Balance{TRX: decimal.NewFromInt(1)}, nil
+	})
+
+	stream := s.BalanceStream(t.Context(), []string{"TSlow", "TFast"}, false)
+	first := <-stream
+	if first.Address != "TFast" {
+		t.Fatalf("first streamed address = %q, want the completed fast wallet", first.Address)
+	}
+
+	close(releaseSlow)
+	if second := <-stream; second.Address != "TSlow" {
+		t.Errorf("second streamed address = %q, want TSlow", second.Address)
+	}
+}
+
+func TestBalanceStreamServesStaleThenRevalidates(t *testing.T) {
+	t.Parallel()
+
+	var value atomic.Int64
+	value.Store(1)
+	s := newTestService(func(_ context.Context, addr string) (Balance, error) {
+		return Balance{TRX: decimal.NewFromInt(value.Load())}, nil
+	})
+
+	s.Balances(t.Context(), []string{"TAddr"}, false)
+	s.balanceTimes.Store("TAddr", time.Now().Add(-balanceTTL-time.Second))
+	value.Store(2)
+
+	stream := s.BalanceStream(t.Context(), []string{"TAddr"}, false)
+	stale := <-stream
+	if !stale.Stale || !stale.Balance.TRX.Equal(decimal.NewFromInt(1)) {
+		t.Fatalf("first result = %+v, want stale balance 1", stale)
+	}
+
+	fresh := <-stream
+	if fresh.Stale || !fresh.Balance.TRX.Equal(decimal.NewFromInt(2)) {
+		t.Fatalf("second result = %+v, want fresh balance 2", fresh)
+	}
+}
+
+func TestBalanceLimitIsGlobalAcrossRequests(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu      sync.Mutex
+		running int
+		peak    int
+	)
+
+	s := newTestService(func(_ context.Context, addr string) (Balance, error) {
+		mu.Lock()
+		running++
+		peak = max(peak, running)
+		mu.Unlock()
+
+		time.Sleep(8 * time.Millisecond)
+
+		mu.Lock()
+		running--
+		mu.Unlock()
+		return Balance{}, nil
+	})
+	s.workers = 2
+	s.balanceSlots = make(chan struct{}, s.workers)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		s.Balances(t.Context(), []string{"A", "B", "C", "D"}, true)
+	}()
+	go func() {
+		defer wg.Done()
+		s.Balances(t.Context(), []string{"E", "F", "G", "H"}, true)
+	}()
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if peak > 2 {
+		t.Errorf("peak concurrency across requests = %d, want at most 2", peak)
+	}
+}
+
+func TestBalanceFetchesAreDeduplicatedByAddress(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int64
+
+	s := newTestService(func(ctx context.Context, addr string) (Balance, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return Balance{}, ctx.Err()
+		}
+		return Balance{TRX: decimal.NewFromInt(1)}, nil
+	})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		s.Balances(t.Context(), []string{"TSame"}, true)
+	}()
+	<-started
+	go func() {
+		defer wg.Done()
+		s.Balances(t.Context(), []string{"TSame"}, true)
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	if got := calls.Load(); got != 1 {
+		t.Errorf("fetch calls = %d, want one shared fetch", got)
+	}
+}
+
+func TestTransactionConfirmedRejectsMalformedID(t *testing.T) {
+	t.Parallel()
+
+	s := newTestService(func(_ context.Context, addr string) (Balance, error) {
+		return Balance{}, nil
+	})
+
+	_, err := s.TransactionConfirmed(t.Context(), "not-a-txid")
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("error = %v, want ErrInvalidRequest", err)
+	}
+}
+
 func newTestService(fetch func(context.Context, string) (Balance, error)) *Service {
 	return &Service{
-		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		token:   TokenInfo{Contract: "TContract", Symbol: "USDT", Decimals: 6},
-		nodes:   1,
-		workers: 4,
-		cache:   newBalanceCache(balanceTTL),
+		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		token:        TokenInfo{Contract: "TContract", Symbol: "USDT", Decimals: 6},
+		nodes:        1,
+		workers:      4,
+		cache:        newBalanceCache(balanceRetention),
+		balanceSlots: make(chan struct{}, 4),
 		estimates: ttlcache.New(
 			ttlcache.WithTTL[string, Estimate](estimateTTL),
 			ttlcache.WithDisableTouchOnHit[string, Estimate](),

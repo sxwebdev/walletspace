@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -31,6 +32,10 @@ const (
 	// building and broadcasting: a contract that ran out of energy is only
 	// visible once the transaction is in a block.
 	deployTimeout = 90 * time.Second
+	// A large portfolio can legitimately take longer than the ordinary request
+	// timeout on rate-limited public nodes. The stream stays bounded, while
+	// still allowing the browser to cancel it immediately.
+	balanceStreamTimeout = 5 * time.Minute
 )
 
 // Wallets is the wallet storage the API operates on.
@@ -46,6 +51,8 @@ type Wallets interface {
 type Chain interface {
 	Token() tron.TokenInfo
 	Balances(ctx context.Context, addresses []string, refresh bool) (map[string]tron.Balance, map[string]error)
+	BalanceStream(ctx context.Context, addresses []string, refresh bool) <-chan tron.BalanceResult
+	TransactionConfirmed(ctx context.Context, txid string) (bool, error)
 	Estimate(ctx context.Context, from, to string, asset tron.Asset, amount decimal.Decimal) (tron.Estimate, error)
 	Spendable(ctx context.Context, from, to string, asset tron.Asset) (decimal.Decimal, tron.Estimate, error)
 	Shortfall(ctx context.Context, from string, asset tron.Asset, amount decimal.Decimal, est tron.Estimate) (decimal.Decimal, error)
@@ -94,9 +101,12 @@ func New(wallets Wallets, chain Chain, network, explorer string, log *slog.Logge
 	mux.HandleFunc("GET /api/wallets", s.handleList)
 	mux.HandleFunc("POST /api/wallets", s.handleCreate)
 	mux.HandleFunc("GET /api/balances", s.handleBalances)
+	mux.HandleFunc("GET /api/balances/stream", s.handleBalanceStream)
+	mux.HandleFunc("GET /api/transactions/{txid}", s.handleTransaction)
 	mux.HandleFunc("POST /api/wallets/{index}/estimate", s.handleEstimate)
 	mux.HandleFunc("POST /api/wallets/{index}/send", s.handleSend)
 	mux.HandleFunc("PATCH /api/wallets/{index}", s.handleRename)
+	mux.HandleFunc("POST /api/wallets/{index}/private-key", s.handlePrivateKey)
 	mux.HandleFunc("GET /api/wallets/{index}/resources", s.handleResources)
 	mux.HandleFunc("POST /api/wallets/{index}/stake", s.handleStake)
 	mux.HandleFunc("POST /api/wallets/{index}/unstake", s.handleUnstake)
@@ -286,22 +296,112 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toWalletResponse(updated))
 }
 
+// handlePrivateKey derives a key only after an explicit same-origin POST. The
+// response must never be cached: it contains everything needed to spend from
+// the wallet.
+func (s *Server) handlePrivateKey(w http.ResponseWriter, r *http.Request) {
+	index, err := parseIndex(r.PathValue("index"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	item, err := s.wallets.Get(index)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+
+	key, err := s.wallets.PrivateKey(index)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	if key == nil || key.D == nil {
+		s.log.Error("derive private key", "index", index, "error", "empty key")
+		writeError(w, http.StatusInternalServerError, "derived private key is empty")
+		return
+	}
+
+	raw := make([]byte, 32)
+	key.D.FillBytes(raw)
+	privateKey := hex.EncodeToString(raw)
+	clear(raw)
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	writeJSON(w, http.StatusOK, map[string]string{
+		"address":     item.Address,
+		"private_key": privateKey,
+	})
+}
+
 type balanceResponse struct {
 	Address   string `json:"address"`
 	TRX       string `json:"trx,omitempty"`
 	USDT      string `json:"usdt,omitempty"`
 	Activated bool   `json:"activated"`
 	Error     string `json:"error,omitempty"`
+	Stale     bool   `json:"stale,omitempty"`
+}
+
+func (s *Server) balanceAddresses(w http.ResponseWriter, r *http.Request) ([]string, bool) {
+	rawIndexes := r.URL.Query()["index"]
+	if len(rawIndexes) == 0 {
+		list := s.wallets.List()
+		addresses := make([]string, 0, len(list))
+		for _, item := range list {
+			addresses = append(addresses, item.Address)
+		}
+		return addresses, true
+	}
+
+	addresses := make([]string, 0, len(rawIndexes))
+	seen := make(map[uint32]struct{}, len(rawIndexes))
+	for _, raw := range rawIndexes {
+		index, err := parseIndex(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return nil, false
+		}
+		if _, ok := seen[index]; ok {
+			continue
+		}
+
+		item, err := s.wallets.Get(index)
+		if err != nil {
+			s.writeStoreError(w, err)
+			return nil, false
+		}
+
+		seen[index] = struct{}{}
+		addresses = append(addresses, item.Address)
+	}
+
+	return addresses, true
+}
+
+func toBalanceResponse(result tron.BalanceResult) balanceResponse {
+	if result.Err != nil {
+		return balanceResponse{Address: result.Address, Error: result.Err.Error()}
+	}
+
+	return balanceResponse{
+		Address:   result.Address,
+		TRX:       result.Balance.TRX.String(),
+		USDT:      result.Balance.USDT.String(),
+		Activated: result.Balance.Activated,
+		Stale:     result.Stale,
+	}
 }
 
 func (s *Server) handleBalances(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 
-	list := s.wallets.List()
-	addresses := make([]string, 0, len(list))
-	for _, item := range list {
-		addresses = append(addresses, item.Address)
+	addresses, ok := s.balanceAddresses(w, r)
+	if !ok {
+		return
 	}
 
 	refresh := r.URL.Query().Get("refresh") == "1"
@@ -325,6 +425,61 @@ func (s *Server) handleBalances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"balances": out})
+}
+
+// handleBalanceStream writes one JSON object per line and flushes it
+// immediately. Cached rows arrive first; fresh rows follow as their RPC calls
+// finish, so one slow node no longer blocks the whole portfolio.
+func (s *Server) handleBalanceStream(w http.ResponseWriter, r *http.Request) {
+	addresses, ok := s.balanceAddresses(w, r)
+	if !ok {
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming is not supported")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), balanceStreamTimeout)
+	defer cancel()
+
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	enc := json.NewEncoder(w)
+	refresh := r.URL.Query().Get("refresh") == "1"
+	for result := range s.chain.BalanceStream(ctx, addresses, refresh) {
+		if result.Err != nil {
+			s.log.Warn("balance fetch failed", "address", result.Address, "error", result.Err)
+		}
+
+		if err := enc.Encode(toBalanceResponse(result)); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
+}
+
+func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	confirmed, err := s.chain.TransactionConfirmed(ctx, r.PathValue("txid"))
+	if err != nil {
+		if errors.Is(err, tron.ErrInvalidRequest) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		s.log.Warn("transaction status failed", "txid", r.PathValue("txid"), "error", err)
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"confirmed": confirmed})
 }
 
 // amountMax asks the server to work out the largest sendable amount itself.

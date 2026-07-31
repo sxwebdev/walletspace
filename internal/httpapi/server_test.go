@@ -146,6 +146,125 @@ func TestBalancesRefreshFlag(t *testing.T) {
 	}
 }
 
+func TestBalancesCanSelectWalletIndexes(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.balances[walletAddr1] = tron.Balance{
+		TRX:       decimal.RequireFromString("7.5"),
+		Activated: true,
+	}
+	srv := newServer(t, newWalletsFake(), chain)
+
+	var got struct {
+		Balances []struct {
+			Address string `json:"address"`
+			TRX     string `json:"trx"`
+		} `json:"balances"`
+	}
+	do(t, srv, http.MethodGet, "/api/balances?index=1", "", http.StatusOK, &got)
+
+	if len(got.Balances) != 1 || got.Balances[0].Address != walletAddr1 {
+		t.Fatalf("selected balances = %+v, want only wallet 1", got.Balances)
+	}
+	if len(chain.balanceAddresses) != 1 || chain.balanceAddresses[0] != walletAddr1 {
+		t.Errorf("chain addresses = %v, want only %s", chain.balanceAddresses, walletAddr1)
+	}
+}
+
+func TestBalanceStreamFlushesEachCompletedWallet(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	releaseSecond := make(chan struct{})
+	chain.balanceStream = func(ctx context.Context, addresses []string, refresh bool) <-chan tron.BalanceResult {
+		out := make(chan tron.BalanceResult)
+		go func() {
+			defer close(out)
+			select {
+			case out <- tron.BalanceResult{
+				Address: addresses[0],
+				Balance: tron.Balance{TRX: decimal.NewFromInt(1), Activated: true},
+			}:
+			case <-ctx.Done():
+				return
+			}
+
+			select {
+			case <-releaseSecond:
+			case <-ctx.Done():
+				return
+			}
+
+			select {
+			case out <- tron.BalanceResult{
+				Address: addresses[1],
+				Balance: tron.Balance{TRX: decimal.NewFromInt(2), Activated: true},
+			}:
+			case <-ctx.Done():
+			}
+		}()
+		return out
+	}
+
+	srv := newServer(t, newWalletsFake(), chain)
+	res, err := srv.Client().Get(srv.URL + "/api/balances/stream")
+	if err != nil {
+		t.Fatalf("GET balance stream: %v", err)
+	}
+	defer res.Body.Close()
+
+	if got := res.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/x-ndjson") {
+		t.Fatalf("Content-Type = %q, want NDJSON", got)
+	}
+
+	dec := json.NewDecoder(res.Body)
+	var first struct {
+		Address string `json:"address"`
+		TRX     string `json:"trx"`
+	}
+	if err := dec.Decode(&first); err != nil {
+		t.Fatalf("decode first streamed balance: %v", err)
+	}
+	if first.Address != walletAddr0 || first.TRX != "1" {
+		t.Fatalf("first streamed balance = %+v", first)
+	}
+
+	close(releaseSecond)
+
+	var second struct {
+		Address string `json:"address"`
+		TRX     string `json:"trx"`
+	}
+	if err := dec.Decode(&second); err != nil {
+		t.Fatalf("decode second streamed balance: %v", err)
+	}
+	if second.Address != walletAddr1 || second.TRX != "2" {
+		t.Fatalf("second streamed balance = %+v", second)
+	}
+}
+
+func TestTransactionStatus(t *testing.T) {
+	t.Parallel()
+
+	chain := newChainFake()
+	chain.confirmed = true
+	srv := newServer(t, newWalletsFake(), chain)
+	txid := strings.Repeat("ab", 32)
+
+	var got struct {
+		Confirmed bool `json:"confirmed"`
+	}
+	do(t, srv, http.MethodGet, "/api/transactions/"+txid, "", http.StatusOK, &got)
+
+	if !got.Confirmed {
+		t.Error("confirmed = false, want true")
+	}
+	if chain.confirmedID != txid {
+		t.Errorf("checked txid = %q, want %q", chain.confirmedID, txid)
+	}
+}
+
 func TestSend(t *testing.T) {
 	t.Parallel()
 
@@ -502,6 +621,67 @@ func TestRename(t *testing.T) {
 	do(t, srv, http.MethodPatch, "/api/wallets/99", `{"label":"x"}`, http.StatusNotFound, nil)
 }
 
+func TestExportPrivateKey(t *testing.T) {
+	t.Parallel()
+
+	wallets := newWalletsFake()
+	srv := newServer(t, wallets, newChainFake())
+
+	req, err := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodPost,
+		srv.URL+"/api/wallets/1/private-key",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST private-key: %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(res.Body)
+		t.Fatalf("status = %d, want 200 (body: %s)", res.StatusCode, raw)
+	}
+	if got := res.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	if got := res.Header.Get("Pragma"); got != "no-cache" {
+		t.Errorf("Pragma = %q, want no-cache", got)
+	}
+
+	var got struct {
+		Address    string `json:"address"`
+		PrivateKey string `json:"private_key"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatalf("decode private key response: %v", err)
+	}
+
+	wantKey := fmt.Sprintf("%064x", wallets.key.D)
+	if got.Address != walletAddr1 || got.PrivateKey != wantKey {
+		t.Errorf("export = %+v, want wallet 1 and its 32-byte key", got)
+	}
+	if len(got.PrivateKey) != 64 {
+		t.Errorf("private key length = %d, want 64 hex characters", len(got.PrivateKey))
+	}
+	if wallets.keyCalls != 1 {
+		t.Errorf("private key derivations = %d, want 1", wallets.keyCalls)
+	}
+}
+
+func TestPrivateKeyCannotBeExportedWithGET(t *testing.T) {
+	t.Parallel()
+
+	srv := newServer(t, newWalletsFake(), newChainFake())
+	do(t, srv, http.MethodGet, "/api/wallets/0/private-key", "", http.StatusNotFound, nil)
+}
+
 func TestInfo(t *testing.T) {
 	t.Parallel()
 
@@ -679,7 +859,12 @@ type chainFake struct {
 	balances map[string]tron.Balance
 	errs     map[string]error
 
-	lastRefresh bool
+	lastRefresh      bool
+	balanceAddresses []string
+	balanceStream    func(context.Context, []string, bool) <-chan tron.BalanceResult
+	confirmed        bool
+	confirmErr       error
+	confirmedID      string
 
 	estimate    tron.Estimate
 	estimateErr error
@@ -750,6 +935,7 @@ func (f *chainFake) Token() tron.TokenInfo {
 
 func (f *chainFake) Balances(_ context.Context, addresses []string, refresh bool) (map[string]tron.Balance, map[string]error) {
 	f.lastRefresh = refresh
+	f.balanceAddresses = append([]string(nil), addresses...)
 
 	out := make(map[string]tron.Balance, len(addresses))
 	errs := make(map[string]error)
@@ -769,6 +955,27 @@ func (f *chainFake) Balances(_ context.Context, addresses []string, refresh bool
 	}
 
 	return out, errs
+}
+
+func (f *chainFake) BalanceStream(ctx context.Context, addresses []string, refresh bool) <-chan tron.BalanceResult {
+	if f.balanceStream != nil {
+		return f.balanceStream(ctx, addresses, refresh)
+	}
+
+	out := make(chan tron.BalanceResult, len(addresses))
+	balances, errs := f.Balances(ctx, addresses, refresh)
+
+	for _, addr := range addresses {
+		out <- tron.BalanceResult{Address: addr, Balance: balances[addr], Err: errs[addr]}
+	}
+	close(out)
+
+	return out
+}
+
+func (f *chainFake) TransactionConfirmed(_ context.Context, txid string) (bool, error) {
+	f.confirmedID = txid
+	return f.confirmed, f.confirmErr
 }
 
 func (f *chainFake) Estimate(_ context.Context, from, to string, asset tron.Asset, amount decimal.Decimal) (tron.Estimate, error) {

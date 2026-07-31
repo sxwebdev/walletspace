@@ -63,7 +63,10 @@ NODES="grpcs://grpc.trongrid.io:50051,https://api.trongrid.io,https://tron-rpc.p
 | `GET`   | `/api/wallets`                         | список кошельков                                                                             |
 | `POST`  | `/api/wallets`                         | создать следующий индекс, тело `{"label":"..."}`                                             |
 | `PATCH` | `/api/wallets/{index}`                 | переименовать                                                                                |
-| `GET`   | `/api/balances`                        | балансы всех кошельков; `?refresh=1` минует кеш (TTL 15с)                                    |
+| `POST`  | `/api/wallets/{index}/private-key`     | вывести 32-байтовый приватный ключ в hex; ответ запрещено кешировать                          |
+| `GET`   | `/api/balances`                        | балансы кошельков; повторяемый `?index=…` сужает выборку, `refresh=1` минует кеш               |
+| `GET`   | `/api/balances/stream`                 | те же балансы в NDJSON: кеш сразу, свежие значения — по мере готовности                       |
+| `GET`   | `/api/transactions/{txid}`             | появился ли receipt транзакции в блоке: `{"confirmed":true\|false}`                           |
 | `POST`  | `/api/wallets/{index}/estimate`        | во что обойдётся перевод; тело как у `/send`                                                 |
 | `POST`  | `/api/wallets/{index}/send`            | `{"asset":"trx"\|"usdt","to":"T...","amount":"1.5"}` → `{"txid":"..."}`                      |
 | `GET`   | `/api/wallets/{index}/resources`       | стейк, пулы bandwidth и energy, разморозки, делегации                                        |

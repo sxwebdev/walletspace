@@ -19,15 +19,18 @@ import (
 	"github.com/sxwebdev/gotron/pkg/client"
 	"github.com/sxwebdev/gotron/schema/pb/api"
 	"github.com/sxwebdev/walletspace/internal/config"
-	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
 	// maxTokenDecimals mirrors the cap the gotron amount constructors enforce:
 	// the number of decimal digits in the largest ABI uint256.
 	maxTokenDecimals = 78
-	// balanceTTL is how long a fetched balance is served from cache.
+	// balanceTTL is how long a fetched balance is considered fresh.
 	balanceTTL = 15 * time.Second
+	// balanceRetention keeps the last known value available for immediate
+	// stale-while-revalidate rendering across page reloads.
+	balanceRetention = 5 * time.Minute
 	// estimateTTL covers one pass through the send dialog. Fees move with
 	// chain parameters, which change far more slowly than that.
 	estimateTTL = 60 * time.Second
@@ -52,6 +55,15 @@ type Balance struct {
 	Activated bool
 }
 
+// BalanceResult is one completed address read. It lets HTTP callers render
+// large portfolios progressively instead of waiting for the slowest address.
+type BalanceResult struct {
+	Address string
+	Balance Balance
+	Err     error
+	Stale   bool
+}
+
 // Estimate is what a transfer will cost the sender, on top of the amount.
 type Estimate struct {
 	// Fee is the total cost in TRX, including Activation.
@@ -74,14 +86,19 @@ type TokenInfo struct {
 
 // Service talks to the Tron network.
 type Service struct {
-	client    *client.Client
-	log       *slog.Logger
-	token     TokenInfo
-	feeLimit  client.SUN
-	nodes     int // number of configured nodes, used as the retry budget
-	workers   int // parallel balance fetches
-	cache     *ttlcache.Cache[string, Balance]
-	estimates *ttlcache.Cache[string, Estimate]
+	client       *client.Client
+	log          *slog.Logger
+	token        TokenInfo
+	feeLimit     client.SUN
+	nodes        int // number of configured nodes, used as the retry budget
+	workers      int // parallel balance fetches
+	cache        *ttlcache.Cache[string, Balance]
+	balanceTimes sync.Map // address -> time.Time of the last successful fetch
+	estimates    *ttlcache.Cache[string, Estimate]
+	// balanceSlots is shared by every HTTP request. A per-request errgroup limit
+	// would let two overlapping refreshes double the load on public TronGrid.
+	balanceSlots chan struct{}
+	balanceGroup singleflight.Group
 	// fetch reads one address from chain. It is a field so the caching and
 	// fan-out logic in Balances can be exercised without a live node.
 	fetch func(ctx context.Context, addr string) (Balance, error)
@@ -162,12 +179,13 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Service, e
 	}
 
 	s := &Service{
-		client:   c,
-		log:      log,
-		feeLimit: feeLimit,
-		nodes:    len(nodeCfgs),
-		workers:  workers,
-		cache:    newBalanceCache(balanceTTL),
+		client:       c,
+		log:          log,
+		feeLimit:     feeLimit,
+		nodes:        len(nodeCfgs),
+		workers:      workers,
+		cache:        newBalanceCache(balanceRetention),
+		balanceSlots: make(chan struct{}, workers),
 		estimates: ttlcache.New(
 			ttlcache.WithTTL[string, Estimate](estimateTTL),
 			ttlcache.WithDisableTouchOnHit[string, Estimate](),
@@ -252,59 +270,104 @@ func (s *Service) loadTokenInfo(ctx context.Context) error {
 	return nil
 }
 
-// Balances fetches the balances of every address in parallel. Per-address
-// failures are returned in the errs map instead of failing the whole call.
+// BalanceStream emits cached balances first, then fresh reads as each address
+// completes. All concurrent streams share the same RPC budget.
+func (s *Service) BalanceStream(ctx context.Context, addresses []string, refresh bool) <-chan BalanceResult {
+	results := make(chan BalanceResult)
+
+	go func() {
+		defer close(results)
+
+		pending := make([]string, 0, len(addresses))
+		if refresh {
+			pending = append(pending, addresses...)
+		} else {
+			for _, addr := range addresses {
+				if item := s.cache.Get(addr); item != nil {
+					fetchedAt, _ := s.balanceTimes.Load(addr)
+					at, _ := fetchedAt.(time.Time)
+					stale := at.IsZero() || time.Since(at) > balanceTTL
+
+					select {
+					case results <- BalanceResult{
+						Address: addr,
+						Balance: item.Value(),
+						Stale:   stale,
+					}:
+					case <-ctx.Done():
+						return
+					}
+					if !stale {
+						continue
+					}
+				}
+
+				pending = append(pending, addr)
+			}
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(len(pending))
+		for _, addr := range pending {
+			go func() {
+				defer wg.Done()
+
+				b, err := s.fetchShared(ctx, addr)
+				if err == nil {
+					// Only fresh successful reads restart the TTL.
+					s.cache.Set(addr, b, ttlcache.DefaultTTL)
+					s.balanceTimes.Store(addr, time.Now())
+				}
+
+				select {
+				case results <- BalanceResult{Address: addr, Balance: b, Err: err}:
+				case <-ctx.Done():
+				}
+			}()
+		}
+		wg.Wait()
+	}()
+
+	return results
+}
+
+// fetchShared deduplicates the same address across overlapping refreshes and
+// applies the service-wide concurrency limit before touching a node.
+func (s *Service) fetchShared(ctx context.Context, addr string) (Balance, error) {
+	ch := s.balanceGroup.DoChan(addr, func() (any, error) {
+		select {
+		case s.balanceSlots <- struct{}{}:
+			defer func() { <-s.balanceSlots }()
+		case <-ctx.Done():
+			return Balance{}, ctx.Err()
+		}
+
+		return s.fetch(ctx, addr)
+	})
+
+	select {
+	case result := <-ch:
+		if result.Val == nil {
+			return Balance{}, result.Err
+		}
+		return result.Val.(Balance), result.Err
+	case <-ctx.Done():
+		return Balance{}, ctx.Err()
+	}
+}
+
+// Balances is the aggregate form used by calculations and the JSON endpoint.
+// It consumes the same progressive stream, preserving the existing API.
 func (s *Service) Balances(ctx context.Context, addresses []string, refresh bool) (map[string]Balance, map[string]error) {
 	out := make(map[string]Balance, len(addresses))
 	errs := make(map[string]error)
 
-	var (
-		mu      sync.Mutex
-		pending []string
-	)
-
-	if refresh {
-		pending = addresses
-	} else {
-		for _, addr := range addresses {
-			if item := s.cache.Get(addr); item != nil {
-				out[addr] = item.Value()
-				continue
-			}
-
-			pending = append(pending, addr)
+	for result := range s.BalanceStream(ctx, addresses, refresh) {
+		if result.Err != nil {
+			errs[result.Address] = result.Err
+			continue
 		}
-	}
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(s.workers)
-
-	fetched := make(map[string]Balance, len(pending))
-
-	for _, addr := range pending {
-		g.Go(func() error {
-			b, err := s.fetch(gctx, addr)
-
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				errs[addr] = err
-				return nil
-			}
-			fetched[addr] = b
-
-			return nil
-		})
-	}
-
-	// The goroutines never return an error; failures land in errs.
-	_ = g.Wait()
-
-	// Only freshly fetched balances are stored: writing back a cache hit would
-	// restart its TTL and the entry would never go stale.
-	for addr, b := range fetched {
-		s.cache.Set(addr, b, ttlcache.DefaultTTL)
-		out[addr] = b
+		out[result.Address] = result.Balance
 	}
 
 	return out, errs
@@ -315,6 +378,7 @@ func (s *Service) Balances(ctx context.Context, addresses []string, refresh bool
 func (s *Service) invalidate(addresses ...string) {
 	for _, addr := range addresses {
 		s.cache.Delete(addr)
+		s.balanceTimes.Delete(addr)
 	}
 
 	// A transfer can activate the recipient, which makes every later transfer
@@ -690,6 +754,27 @@ func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount
 	s.invalidate(from, to)
 
 	return txid, nil
+}
+
+// TransactionConfirmed reports whether a broadcast transaction has appeared
+// in a block. A missing receipt is the normal pending state, not an error.
+func (s *Service) TransactionConfirmed(ctx context.Context, txid string) (bool, error) {
+	if len(txid) != 64 {
+		return false, fmt.Errorf("%w: transaction id must contain 64 hex characters", ErrInvalidRequest)
+	}
+	if _, err := hex.DecodeString(txid); err != nil {
+		return false, fmt.Errorf("%w: invalid transaction id: %s", ErrInvalidRequest, err)
+	}
+
+	_, err := s.client.GetTransactionInfoByHash(ctx, txid)
+	if errors.Is(err, client.ErrTransactionInfoNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read transaction receipt: %w", err)
+	}
+
+	return true, nil
 }
 
 // healthLogger bridges the client's health checker to slog.
