@@ -10,12 +10,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/sxwebdev/walletspace/internal/account"
@@ -25,8 +28,10 @@ import (
 )
 
 const (
-	SchemaVersion     = 1
-	minPasswordLength = 8
+	SchemaVersion = 1
+	// A vault password faces an offline attack on a stolen backup, where the
+	// only real defence is length.
+	minPasswordLength = 12
 )
 
 var (
@@ -37,7 +42,10 @@ var (
 	ErrAccountNotFound  = errors.New("account not found")
 	ErrNetworkBinding   = errors.New("account is not available for this network")
 	ErrFirstSpaceExists = errors.New("the first space was already created")
-	ErrWeakPassword     = errors.New("space password is too short")
+	ErrWeakPassword     = errors.New("space password is too weak")
+	// ErrPasswordRequired marks a step-up that was not attempted at all, as
+	// opposed to one that was attempted with the wrong password.
+	ErrPasswordRequired = errors.New("space password is required")
 )
 
 type KeyEntry struct {
@@ -118,6 +126,17 @@ type Manager struct {
 	stop     chan struct{}
 	done     chan struct{}
 	reset    chan struct{}
+
+	// spaceLocks serialises the password-checking operations per space, and
+	// kdfSlots bounds how many derivations run at once across all of them.
+	// Neither can be mu: mu is released across a derivation precisely so that
+	// one unlock does not freeze every other space for the length of an Argon2
+	// run. See throttle.go.
+	spaceLocks sync.Map
+	// unknownSpaceLock stands in for ids that are not space ids, so a request
+	// naming one cannot add a permanent entry to spaceLocks.
+	unknownSpaceLock sync.Mutex
+	kdfSlots         chan struct{}
 }
 
 func NewManager(home string, autoLock time.Duration, params vault.Params) (*Manager, error) {
@@ -131,6 +150,7 @@ func NewManager(home string, autoLock time.Duration, params vault.Params) (*Mana
 		home: home, params: params, autoLock: autoLock, now: func() time.Time { return time.Now().UTC() },
 		files: make(map[string]File), sessions: make(map[string]*session),
 		stop: make(chan struct{}), done: make(chan struct{}), reset: make(chan struct{}, 1),
+		kdfSlots: newKDFSlots(),
 	}
 	if err := m.scan(); err != nil {
 		return nil, err
@@ -154,8 +174,10 @@ func (m *Manager) Close() {
 }
 
 func (m *Manager) SetAutoLock(duration time.Duration) error {
-	if duration < 0 {
-		return errors.New("auto-lock must not be negative")
+	// Zero used to mean "never expire", which left a decrypted seed in memory
+	// for the lifetime of the process.
+	if duration <= 0 {
+		return errors.New("auto-lock cannot be disabled")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -281,14 +303,25 @@ func (m *Manager) Create(req CreateRequest) (CreateResult, error) {
 		Version: 1, Mnemonic: []byte(mnemonic), BIP39Passphrase: []byte(req.BIP39Passphrase),
 		ImportedKeys: make(map[string]KeyEntry), CreatedAt: now,
 	}
+	// Checked before the two derivations rather than after, so a caller that has
+	// already hit the ceiling cannot spend 128 MiB of Argon2 per request finding
+	// that out.
+	if err := m.checkSpaceQuota(); err != nil {
+		clearPayload(&payload)
+		return CreateResult{}, err
+	}
 	file := File{SchemaVersion: SchemaVersion, ID: id, Name: name, CreatedAt: now, UpdatedAt: now}
+	releaseKDF := m.acquireKDF()
 	container, err := vault.SealJSON(req.Password, payload, aad(id), m.params)
+	releaseKDF()
 	if err != nil {
 		clearPayload(&payload)
 		return CreateResult{}, err
 	}
 	file.Vault = container
+	releaseKDF = m.acquireKDF()
 	_, sessionKey, err := vault.Unlock(req.Password, container, aad(id))
+	releaseKDF()
 	if err != nil {
 		clearPayload(&payload)
 		return CreateResult{}, err
@@ -296,6 +329,11 @@ func (m *Manager) Create(req CreateRequest) (CreateResult, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.spaceQuotaLocked(); err != nil {
+		sessionKey.Clear()
+		clearPayload(&payload)
+		return CreateResult{}, err
+	}
 	if req.ExpectEmpty && len(m.files) != 0 {
 		sessionKey.Clear()
 		clearPayload(&payload)
@@ -419,16 +457,35 @@ func validateLegacy(
 	return verified, nil
 }
 
+// Unlock derives the vault key and opens a session.
+//
+// The derivation is the expensive part and runs outside the manager's mutex:
+// holding it across a 64 MiB Argon2 pass made one unlock block every other
+// space, the space list and the auto-lock sweep. The per-space lock keeps two
+// attempts on the same space in order, and it is also what stops a password
+// change from replacing the container midway through this derivation.
 func (m *Manager) Unlock(id, password string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlockSpace := m.lockSpace(id)
+	defer unlockSpace()
+
+	m.mu.RLock()
 	file, ok := m.files[id]
+	m.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
+	if err := m.checkUnlockCooldown(id); err != nil {
+		return err
+	}
+
+	releaseKDF := m.acquireKDF()
 	var payload Payload
 	sessionKey, err := vault.UnlockJSON(password, file.Vault, aad(id), &payload)
+	releaseKDF()
 	if err != nil {
+		if errors.Is(err, vault.ErrInvalidPassword) {
+			m.recordUnlockFailure(id)
+		}
 		return err
 	}
 	if err := verifyPayload(file, payload); err != nil {
@@ -437,6 +494,10 @@ func (m *Manager) Unlock(id, password string) error {
 		return err
 	}
 	normalizePayload(&payload)
+	m.clearUnlockFailures(id)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.clearSessionLocked(id)
 	m.sessions[id] = &session{payload: payload, key: sessionKey, lastUsed: m.now()}
 	return nil
@@ -472,18 +533,38 @@ func (m *Manager) Rename(id, name string) (Summary, error) {
 	return m.summaryLocked(file), nil
 }
 
+// ChangePassword re-encrypts the vault under a new password.
+//
+// Three derivations happen here — opening the old container, sealing the new
+// one and re-deriving the live session key — and all three run outside the
+// manager's mutex. Under the old arrangement this was the single longest lock
+// hold in the process. The per-space lock is what keeps the container this
+// reads from being the one it writes back over.
 func (m *Manager) ChangePassword(id, currentPassword, newPassword string) error {
 	if err := validateNewPassword(newPassword); err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	unlockSpace := m.lockSpace(id)
+	defer unlockSpace()
+
+	m.mu.RLock()
 	file, ok := m.files[id]
+	m.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
+	if err := m.checkUnlockCooldown(id); err != nil {
+		return err
+	}
+
+	releaseKDF := m.acquireKDF()
 	var payload Payload
-	if err := vault.OpenJSON(currentPassword, file.Vault, aad(id), &payload); err != nil {
+	err := vault.OpenJSON(currentPassword, file.Vault, aad(id), &payload)
+	releaseKDF()
+	if err != nil {
+		if errors.Is(err, vault.ErrInvalidPassword) {
+			m.recordUnlockFailure(id)
+		}
 		return err
 	}
 	defer clearPayload(&payload)
@@ -491,40 +572,119 @@ func (m *Manager) ChangePassword(id, currentPassword, newPassword string) error 
 		return err
 	}
 	normalizePayload(&payload)
+	m.clearUnlockFailures(id)
+
+	releaseKDF = m.acquireKDF()
 	container, err := vault.SealJSON(newPassword, payload, aad(id), m.params)
+	releaseKDF()
 	if err != nil {
 		return err
+	}
+
+	// An open session has to keep working under the new password, which means a
+	// third derivation. It happens here rather than under the mutex, and only
+	// when there is a session to refresh. The per-space lock is what makes the
+	// check outside the mutex sound: nothing else can open or close a session
+	// for this space while this call is in progress.
+	var refreshed Payload
+	var sessionKey *vault.SessionKey
+	m.mu.RLock()
+	hadSession := m.sessions[id] != nil
+	m.mu.RUnlock()
+	if hadSession {
+		releaseKDF = m.acquireKDF()
+		sessionKey, err = vault.UnlockJSON(newPassword, container, aad(id), &refreshed)
+		releaseKDF()
+		if err != nil {
+			clearPayload(&refreshed)
+			return err
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	file, ok = m.files[id]
+	if !ok {
+		sessionKey.Clear()
+		clearPayload(&refreshed)
+		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 	file.Vault = container
 	file.UpdatedAt = m.now()
 	if err := m.saveLocked(file); err != nil {
+		sessionKey.Clear()
+		clearPayload(&refreshed)
 		return err
 	}
 	m.files[id] = file
-	if active := m.sessions[id]; active != nil {
+	if active := m.sessions[id]; active != nil && sessionKey != nil {
 		active.key.Clear()
-		var refreshed Payload
-		sessionKey, err := vault.UnlockJSON(newPassword, container, aad(id), &refreshed)
-		if err != nil {
-			m.clearSessionLocked(id)
-			return err
-		}
 		clearPayload(&active.payload)
 		active.payload = refreshed
 		active.key = sessionKey
 		active.lastUsed = m.now()
+	} else {
+		sessionKey.Clear()
+		clearPayload(&refreshed)
 	}
 	return nil
 }
 
+// commonPasswords are the ones that turn up first in every cracking wordlist.
+//
+// This is not a breach corpus and cannot be: shipping one would mean shipping
+// megabytes, and checking against a hosted one would send a hash of the user's
+// password off the machine, which this wallet will not do. It catches the
+// handful that an offline attack on a stolen backup tries in its first second.
+var commonPasswords = map[string]struct{}{
+	"password": {}, "password1": {}, "password123": {}, "passw0rd": {},
+	"12345678": {}, "123456789": {}, "1234567890": {}, "qwertyuiop": {},
+	"letmein": {}, "welcome1": {}, "iloveyou": {}, "admin123": {},
+	"walletspace": {}, "changeme": {}, "secret123": {}, "trustno1": {},
+	"correcthorsebatterystaple": {},
+}
+
+// validateNewPassword bounds how weak a vault password may be.
+//
+// The password is the only thing between a copy of the encrypted backup and the
+// seed inside it, and an offline attacker gets unlimited attempts at it. Length
+// is what buys time against that, so it carries most of the weight here — a
+// passphrase of several words beats a short string with punctuation in it.
 func validateNewPassword(password string) error {
 	if password == "" {
 		return errors.New("space password is required")
 	}
-	if len(password) < minPasswordLength {
-		return fmt.Errorf("%w: must be at least %d characters", ErrWeakPassword, minPasswordLength)
+	if utf8.RuneCountInString(password) < minPasswordLength {
+		return fmt.Errorf(
+			"%w: use at least %d characters — a few unrelated words are easier to remember "+
+				"and much harder to guess than a short password, and a password manager is better still",
+			ErrWeakPassword, minPasswordLength,
+		)
 	}
+	folded := strings.ToLower(strings.TrimSpace(password))
+	if _, common := commonPasswords[folded]; common {
+		return fmt.Errorf("%w: this is one of the first passwords an attacker tries", ErrWeakPassword)
+	}
+	if isSingleRepeatedRune(password) {
+		return fmt.Errorf("%w: it is the same character repeated", ErrWeakPassword)
+	}
+
 	return nil
+}
+
+func isSingleRepeatedRune(value string) bool {
+	var first rune
+	for i, r := range value {
+		if i == 0 {
+			first = r
+			continue
+		}
+		if r != first {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (m *Manager) Derive(
@@ -588,6 +748,9 @@ func (m *Manager) Derive(
 		string(payload.Mnemonic), string(payload.BIP39Passphrase), family, next,
 	)
 	if err != nil {
+		return account.Account{}, err
+	}
+	if err := accountQuotaLocked(file); err != nil {
 		return account.Account{}, err
 	}
 	accountID, err := newID("acc_")
@@ -661,6 +824,9 @@ func (m *Manager) Import(
 			return ImportResult{Account: cloneAccount(*item)}, nil
 		}
 	}
+	if err := accountQuotaLocked(file); err != nil {
+		return ImportResult{}, err
+	}
 	keyRef, err := newID("key_")
 	if err != nil {
 		return ImportResult{}, err
@@ -690,9 +856,18 @@ func (m *Manager) Import(
 	return ImportResult{Account: cloneAccount(created)}, nil
 }
 
-func (m *Manager) ExportPrivateKey(id, accountID string, family account.Family) (string, error) {
+// ExportPrivateKey hands over permanent control of one account, so it asks for
+// the space password again rather than trusting the open session.
+func (m *Manager) ExportPrivateKey(
+	id, accountID string, family account.Family, password string,
+) (string, error) {
 	if family != account.FamilyTron && family != account.FamilyEVM {
 		return "", fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	}
+	unlockSpace := m.lockSpace(id)
+	defer unlockSpace()
+	if err := m.confirmPassword(id, password); err != nil {
+		return "", err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -765,7 +940,14 @@ func (m *Manager) WithSigner(
 	return fn(signer)
 }
 
-func (m *Manager) Mnemonic(id string) (string, error) {
+// Mnemonic reveals the seed every account in the space derives from, so it
+// asks for the space password again rather than trusting the open session.
+func (m *Manager) Mnemonic(id, password string) (string, error) {
+	unlockSpace := m.lockSpace(id)
+	defer unlockSpace()
+	if err := m.confirmPassword(id, password); err != nil {
+		return "", err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, payload, err := m.unlockedLocked(id)
@@ -873,6 +1055,53 @@ func (m *Manager) RenameAccount(id, accountID, label string) (account.Account, e
 		return cloneAccount(file.Accounts[i]), nil
 	}
 	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
+}
+
+// confirmPassword re-derives the vault key from a password the caller just
+// supplied, without disturbing the open session.
+//
+// Exporting a seed or a private key hands over permanent control of the funds,
+// and an unlocked space is not evidence that the person asking is the owner: a
+// tab left open, a same-origin script or any local client with the capability
+// token all inherit that state. Re-entering the password is the one thing none
+// of them can do, and it costs a full KDF — which is the point.
+//
+// That also makes this a password check reachable from the API, so it goes
+// through the same throttle, semaphore and per-space lock as Unlock. Leaving it
+// outside them would have left an unthrottled guessing oracle beside a
+// throttled one, and callers would have paid a 64 MiB derivation while holding
+// the manager's write mutex.
+//
+// The caller must NOT hold m.mu.
+func (m *Manager) confirmPassword(id, password string) error {
+	if password == "" {
+		return fmt.Errorf("%w: the space password is required to reveal a secret", ErrPasswordRequired)
+	}
+	m.mu.RLock()
+	file, ok := m.files[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	if err := m.checkUnlockCooldown(id); err != nil {
+		return err
+	}
+
+	releaseKDF := m.acquireKDF()
+	var payload Payload
+	key, err := vault.UnlockJSON(password, file.Vault, aad(id), &payload)
+	releaseKDF()
+	if err != nil {
+		if errors.Is(err, vault.ErrInvalidPassword) {
+			m.recordUnlockFailure(id)
+		}
+		return err
+	}
+	key.Clear()
+	clearPayload(&payload)
+	m.clearUnlockFailures(id)
+
+	return nil
 }
 
 func (m *Manager) unlockedLocked(id string) (File, *Payload, error) {
@@ -1154,9 +1383,7 @@ func cloneAccount(item account.Account) account.Account {
 	item.NetworkIDs = append([]string(nil), item.NetworkIDs...)
 	addresses := item.Addresses
 	item.Addresses = make(map[account.Family]string, len(addresses))
-	for family, address := range addresses {
-		item.Addresses[family] = address
-	}
+	maps.Copy(item.Addresses, addresses)
 	if item.Index != nil {
 		index := *item.Index
 		item.Index = &index
@@ -1169,10 +1396,8 @@ func cloneAccount(item account.Account) account.Account {
 }
 
 func appendNetwork(ids []string, networkID string) []string {
-	for _, id := range ids {
-		if id == networkID {
-			return ids
-		}
+	if slices.Contains(ids, networkID) {
+		return ids
 	}
 	ids = append(ids, networkID)
 	sort.Strings(ids)
@@ -1180,7 +1405,7 @@ func appendNetwork(ids []string, networkID string) []string {
 }
 
 func aad(id string) []byte {
-	return []byte(fmt.Sprintf("%s:%d", id, SchemaVersion))
+	return fmt.Appendf(nil, "%s:%d", id, SchemaVersion)
 }
 
 func newID(prefix string) (string, error) {

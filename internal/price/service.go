@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -199,17 +200,12 @@ func (s *Service) request(
 ) (map[string]llamaQuote, error) {
 	out := make(map[string]llamaQuote, len(identifiers))
 	for start := 0; start < len(identifiers); start += maxBatchSize {
-		end := start + maxBatchSize
-		if end > len(identifiers) {
-			end = len(identifiers)
-		}
+		end := min(start+maxBatchSize, len(identifiers))
 		batch, err := s.requestBatch(ctx, prefix, identifiers[start:end])
 		if err != nil {
 			return nil, err
 		}
-		for identifier, quote := range batch {
-			out[identifier] = quote
-		}
+		maps.Copy(out, batch)
 	}
 	return out, nil
 }

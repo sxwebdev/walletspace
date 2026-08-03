@@ -4,7 +4,7 @@ import {
   importAccount,
   renameAccount,
 } from "../../api/accounts.js";
-import { escapeHTML, modal, setBusy, toast } from "../../components/ui.js";
+import { escapeHTML, modal, secretBlock, setBusy } from "../../components/ui.js";
 
 export function showDerive(spaceID, networks, nextIndex, onCreated) {
   const initialNetwork = networks[0];
@@ -123,8 +123,9 @@ export function showExport(spaceID, account, defaultFamily) {
     content: `<form class="form-stack" data-form>
       <div class="notice danger">A private key is full control over the funds. Do not show it to anyone.</div>
       <label class="field"><span>Address family</span><select name="family">
-        ${families.map((family) => `<option value="${family}" ${defaultFamily === family ? "selected" : ""}>${family === "tron" ? "Tron" : "EVM"}</option>`).join("")}
+        ${families.map((family) => `<option value="${escapeHTML(family)}" ${defaultFamily === family ? "selected" : ""}>${family === "tron" ? "Tron" : "EVM"}</option>`).join("")}
       </select></label>
+      <label class="field"><span>Space password</span><input name="password" type="password" required autocomplete="current-password"></label>
       <div class="error-text" data-error></div>
       <button class="button danger" type="submit">Reveal the key</button>
     </form>`,
@@ -133,29 +134,21 @@ export function showExport(spaceID, account, defaultFamily) {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         setBusy(form, true, "Fetching…");
+        const data = new FormData(form);
         try {
           const key = await exportPrivateKey(
-            spaceID, account.id, new FormData(form).get("family"),
+            spaceID, account.id, data.get("family"), data.get("password"),
           );
-          form.replaceWith(secretBlock(key));
+          form.replaceWith(secretBlock(key, "Private key"));
         } catch (cause) {
           form.querySelector("[data-error]").textContent = cause.message;
         } finally {
           setBusy(form, false);
+          // The password must not sit in the DOM after the request, whether it
+          // was accepted or refused.
+          if (form.isConnected) form.reset();
         }
       });
     },
   });
-}
-
-function secretBlock(value) {
-  const wrapper = document.createElement("div");
-  wrapper.className = "form-stack";
-  wrapper.innerHTML = `<div class="secret" data-secret></div><button class="button secondary" type="button" data-copy-secret>Copy</button>`;
-  wrapper.querySelector("[data-secret]").textContent = value;
-  wrapper.querySelector("[data-copy-secret]").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(value);
-    toast("Private key copied");
-  });
-  return wrapper;
 }

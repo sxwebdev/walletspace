@@ -28,6 +28,22 @@ const (
 	// moved from TronGrid to PublicNode. The cache is advisory and can be safely
 	// rebuilt; user-defined network overrides live in a separate file.
 	cacheSchemaVersion = 2
+
+	// The response size cap alone bounds nothing that matters: two megabytes of
+	// short URLs is on the order of a hundred thousand of them, and each one
+	// costs a DNS lookup before it can be judged. These bound the work itself.
+	//
+	// maxDiscoveryEndpoints is what a network can usefully rotate between;
+	// anything past it is noise or an attempt to make the wallet do work.
+	maxDiscoveryEndpoints = 16
+	// maxDiscoveryURLLength is generous for a real endpoint and far short of
+	// something worth storing or resolving.
+	maxDiscoveryURLLength = 512
+	// maxDiscoveryNodes bounds the JSON walk itself, which recurses through
+	// whatever shape the document happens to have.
+	maxDiscoveryNodes = 10_000
+	// maxDiscoveryDepth stops a deeply nested document from growing the stack.
+	maxDiscoveryDepth = 32
 )
 
 type Settings interface {
@@ -80,10 +96,10 @@ func New(settings Settings) *Resolver {
 
 func (r *Resolver) Endpoints(ctx context.Context, item network.Network) ([]string, error) {
 	snapshot := r.settings.Snapshot()
-	if override, ok := r.settings.NetworkOverride(item.ID); ok && len(override.RPCURLs) > 0 {
-		resolved := make([]string, 0, len(override.RPCURLs))
-		for _, endpoint := range override.RPCURLs {
-			value, err := config.ExpandValue(endpoint)
+	if override, ok := r.settings.NetworkOverride(item.ID); ok && len(override.Endpoints) > 0 {
+		resolved := make([]string, 0, len(override.Endpoints))
+		for _, endpoint := range override.Endpoints {
+			value, err := config.ExpandValue(endpoint.URL)
 			if err != nil {
 				return nil, err
 			}
@@ -125,6 +141,18 @@ func (r *Resolver) MarkHealthy(item network.Network, endpoint string) {
 	if r.settings.Home() == "" {
 		return
 	}
+	if !cacheableEndpoint(endpoint) {
+		return
+	}
+	// A custom endpoint is the one place a provider credential can appear, and
+	// by here the ${ENV} reference in the configuration has already been
+	// expanded. Caching it would write the resolved secret to
+	// cache/rpc-nodes.json, in plain text, from a configuration file that
+	// deliberately held only a reference to it. There is nothing to gain
+	// either: a custom URL is read from configuration on every start.
+	if override, ok := r.settings.NetworkOverride(item.ID); ok && len(override.Endpoints) > 0 {
+		return
+	}
 	snapshot := r.settings.Snapshot()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -141,6 +169,22 @@ func (r *Resolver) MarkHealthy(item network.Network, endpoint string) {
 			path.Join(r.settings.Home(), "cache", "rpc-nodes.json"), append(data, '\n'),
 		)
 	}
+}
+
+// cacheableEndpoint reports whether an endpoint can be written to disk without
+// writing a credential with it.
+//
+// The provenance check in MarkHealthy is the main guard; this is the backstop
+// for anything that reaches the cache by another route. Providers put keys in
+// all three of these places, and none of them belong in a cache file that
+// exists only to remember which host answered.
+func cacheableEndpoint(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+
+	return parsed.User == nil && parsed.RawQuery == "" && strings.Trim(parsed.Path, "/") == ""
 }
 
 // Invalidate removes endpoints learned from previous clients. In particular,
@@ -161,46 +205,57 @@ func (r *Resolver) Invalidate(networkID string) {
 	}
 }
 
-func (r *Resolver) Headers(item network.Network) (http.Header, error) {
+// Headers returns the credentials configured for one endpoint, and only for
+// that endpoint.
+//
+// Endpoints() hands back the user's custom URLs followed by the official
+// fallbacks, and discovery can add more. A provider key belongs to the URL it
+// was typed next to; sending it to whichever of those answered first would hand
+// one provider's credential to another, or to a node discovery suggested.
+// Anything that is not a configured endpoint gets nil.
+func (r *Resolver) Headers(item network.Network, endpoint string) (http.Header, error) {
 	override, ok := r.settings.NetworkOverride(item.ID)
-	if !ok || len(override.Headers) == 0 {
+	if !ok {
 		return nil, nil
 	}
-	headers := make(http.Header, len(override.Headers))
-	for name, value := range override.Headers {
-		resolved, err := config.ExpandValue(value)
+	want, err := config.EndpointKey(endpoint)
+	if err != nil {
+		return nil, nil
+	}
+	for _, configured := range override.Endpoints {
+		if len(configured.Headers) == 0 {
+			continue
+		}
+		// An endpoint that cannot be resolved is reported rather than skipped.
+		// Skipping it would send the request to a provider unauthenticated and
+		// surface as a puzzling 401 from the node, instead of naming the
+		// environment variable that is not set.
+		key, err := config.EndpointKey(configured.URL)
 		if err != nil {
 			return nil, err
 		}
-		headers.Set(name, resolved)
+		if key != want {
+			continue
+		}
+		headers := make(http.Header, len(configured.Headers))
+		for name, value := range configured.Headers {
+			resolved, err := config.ExpandValue(value)
+			if err != nil {
+				return nil, err
+			}
+			headers.Set(name, resolved)
+		}
+		return headers, nil
 	}
-	return headers, nil
+	return nil, nil
 }
 
-func (r *Resolver) HTTPClient(_ network.Network) *http.Client {
-	allowPrivate := r.settings.Snapshot().Config.NodeDiscovery.AllowInsecureRPC
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
+func (r *Resolver) HTTPClient(item network.Network) *http.Client {
 	transport := &http.Transport{
 		Proxy:                 nil,
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 8 * time.Second,
-		DialContext: func(ctx context.Context, networkName, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := r.lookupIP(ctx, host)
-			if err != nil || len(ips) == 0 {
-				return nil, errors.New("RPC host cannot be resolved")
-			}
-			for _, ip := range ips {
-				if !allowPrivate && !publicIP(ip) {
-					continue
-				}
-				return dialer.DialContext(ctx, networkName, net.JoinHostPort(ip.String(), port))
-			}
-			return nil, errors.New("RPC resolved only to private or unsafe addresses")
-		},
+		DialContext:           r.DialContext(item),
 	}
 	return &http.Client{
 		Transport: transport,
@@ -208,6 +263,50 @@ func (r *Resolver) HTTPClient(_ network.Network) *http.Client {
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("RPC redirects are disabled")
 		},
+	}
+}
+
+// DialContext returns the dialer every RPC connection has to go through.
+//
+// It resolves the host itself and connects to a literal address, so the answer
+// that was judged is the answer that gets dialled — a name that verified as
+// public and then resolves to 127.0.0.1 or 169.254.169.254 on the next lookup
+// does not get a connection. gRPC needs the dialer on its own rather than
+// wrapped in an http.Client, which is why this is separate from HTTPClient.
+func (r *Resolver) DialContext(_ network.Network) func(context.Context, string, string) (net.Conn, error) {
+	allowPrivate := r.settings.Snapshot().Config.NodeDiscovery.AllowInsecureRPC
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	return func(ctx context.Context, networkName, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if !allowPrivate && !publicIP(ip) {
+				return nil, errors.New("RPC address is private or unsafe")
+			}
+			return dialer.DialContext(ctx, networkName, address)
+		}
+		ips, err := r.lookupIP(ctx, host)
+		if err != nil || len(ips) == 0 {
+			return nil, errors.New("RPC host cannot be resolved")
+		}
+		for _, ip := range ips {
+			if !allowPrivate && !publicIP(ip) {
+				continue
+			}
+			return dialer.DialContext(ctx, networkName, net.JoinHostPort(ip.String(), port))
+		}
+		return nil, errors.New("RPC resolved only to private or unsafe addresses")
+	}
+}
+
+// GRPCDialContext adapts DialContext to grpc.WithContextDialer, which passes
+// only the address.
+func (r *Resolver) GRPCDialContext(item network.Network) func(context.Context, string) (net.Conn, error) {
+	dial := r.DialContext(item)
+	return func(ctx context.Context, address string) (net.Conn, error) {
+		return dial(ctx, "tcp", address)
 	}
 }
 
@@ -261,6 +360,12 @@ func (r *Resolver) discover(ctx context.Context, settings config.DiscoverySettin
 }
 
 func (r *Resolver) safeDynamicEndpoint(ctx context.Context, endpoint string, allowInsecure bool) error {
+	// Both characters separate entries in the Tron node list, so a discovered
+	// URL carrying one would be checked here as a single host and then taken
+	// downstream as several — the extras skipping this function entirely.
+	if strings.ContainsAny(endpoint, ",|") {
+		return errors.New("RPC URL must not contain a comma or a pipe")
+	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Hostname() == "" || parsed.User != nil {
 		return errors.New("invalid RPC URL")
@@ -298,6 +403,14 @@ func publicIP(ip net.IP) bool {
 	return true
 }
 
+// unsafeSpecialNetworks covers what the net.IP predicates do not.
+//
+// The IPv6 entries matter more than they look. Go's To4 converts only the
+// IPv4-mapped form, so ::127.0.0.1 — the deprecated IPv4-compatible spelling of
+// loopback — is not seen as loopback by IsLoopback and passes IsGlobalUnicast.
+// NAT64 and 6to4 are the same trick with an extra step: both embed an arbitrary
+// IPv4 address, including a private one, in something that looks like an
+// ordinary global address.
 var unsafeSpecialNetworks = mustCIDRs(
 	"100.64.0.0/10",   // shared address space, often routes into carrier infrastructure
 	"192.0.0.0/24",    // IETF protocol assignments
@@ -305,7 +418,13 @@ var unsafeSpecialNetworks = mustCIDRs(
 	"198.18.0.0/15",   // benchmarking
 	"198.51.100.0/24", // documentation
 	"203.0.113.0/24",  // documentation
+	"::/96",           // IPv4-compatible IPv6, deprecated and not decoded by To4
+	"64:ff9b::/96",    // NAT64
+	"64:ff9b:1::/48",  // local-use NAT64
+	"100::/64",        // discard-only
+	"2001::/23",       // IETF protocol assignments, including Teredo
 	"2001:db8::/32",   // documentation
+	"2002::/16",       // 6to4
 )
 
 func mustCIDRs(values ...string) []*net.IPNet {
@@ -320,20 +439,36 @@ func mustCIDRs(values ...string) []*net.IPNet {
 	return out
 }
 
+// extractURLs pulls candidate endpoints out of whatever shape the discovery
+// service answered with.
+//
+// The walk is bounded three ways — how many URLs it will keep, how long each
+// may be, and how many JSON nodes and levels it will visit — because every
+// survivor costs a DNS lookup in safeDynamicEndpoint before it can be judged.
+// A discovery service is explicitly untrusted, so the cost of its answer has to
+// be capped before any of it is acted on, not after.
 func extractURLs(value any) []string {
 	var out []string
-	var walk func(any, string)
-	walk = func(current any, key string) {
+	visited := 0
+	var walk func(any, string, int)
+	walk = func(current any, key string, depth int) {
+		if len(out) >= maxDiscoveryEndpoints || visited >= maxDiscoveryNodes || depth > maxDiscoveryDepth {
+			return
+		}
+		visited++
 		switch typed := current.(type) {
 		case map[string]any:
 			for childKey, child := range typed {
-				walk(child, strings.ToLower(childKey))
+				walk(child, strings.ToLower(childKey), depth+1)
 			}
 		case []any:
 			for _, child := range typed {
-				walk(child, key)
+				walk(child, key, depth+1)
 			}
 		case string:
+			if len(typed) > maxDiscoveryURLLength {
+				return
+			}
 			if key == "" || strings.Contains(key, "url") || strings.Contains(key, "endpoint") ||
 				strings.Contains(key, "rpc") || strings.Contains(key, "http") {
 				if strings.HasPrefix(typed, "https://") || strings.HasPrefix(typed, "http://") {
@@ -342,7 +477,7 @@ func extractURLs(value any) []string {
 			}
 		}
 	}
-	walk(value, "")
+	walk(value, "", 0)
 	return out
 }
 

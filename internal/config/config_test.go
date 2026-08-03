@@ -110,7 +110,10 @@ func TestParseNodes(t *testing.T) {
 			}
 
 			for i := range got {
-				if got[i] != tt.want[i] {
+				// Only the parsed fields: a Node also carries the transport its
+				// caller attached, and none of that comes from the string.
+				if got[i].Address != tt.want[i].Address || got[i].HTTP != tt.want[i].HTTP ||
+					got[i].TLS != tt.want[i].TLS || got[i].Tier != tt.want[i].Tier {
 					t.Errorf("node %d = %+v, want %+v", i, got[i], tt.want[i])
 				}
 			}
@@ -185,5 +188,37 @@ func TestNormalize(t *testing.T) {
 				t.Error("ExplorerURL() is empty after normalize()")
 			}
 		})
+	}
+}
+
+// An endpoint is validated and probed as a single URL, then parsed into a node.
+// If a comma survived that far it would split into several nodes, and every one
+// after the first would reach the network having been checked by nothing.
+func TestParseNodeRefusesASmuggledSecondEndpoint(t *testing.T) {
+	t.Parallel()
+
+	smuggled := []string{
+		"https://public.example/rpc,grpc://127.0.0.1:50051",
+		"https://public.example/rpc,http://169.254.169.254:80",
+		"https://public.example,",
+	}
+	for _, entry := range smuggled {
+		t.Run(entry, func(t *testing.T) {
+			t.Parallel()
+
+			if node, err := ParseNode(entry); err == nil {
+				t.Fatalf("ParseNode(%q) = %+v, want an error", entry, node)
+			}
+		})
+	}
+
+	// The ordinary shapes still parse, including the tier suffix.
+	for _, entry := range []string{
+		"https://nile.trongrid.io", "grpc://grpc.nile.trongrid.io:50051",
+		"grpcs://grpc.trongrid.io:50051", "https://api.trongrid.io|1",
+	} {
+		if _, err := ParseNode(entry); err != nil {
+			t.Errorf("ParseNode(%q) error = %v, want it accepted", entry, err)
+		}
 	}
 }

@@ -51,7 +51,7 @@ func TestWrongTronNetworkIdentityIsRejectedBeforeUse(t *testing.T) {
 		t.Fatalf("registry.Get() error = %v", err)
 	}
 	err = tronchain.VerifyEndpoint(
-		t.Context(), mainnet, server.URL, "", server.Client(),
+		t.Context(), mainnet, server.URL, nil, server.Client(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "expected 0x2b6653dc") {
 		t.Fatalf("VerifyEndpoint() error = %v", err)
@@ -95,13 +95,15 @@ func TestProbeEndpointRequiresARecentHeadBlock(t *testing.T) {
 		t.Fatalf("registry.Get() error = %v", err)
 	}
 	if err := tronchain.ProbeEndpoint(
-		t.Context(), mainnet, server.URL, "secret", server.Client(),
+		t.Context(), mainnet, server.URL,
+		http.Header{"Tron-Pro-Api-Key": []string{"secret"}}, server.Client(),
 	); err != nil {
 		t.Fatalf("ProbeEndpoint() error = %v", err)
 	}
 	stale.Store(true)
 	if err := tronchain.ProbeEndpoint(
-		t.Context(), mainnet, server.URL, "secret", server.Client(),
+		t.Context(), mainnet, server.URL,
+		http.Header{"Tron-Pro-Api-Key": []string{"secret"}}, server.Client(),
 	); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("ProbeEndpoint(stale) error = %v", err)
 	}

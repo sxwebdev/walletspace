@@ -241,9 +241,11 @@ func (s *Service) Resources(ctx context.Context, addr string) (Resources, error)
 		// figure, not the account's own — it matches the chain parameter
 		// getTotalEnergyCurrentLimit that gotron uses for the same conversion.
 		BandwidthPerTRX: s.client.ConvertStakedToBandwidth(
-			account.GetTotalNetWeight(), account.GetTotalNetLimit(), oneTRX),
+			account.GetTotalNetWeight(), account.GetTotalNetLimit(), oneTRX,
+		),
 		EnergyPerTRX: s.client.ConvertStakedToEnergy(
-			account.GetTotalEnergyLimit(), account.GetTotalEnergyWeight(), oneTRX),
+			account.GetTotalEnergyLimit(), account.GetTotalEnergyWeight(), oneTRX,
+		),
 		CanDelegateBandwidth: canBW.TRX(),
 		CanDelegateEnergy:    canEN.TRX(),
 		UnstakeSlots:         slots,
@@ -406,7 +408,7 @@ func (s *Service) Stake(ctx context.Context, from string, resource Resource, amo
 		return "", err
 	}
 
-	return s.stakeOp(ctx, from, key, func() (*api.TransactionExtention, error) {
+	return s.stakeOp(ctx, from, resourceIntent(IntentStake, from, "", sun, kind), key, func() (*api.TransactionExtention, error) {
 		return s.client.Stake(ctx, from, kind, sun)
 	})
 }
@@ -424,7 +426,7 @@ func (s *Service) Unstake(ctx context.Context, from string, resource Resource, a
 		return "", err
 	}
 
-	return s.stakeOp(ctx, from, key, func() (*api.TransactionExtention, error) {
+	return s.stakeOp(ctx, from, resourceIntent(IntentUnstake, from, "", sun, kind), key, func() (*api.TransactionExtention, error) {
 		return s.client.Unstake(ctx, from, kind, sun)
 	})
 }
@@ -456,10 +458,12 @@ func (s *Service) stakeBehind(ctx context.Context, addr string, resource Resourc
 	switch resource {
 	case ResourceBandwidth:
 		sun = s.client.ConvertBandwidthToStaked(
-			account.GetTotalNetWeight(), account.GetTotalNetLimit(), units)
+			account.GetTotalNetWeight(), account.GetTotalNetLimit(), units,
+		)
 	case ResourceEnergy:
 		sun = s.client.ConvertEnergyToStaked(
-			account.GetTotalEnergyLimit(), account.GetTotalEnergyWeight(), units)
+			account.GetTotalEnergyLimit(), account.GetTotalEnergyWeight(), units,
+		)
 	default:
 		return 0, fmt.Errorf("%w: unknown resource %q", ErrInvalidRequest, resource)
 	}
@@ -496,7 +500,7 @@ func (s *Service) Delegate(ctx context.Context, from, to string, resource Resour
 		return "", err
 	}
 
-	return s.stakeOp(ctx, from, key, func() (*api.TransactionExtention, error) {
+	return s.stakeOp(ctx, from, resourceIntent(IntentDelegate, from, to, sun, kind), key, func() (*api.TransactionExtention, error) {
 		return s.client.DelegateResource(ctx, from, to, kind, sun, false, 0)
 	})
 }
@@ -518,7 +522,7 @@ func (s *Service) Reclaim(ctx context.Context, from, to string, resource Resourc
 		return "", err
 	}
 
-	return s.stakeOp(ctx, from, key, func() (*api.TransactionExtention, error) {
+	return s.stakeOp(ctx, from, resourceIntent(IntentReclaim, from, to, sun, kind), key, func() (*api.TransactionExtention, error) {
 		return s.client.ReclaimResource(ctx, from, to, kind, sun)
 	})
 }
@@ -587,7 +591,7 @@ func (s *Service) ReclaimAll(ctx context.Context, from, to string, resource Reso
 		return "", err
 	}
 
-	return s.stakeOp(ctx, from, key, func() (*api.TransactionExtention, error) {
+	return s.stakeOp(ctx, from, resourceIntent(IntentReclaim, from, to, sun, kind), key, func() (*api.TransactionExtention, error) {
 		return s.client.ReclaimResource(ctx, from, to, kind, sun)
 	})
 }
@@ -595,7 +599,7 @@ func (s *Service) ReclaimAll(ctx context.Context, from, to string, resource Reso
 // WithdrawUnstaked moves every expired unstake back into the spendable balance
 // and returns the txid. Without it unstaked TRX stays out of reach for good.
 func (s *Service) WithdrawUnstaked(ctx context.Context, from string, key *ecdsa.PrivateKey) (string, error) {
-	return s.stakeOp(ctx, from, key, func() (*api.TransactionExtention, error) {
+	return s.stakeOp(ctx, from, ownerIntent(IntentWithdrawUnstaked, from), key, func() (*api.TransactionExtention, error) {
 		return s.client.WithdrawUnstaked(ctx, from)
 	})
 }
@@ -603,7 +607,7 @@ func (s *Service) WithdrawUnstaked(ctx context.Context, from string, key *ecdsa.
 // CancelUnstakes calls off every pending unstake, putting the TRX back into
 // stake, and returns the txid. Entries that already expired are withdrawn.
 func (s *Service) CancelUnstakes(ctx context.Context, from string, key *ecdsa.PrivateKey) (string, error) {
-	return s.stakeOp(ctx, from, key, func() (*api.TransactionExtention, error) {
+	return s.stakeOp(ctx, from, ownerIntent(IntentCancelUnstakes, from), key, func() (*api.TransactionExtention, error) {
 		return s.client.CancelAllUnstakes(ctx, from)
 	})
 }
@@ -619,7 +623,7 @@ func (s *Service) StakeWithSigner(
 	if err != nil {
 		return "", err
 	}
-	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+	return s.stakeOpSigner(ctx, from, resourceIntent(IntentStake, from, "", sun, kind), signer, func() (*api.TransactionExtention, error) {
 		return s.client.Stake(ctx, from, kind, sun)
 	})
 }
@@ -635,7 +639,7 @@ func (s *Service) UnstakeWithSigner(
 	if err != nil {
 		return "", err
 	}
-	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+	return s.stakeOpSigner(ctx, from, resourceIntent(IntentUnstake, from, "", sun, kind), signer, func() (*api.TransactionExtention, error) {
 		return s.client.Unstake(ctx, from, kind, sun)
 	})
 }
@@ -658,7 +662,7 @@ func (s *Service) DelegateWithSigner(
 	if err != nil {
 		return "", err
 	}
-	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+	return s.stakeOpSigner(ctx, from, resourceIntent(IntentDelegate, from, to, sun, kind), signer, func() (*api.TransactionExtention, error) {
 		return s.client.DelegateResource(ctx, from, to, kind, sun, false, 0)
 	})
 }
@@ -681,7 +685,7 @@ func (s *Service) ReclaimWithSigner(
 	if err != nil {
 		return "", err
 	}
-	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+	return s.stakeOpSigner(ctx, from, resourceIntent(IntentReclaim, from, to, sun, kind), signer, func() (*api.TransactionExtention, error) {
 		return s.client.ReclaimResource(ctx, from, to, kind, sun)
 	})
 }
@@ -713,7 +717,7 @@ func (s *Service) ReclaimAllWithSigner(
 	if err != nil {
 		return "", err
 	}
-	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+	return s.stakeOpSigner(ctx, from, resourceIntent(IntentReclaim, from, to, sun, kind), signer, func() (*api.TransactionExtention, error) {
 		return s.client.ReclaimResource(ctx, from, to, kind, sun)
 	})
 }
@@ -721,7 +725,7 @@ func (s *Service) ReclaimAllWithSigner(
 func (s *Service) WithdrawUnstakedWithSigner(
 	ctx context.Context, from string, signer chain.Signer,
 ) (string, error) {
-	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+	return s.stakeOpSigner(ctx, from, ownerIntent(IntentWithdrawUnstaked, from), signer, func() (*api.TransactionExtention, error) {
 		return s.client.WithdrawUnstaked(ctx, from)
 	})
 }
@@ -729,7 +733,7 @@ func (s *Service) WithdrawUnstakedWithSigner(
 func (s *Service) CancelUnstakesWithSigner(
 	ctx context.Context, from string, signer chain.Signer,
 ) (string, error) {
-	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+	return s.stakeOpSigner(ctx, from, ownerIntent(IntentCancelUnstakes, from), signer, func() (*api.TransactionExtention, error) {
 		return s.client.CancelAllUnstakes(ctx, from)
 	})
 }
@@ -739,7 +743,13 @@ func (s *Service) CancelUnstakesWithSigner(
 //
 // Building is a read-only call, so it is retried across nodes; the broadcast
 // below it never is.
-func (s *Service) stakeOp(ctx context.Context, from string, key *ecdsa.PrivateKey, build func() (*api.TransactionExtention, error)) (string, error) {
+func (s *Service) stakeOp(
+	ctx context.Context,
+	from string,
+	intent Intent,
+	key *ecdsa.PrivateKey,
+	build func() (*api.TransactionExtention, error),
+) (string, error) {
 	if err := address.Validate(from); err != nil {
 		return "", fmt.Errorf("%w: invalid sender address: %s", ErrInvalidRequest, err)
 	}
@@ -749,9 +759,9 @@ func (s *Service) stakeOp(ctx context.Context, from string, key *ecdsa.PrivateKe
 		return "", s.chainError("build transaction", err)
 	}
 
-	txid, err := s.submit(ctx, tx, key)
+	txid, err := s.submit(ctx, intent, tx, key)
 	if err != nil {
-		return "", err
+		return txid, err
 	}
 
 	// Staking moves TRX between the spendable balance and the frozen one, so
@@ -764,6 +774,7 @@ func (s *Service) stakeOp(ctx context.Context, from string, key *ecdsa.PrivateKe
 func (s *Service) stakeOpSigner(
 	ctx context.Context,
 	from string,
+	intent Intent,
 	signer chain.Signer,
 	build func() (*api.TransactionExtention, error),
 ) (string, error) {
@@ -777,9 +788,9 @@ func (s *Service) stakeOpSigner(
 	if err != nil {
 		return "", s.chainError("build transaction", err)
 	}
-	txid, err := s.submitWithSigner(ctx, tx, signer)
+	txid, err := s.submitWithSigner(ctx, intent, tx, signer)
 	if err != nil {
-		return "", err
+		return txid, err
 	}
 	s.invalidate(from)
 	return txid, nil

@@ -3,9 +3,11 @@ package rpcpool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,9 +54,15 @@ func TestSafeDynamicEndpointRejectsSSRF(t *testing.T) {
 		{endpoint: "https://private.example", wantErr: true},
 		{endpoint: "https://carrier.example", wantErr: true},
 		{endpoint: "file:///etc/passwd", wantErr: true},
+		// A comma is legal in a URL path, so this parses as one HTTPS URL on a
+		// public host and passes every check below. It is also the separator in
+		// the Tron node list, so downstream it would become a second, unchecked
+		// plaintext gRPC node pointed at loopback.
+		{endpoint: "https://public.example/rpc,grpc://127.0.0.1:50051", wantErr: true},
+		{endpoint: "https://public.example/rpc,http://169.254.169.254", wantErr: true},
+		{endpoint: "https://public.example/rpc|1", wantErr: true},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.endpoint, func(t *testing.T) {
 			t.Parallel()
 			err := resolver.safeDynamicEndpoint(t.Context(), test.endpoint, false)
@@ -236,5 +244,165 @@ func TestInvalidateRemovesEndpointFromMemoryAndDisk(t *testing.T) {
 	}
 	if _, exists := persisted.Networks[item.ID]; exists {
 		t.Fatal("Invalidate() left the endpoint on disk")
+	}
+}
+
+// A discovery service is untrusted, and every URL that survives extraction
+// costs a DNS lookup before it can be judged. The response size cap alone
+// bounds none of that: two megabytes of short URLs is ~100k of them.
+func TestExtractURLsIsBounded(t *testing.T) {
+	t.Parallel()
+
+	t.Run("count", func(t *testing.T) {
+		t.Parallel()
+
+		flood := make([]any, 0, 50_000)
+		for i := range 50_000 {
+			flood = append(flood, fmt.Sprintf("https://node-%d.example", i))
+		}
+		got := extractURLs(map[string]any{"urls": flood})
+		if len(got) > maxDiscoveryEndpoints {
+			t.Errorf("extractURLs() returned %d endpoints, want at most %d", len(got), maxDiscoveryEndpoints)
+		}
+		if len(got) == 0 {
+			t.Error("extractURLs() dropped everything, want the first few kept")
+		}
+	})
+
+	t.Run("url length", func(t *testing.T) {
+		t.Parallel()
+
+		long := "https://" + strings.Repeat("a", maxDiscoveryURLLength) + ".example"
+		if got := extractURLs(map[string]any{"url": long}); len(got) != 0 {
+			t.Errorf("extractURLs() kept an oversized URL: %d entries", len(got))
+		}
+	})
+
+	t.Run("depth", func(t *testing.T) {
+		t.Parallel()
+
+		// A document nested far past anything legitimate must not recurse
+		// through all of it.
+		var nested any = "https://deep.example"
+		for range 5_000 {
+			nested = map[string]any{"url": nested}
+		}
+		if got := extractURLs(nested); len(got) != 0 {
+			t.Errorf("extractURLs() walked past the depth limit: %d entries", len(got))
+		}
+	})
+}
+
+// A provider credential belongs to the URL it was configured for. Endpoints()
+// hands back the custom endpoints followed by the official fallbacks, so
+// resolving headers per network — as this used to — sent one provider's key to
+// whichever other node the pool moved on to when the first stopped answering.
+func TestHeadersAreScopedToTheEndpointTheyBelongTo(t *testing.T) {
+	t.Parallel()
+
+	item := network.Network{ID: "ethereum-mainnet", Family: network.FamilyEVM}
+	resolver := New(settingsStub{
+		has: true,
+		override: config.NetworkOverride{Endpoints: []config.Endpoint{
+			{
+				URL:     "https://paid.example/v3/abc",
+				Headers: map[string]string{"Authorization": "Bearer secret"},
+			},
+			{URL: "https://second.example"},
+		}},
+	})
+
+	tests := []struct {
+		name     string
+		endpoint string
+		want     string
+	}{
+		{name: "configured", endpoint: "https://paid.example/v3/abc", want: "Bearer secret"},
+		{name: "trailing slash", endpoint: "https://paid.example/v3/abc/", want: "Bearer secret"},
+		{name: "explicit default port", endpoint: "https://paid.example:443/v3/abc", want: "Bearer secret"},
+		{name: "other configured endpoint", endpoint: "https://second.example"},
+		{name: "official fallback", endpoint: "https://ethereum-rpc.publicnode.com"},
+		{name: "same host, another path", endpoint: "https://paid.example/v3/other"},
+		{name: "same path, another host", endpoint: "https://attacker.example/v3/abc"},
+		{name: "downgraded scheme", endpoint: "http://paid.example/v3/abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			headers, err := resolver.Headers(item, tt.endpoint)
+			if err != nil {
+				t.Fatalf("Headers() error = %v", err)
+			}
+			if got := headers.Get("Authorization"); got != tt.want {
+				t.Errorf("Headers(%q).Authorization = %q, want %q", tt.endpoint, got, tt.want)
+			}
+		})
+	}
+}
+
+// The dialer connects to the address it judged, so a name that verified as
+// public and then answers with a private address on the next lookup does not
+// get a connection. gRPC nodes reach it through GRPCDialContext.
+func TestGRPCDialerRefusesPrivateAddresses(t *testing.T) {
+	t.Parallel()
+
+	resolver := New(settingsStub{})
+	resolver.lookupIP = func(_ context.Context, host string) ([]net.IP, error) {
+		if host == "rebind.example" {
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		}
+		return []net.IP{net.ParseIP("169.254.169.254")}, nil
+	}
+	dial := resolver.GRPCDialContext(network.Network{ID: "tron-mainnet"})
+	for _, address := range []string{
+		"rebind.example:50051",
+		"metadata.example:50051",
+		"127.0.0.1:50051",
+		"169.254.169.254:80",
+	} {
+		conn, err := dial(t.Context(), address)
+		if err == nil {
+			conn.Close()
+			t.Errorf("GRPCDialContext() dialled %s", address)
+		}
+	}
+}
+
+// Go's To4 decodes only the IPv4-mapped form, so several ways of writing a
+// private or loopback address as IPv6 sail through IsLoopback, IsPrivate and
+// IsGlobalUnicast alike.
+func TestPublicIPRejectsIPv6FormsOfPrivateAddresses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		address string
+		want    bool
+	}{
+		{address: "2606:4700:4700::1111", want: true},
+		{address: "::ffff:8.8.8.8", want: true},
+		{address: "::127.0.0.1"},      // IPv4-compatible loopback
+		{address: "::ffff:127.0.0.1"}, // IPv4-mapped loopback
+		{address: "::ffff:169.254.169.254"},
+		{address: "64:ff9b::7f00:1"},  // NAT64 loopback
+		{address: "2002:7f00:1::"},    // 6to4 loopback
+		{address: "2002:a9fe:a9fe::"}, // 6to4 link-local
+		{address: "2001::1"},          // Teredo
+		{address: "fd00::1"},
+		{address: "fe80::1"},
+		{address: "::1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.address, func(t *testing.T) {
+			t.Parallel()
+
+			ip := net.ParseIP(tt.address)
+			if ip == nil {
+				t.Fatalf("ParseIP(%q) = nil", tt.address)
+			}
+			if got := publicIP(ip); got != tt.want {
+				t.Errorf("publicIP(%s) = %v, want %v", tt.address, got, tt.want)
+			}
+		})
 	}
 }

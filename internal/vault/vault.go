@@ -18,9 +18,24 @@ const Version = 1
 
 var ErrInvalidPassword = errors.New("invalid password or damaged vault")
 
+// The KDF parameters come out of the container, which is a file on disk, so
+// they are attacker-controlled the moment anything can write to the home
+// directory. They are bounded in both directions.
+//
+// The ceilings stop a doctored container from turning one unlock into a
+// gigabyte allocation and ten passes over it. The floors matter more: they used
+// to be "any non-zero", so a rewritten header could pin a vault to 8 KiB and a
+// single pass, and — because Seal reuses the parameters from the header it was
+// opened with — every later re-seal would keep those settings. A password that
+// was protected by 64 MiB × 3 would quietly become brute-forceable, with the
+// file still opening normally.
 const (
-	maxKDFTime        = 10
-	maxKDFMemoryKiB   = 1024 * 1024
+	minKDFTime      = 2
+	maxKDFTime      = 10
+	minKDFMemoryKiB = 32 * 1024
+	// 256 MiB is far above what this project writes (64 MiB) and far below what
+	// makes an unlock a memory event on a laptop.
+	maxKDFMemoryKiB   = 256 * 1024
 	maxKDFParallelism = 32
 	maxCiphertextSize = 16 << 20
 )
@@ -66,12 +81,26 @@ func (s *SessionKey) Clear() {
 	}
 }
 
+// validateKDF holds the container's work factors to a range that is both
+// affordable and worth doing. It is applied on the way in and on the way out,
+// so a weakened header cannot be adopted and then written back.
+func validateKDF(kdf KDF) error {
+	if kdf.Time < minKDFTime || kdf.Time > maxKDFTime ||
+		kdf.MemoryKiB < minKDFMemoryKiB || kdf.MemoryKiB > maxKDFMemoryKiB ||
+		kdf.Parallelism == 0 || kdf.Parallelism > maxKDFParallelism {
+		return errors.New("invalid vault KDF parameters")
+	}
+	return nil
+}
+
 func Encrypt(password string, plaintext, aad []byte, params Params) (Container, error) {
 	if password == "" {
 		return Container{}, errors.New("vault password is required")
 	}
-	if params.Time == 0 || params.MemoryKiB < 8 || params.Parallelism == 0 {
-		return Container{}, errors.New("invalid Argon2id parameters")
+	if err := validateKDF(KDF{
+		Time: params.Time, MemoryKiB: params.MemoryKiB, Parallelism: params.Parallelism,
+	}); err != nil {
+		return Container{}, err
 	}
 	salt := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
@@ -115,10 +144,8 @@ func Unlock(password string, container Container, aad []byte) ([]byte, *SessionK
 	if container.Version != Version || container.KDF.Name != "argon2id" || container.Cipher.Name != "aes-256-gcm" {
 		return nil, nil, errors.New("unsupported vault format")
 	}
-	if container.KDF.Time == 0 || container.KDF.Time > maxKDFTime ||
-		container.KDF.MemoryKiB < 8 || container.KDF.MemoryKiB > maxKDFMemoryKiB ||
-		container.KDF.Parallelism == 0 || container.KDF.Parallelism > maxKDFParallelism {
-		return nil, nil, errors.New("invalid vault KDF parameters")
+	if err := validateKDF(container.KDF); err != nil {
+		return nil, nil, err
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(container.KDF.Salt)
 	if err != nil || len(salt) != 16 {
@@ -169,6 +196,11 @@ func openWithKey(key, nonce, ciphertext, aad []byte) ([]byte, error) {
 func (s *SessionKey) Seal(plaintext, aad []byte) (Container, error) {
 	if s == nil {
 		return Container{}, errors.New("vault session key is missing")
+	}
+	// Re-checked rather than trusted because these came from the file that was
+	// opened. Writing them back is what would make a weakened header permanent.
+	if err := validateKDF(s.kdf); err != nil {
+		return Container{}, err
 	}
 	block, err := aes.NewCipher(s.key[:])
 	if err != nil {

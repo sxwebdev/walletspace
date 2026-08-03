@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/config"
 	"github.com/sxwebdev/walletspace/internal/network"
+	"github.com/sxwebdev/walletspace/internal/operation"
 	legacy "github.com/sxwebdev/walletspace/internal/tron"
 	"golang.org/x/sync/singleflight"
 )
@@ -42,11 +44,41 @@ type HTTPClientProvider interface {
 	HTTPClient(item network.Network) *http.Client
 }
 
-type Resource = legacy.Resource
-type Resources = legacy.Resources
-type Deployment = legacy.Deployment
-type DeployCost = legacy.DeployCost
-type Deployed = legacy.Deployed
+// GRPCDialerProvider supplies the address-filtering dialer for gRPC nodes,
+// which cannot go through an http.Client.
+type GRPCDialerProvider interface {
+	GRPCDialContext(item network.Network) func(context.Context, string) (net.Conn, error)
+}
+
+// HeaderProvider resolves the credentials belonging to one endpoint.
+type HeaderProvider interface {
+	Headers(item network.Network, endpoint string) (http.Header, error)
+}
+
+// flattenHeaders turns a probe's header set into the map form a node config
+// takes. A header with several values keeps only the first: the Tron client
+// sends one value per name, and silently dropping the rest is better than
+// sending a joined string a provider would reject.
+func flattenHeaders(headers http.Header) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for name, values := range headers {
+		if len(values) > 0 {
+			out[name] = values[0]
+		}
+	}
+	return out
+}
+
+type (
+	Resource   = legacy.Resource
+	Resources  = legacy.Resources
+	Deployment = legacy.Deployment
+	DeployCost = legacy.DeployCost
+	Deployed   = legacy.Deployed
+)
 
 const (
 	ResourceBandwidth = legacy.ResourceBandwidth
@@ -118,7 +150,7 @@ func VerifyEndpoint(
 	ctx context.Context,
 	item network.Network,
 	endpoint string,
-	apiKey string,
+	headers http.Header,
 	httpClient *http.Client,
 ) error {
 	if item.Family != network.FamilyTron {
@@ -137,10 +169,7 @@ func VerifyEndpoint(
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		request.Header.Set("TRON-PRO-API-KEY", apiKey)
-	}
+	applyHeaders(request, headers)
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -174,10 +203,10 @@ func ProbeEndpoint(
 	ctx context.Context,
 	item network.Network,
 	endpoint string,
-	apiKey string,
+	headers http.Header,
 	httpClient *http.Client,
 ) error {
-	if err := VerifyEndpoint(ctx, item, endpoint, apiKey, httpClient); err != nil {
+	if err := VerifyEndpoint(ctx, item, endpoint, headers, httpClient); err != nil {
 		return err
 	}
 	request, err := http.NewRequestWithContext(
@@ -188,10 +217,7 @@ func ProbeEndpoint(
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		request.Header.Set("TRON-PRO-API-KEY", apiKey)
-	}
+	applyHeaders(request, headers)
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -224,17 +250,31 @@ func ProbeEndpoint(
 	return nil
 }
 
+// applyHeaders sets the credentials for one endpoint on a probe request. The
+// content type is set first so a stored header cannot quietly replace it.
+func applyHeaders(request *http.Request, headers http.Header) {
+	request.Header.Set("Content-Type", "application/json")
+	for name, values := range headers {
+		if http.CanonicalHeaderKey(name) == "Content-Type" {
+			continue
+		}
+		for _, value := range values {
+			request.Header.Add(name, value)
+		}
+	}
+}
+
 func (a *Adapter) VerifyEndpoint(
 	ctx context.Context,
 	item network.Network,
 	endpoint string,
-	apiKey string,
+	headers http.Header,
 ) error {
 	var client *http.Client
 	if provider, ok := a.endpoints.(HTTPClientProvider); ok {
 		client = provider.HTTPClient(item)
 	}
-	return VerifyEndpoint(ctx, item, endpoint, apiKey, client)
+	return VerifyEndpoint(ctx, item, endpoint, headers, client)
 }
 
 func (a *Adapter) Health(ctx context.Context, networkID string) error {
@@ -443,9 +483,17 @@ func (a *Adapter) Send(
 		txID, err = service.SendWithSigner(ctx, req.From, req.To, asset, amount, signer)
 	}
 	if err != nil {
+		// The txid is computed from the bytes that were signed, so it is known
+		// whether or not the node ever answered. Dropping it here is what turned
+		// a lost answer into advice to build a second transaction.
+		if txID != "" && errors.Is(err, chain.ErrBroadcastUnknown) {
+			return chain.Transaction{
+				NetworkID: networkID, Hash: txID, Status: operation.StatusBroadcastUnknown,
+			}, err
+		}
 		return chain.Transaction{}, err
 	}
-	return chain.Transaction{NetworkID: networkID, Hash: txID, Status: "pending"}, nil
+	return chain.Transaction{NetworkID: networkID, Hash: txID, Status: operation.StatusPending}, nil
 }
 
 func (a *Adapter) Transaction(ctx context.Context, networkID, txID string) (chain.Transaction, error) {
@@ -616,16 +664,12 @@ func (a *Adapter) initService(networkID string) (*legacy.Service, error) {
 		var endpoints []string
 		if a.settings != nil {
 			if override, ok := a.settings.NetworkOverride(networkID); ok {
-				for _, endpoint := range override.RPCURLs {
-					value, expandErr := config.ExpandValue(endpoint)
+				for _, endpoint := range override.Endpoints {
+					value, expandErr := config.ExpandValue(endpoint.URL)
 					if expandErr != nil {
 						return nil, expandErr
 					}
 					endpoints = append(endpoints, value)
-				}
-				cfg.APIKey, err = config.ExpandValue(override.Headers["TRON-PRO-API-KEY"])
-				if err != nil {
-					return nil, err
 				}
 			}
 		}
@@ -635,29 +679,62 @@ func (a *Adapter) initService(networkID string) (*legacy.Service, error) {
 				return nil, err
 			}
 		}
+		var valid []string
+		var nodes []config.Node
 		if len(endpoints) > 0 {
-			valid := make([]string, 0, len(endpoints))
+			valid = make([]string, 0, len(endpoints))
+			nodes = make([]config.Node, 0, len(endpoints))
 			var failures []error
 			var httpClient *http.Client
 			if provider, ok := a.endpoints.(HTTPClientProvider); ok {
 				httpClient = provider.HTTPClient(item)
 			}
+			var dial func(context.Context, string) (net.Conn, error)
+			if provider, ok := a.endpoints.(GRPCDialerProvider); ok {
+				dial = provider.GRPCDialContext(item)
+			}
 			for _, endpoint := range endpoints {
+				// Parsed before it is probed, and one endpoint at a time. The
+				// node list then carries exactly what was verified: nothing is
+				// re-split downstream, so an endpoint cannot expand into extra
+				// nodes that never faced this loop.
+				node, parseErr := config.ParseNode(endpoint)
+				if parseErr != nil {
+					failures = append(failures, parseErr)
+					continue
+				}
+				// Resolved per endpoint. A key configured for one provider does
+				// not travel to the fallback the resolver moves on to, and never
+				// reaches a node discovery suggested.
+				var headers http.Header
+				if provider, ok := a.endpoints.(HeaderProvider); ok {
+					headers, err = provider.Headers(item, endpoint)
+					if err != nil {
+						return nil, err
+					}
+				}
 				checkCtx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
-				verifyErr := VerifyEndpoint(checkCtx, item, endpoint, cfg.APIKey, httpClient)
+				verifyErr := VerifyEndpoint(checkCtx, item, endpoint, headers, httpClient)
 				cancel()
 				if verifyErr != nil {
 					failures = append(failures, verifyErr)
 					continue
 				}
+				node.Headers = flattenHeaders(headers)
+				// The same guarded transport the probe just used. Without it the
+				// Tron client falls back to its own dialer, and every request
+				// after this check goes out unfiltered — which is what made a
+				// re-resolving hostname worth trying in the first place.
+				node.HTTPClient = httpClient
+				node.DialContext = dial
 				valid = append(valid, endpoint)
+				nodes = append(nodes, node)
 			}
-			if len(valid) == 0 {
+			if len(nodes) == 0 {
 				return nil, fmt.Errorf("no verified Tron RPC for %s: %w", networkID, errors.Join(failures...))
 			}
-			cfg.Nodes = strings.Join(valid, ",")
 		}
-		service, err := legacy.New(a.ctx, cfg, a.log.With("network_id", networkID))
+		service, err := legacy.New(a.ctx, cfg, nodes, a.log.With("network_id", networkID))
 		if err != nil {
 			return nil, err
 		}
@@ -678,10 +755,8 @@ func (a *Adapter) initService(networkID string) (*legacy.Service, error) {
 		a.services[networkID] = service
 		a.readyAt[networkID] = time.Now()
 		if reporter, ok := a.endpoints.(EndpointReporter); ok {
-			for _, endpoint := range strings.Split(cfg.Nodes, ",") {
-				if endpoint != "" {
-					reporter.MarkHealthy(item, endpoint)
-				}
+			for _, endpoint := range valid {
+				reporter.MarkHealthy(item, endpoint)
 			}
 		}
 		a.mu.Unlock()

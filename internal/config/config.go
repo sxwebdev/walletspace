@@ -2,7 +2,10 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -34,12 +37,25 @@ type Config struct {
 	FeeLimitTRX  int64  `yaml:"fee_limit_trx" default:"50" env:"FEE_LIMIT_TRX" usage:"fee limit for TRC20 transfers, in TRX"`
 }
 
-// Node is one parsed RPC endpoint.
+// Node is one parsed RPC endpoint together with how it is reached.
+//
+// Headers, HTTPClient and DialContext are not part of the endpoint string and
+// are never parsed from one: they are attached by the caller that resolved the
+// credentials for this node and owns the guarded transport. A node built by
+// ParseNode alone carries none of them.
 type Node struct {
 	Address string
 	HTTP    bool
 	TLS     bool
 	Tier    int
+
+	// Headers are the credentials for this node and this node only.
+	Headers map[string]string
+	// HTTPClient carries the HTTP node's requests. Nil falls back to the Tron
+	// client's own default, which does no address filtering.
+	HTTPClient *http.Client
+	// DialContext is the guarded dialer for a gRPC node.
+	DialContext func(context.Context, string) (net.Conn, error)
 }
 
 type networkDefaults struct {
@@ -133,13 +149,13 @@ func (c *Config) ParseNodes() ([]Node, error) {
 	}
 
 	var nodes []Node
-	for _, entry := range strings.Split(raw, ",") {
+	for entry := range strings.SplitSeq(raw, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
 
-		node, err := parseNode(entry)
+		node, err := ParseNode(entry)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +170,18 @@ func (c *Config) ParseNodes() ([]Node, error) {
 	return nodes, nil
 }
 
-func parseNode(entry string) (Node, error) {
+// ParseNode turns one endpoint into a Node.
+//
+// The entry must describe exactly one node. A comma is refused rather than
+// treated as part of the host: callers that validated an endpoint as a single
+// URL would otherwise hand over a string that expands into several nodes here,
+// and every node after the first would reach the network without ever having
+// been checked. That is the whole of the "scheme://host, scheme://host"
+// smuggling trick, so it is refused at the one place that can see it.
+func ParseNode(entry string) (Node, error) {
+	if strings.ContainsRune(entry, ',') {
+		return Node{}, fmt.Errorf("node %q: a single endpoint must not contain a comma", entry)
+	}
 	tier := 0
 	if idx := strings.LastIndex(entry, "|"); idx >= 0 {
 		// strconv, not Sscanf: Sscanf stops at the first non-digit and reports

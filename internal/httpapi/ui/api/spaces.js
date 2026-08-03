@@ -10,8 +10,9 @@ export const unlockSpace = (id, password) =>
   request(`/api/spaces/${id}/unlock`, { method: "POST", body: { password } });
 export const lockSpace = (id) =>
   request(`/api/spaces/${id}/lock`, { method: "POST", body: {} });
-export const revealMnemonic = (id) =>
-  request(`/api/spaces/${id}/mnemonic`, { method: "POST", body: {} }).then((r) => r.data.mnemonic);
+export const revealMnemonic = (id, password) =>
+  request(`/api/spaces/${id}/mnemonic`, { method: "POST", body: { password } })
+    .then((r) => r.data.mnemonic);
 export const changeSpacePassword = (id, currentPassword, newPassword) =>
   request(`/api/spaces/${id}/change-password`, {
     method: "POST",

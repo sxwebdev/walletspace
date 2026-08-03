@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,8 +17,10 @@ import (
 	tronaddress "github.com/sxwebdev/gotron/pkg/address"
 )
 
-type Kind string
-type Family string
+type (
+	Kind   string
+	Family string
+)
 
 const (
 	KindDerived  Kind   = "derived"
@@ -53,12 +56,7 @@ type Account struct {
 // written before network bindings were introduced must be assigned by the
 // user, because guessing their original network can expose the wrong wallet.
 func (a Account) BoundTo(networkID string) bool {
-	for _, id := range a.NetworkIDs {
-		if id == networkID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(a.NetworkIDs, networkID)
 }
 
 type hdNetParams struct{}

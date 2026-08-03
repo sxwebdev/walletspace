@@ -5,11 +5,11 @@ package tron
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/big"
 	"sync"
 	"time"
@@ -22,7 +22,7 @@ import (
 	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/config"
 	"golang.org/x/sync/singleflight"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -176,15 +176,22 @@ func (s *Service) SendTokenWithSigner(
 	if err != nil {
 		return "", err
 	}
+	intent, err := trc20Intent(from, to, contract, tokens, s.feeLimit)
+	if err != nil {
+		return "", err
+	}
 	tx, err := retry(ctx, s.nodes, func() (*api.TransactionExtention, error) {
 		return s.client.TRC20Send(ctx, from, to, contract, tokens, s.feeLimit)
 	})
 	if err != nil {
 		return "", s.chainError("create TRC20 transfer", err)
 	}
-	txID, err := s.submitWithSigner(ctx, tx, signer)
+	txID, err := s.submitWithSigner(ctx, intent, tx, signer)
 	if err != nil {
-		return "", err
+		// The txid travels with the error. It is only set once the transaction
+		// was signed and sent, and it is the one thing that tells the caller
+		// which transaction may be on chain.
+		return txID, err
 	}
 	s.invalidate(from, to)
 	return txID, nil
@@ -238,13 +245,23 @@ func retry[T any](ctx context.Context, attempts int, call func() (T, error)) (T,
 
 // New builds a client from the configuration and reads the token metadata
 // once, so balances can be scaled without an extra call per request.
-func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Service, error) {
-	nodes, err := cfg.ParseNodes()
-	if err != nil {
-		return nil, err
-	}
-
-	nodeCfgs := make([]client.NodeConfig, 0, len(nodes))
+// The caller passes the node list already parsed. Handing over a delimited
+// string instead would mean this function re-splits it, so an endpoint that was
+// validated and probed as one URL could turn into several nodes here — only the
+// first of which had been checked.
+// nodeConfigs turns the resolved node list into client configuration and
+// reports whether any node is authenticated.
+//
+// Two things happen here that decide where credentials and traffic go. The
+// guarded HTTP client and dialer the caller attached are installed on every
+// node, so requests keep going through the transport that checks the address
+// on connect rather than the client's own; without them only the endpoint
+// probe would be filtered and everything after it would not. And a node's
+// headers stay with that node. cfg.APIKey is the single-network CLI path, where
+// there is one provider and one key by construction.
+func nodeConfigs(cfg *config.Config, nodes []config.Node) ([]client.NodeConfig, bool) {
+	out := make([]client.NodeConfig, 0, len(nodes))
+	keyed := cfg.APIKey != ""
 	for _, n := range nodes {
 		nc := client.NodeConfig{
 			Protocol: client.ProtocolGRPC,
@@ -255,13 +272,31 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Service, e
 		if n.HTTP {
 			nc.Protocol = client.ProtocolHTTP
 			nc.UseTLS = false
+			nc.HTTPClient = n.HTTPClient
+		} else if n.DialContext != nil {
+			nc.DialOptions = append(nc.DialOptions, grpc.WithContextDialer(n.DialContext))
 		}
-		if cfg.APIKey != "" {
+		if len(n.Headers) > 0 {
+			nc.Headers = make(map[string]string, len(n.Headers))
+			maps.Copy(nc.Headers, n.Headers)
+			keyed = true
+		} else if cfg.APIKey != "" {
 			nc.Headers = map[string]string{"TRON-PRO-API-KEY": cfg.APIKey}
 		}
-
-		nodeCfgs = append(nodeCfgs, nc)
+		out = append(out, nc)
 	}
+	return out, keyed
+}
+
+func New(ctx context.Context, cfg *config.Config, nodes []config.Node, log *slog.Logger) (*Service, error) {
+	if len(nodes) == 0 {
+		var err error
+		if nodes, err = cfg.ParseNodes(); err != nil {
+			return nil, err
+		}
+	}
+
+	nodeCfgs, keyed := nodeConfigs(cfg, nodes)
 
 	c, err := client.New(client.Config{
 		Nodes:      nodeCfgs,
@@ -274,7 +309,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Service, e
 	}
 
 	workers := balanceConcurrencyPublic
-	if cfg.APIKey != "" {
+	if keyed {
 		workers = balanceConcurrencyKeyed
 	}
 
@@ -367,7 +402,8 @@ func (s *Service) loadTokenInfo(ctx context.Context) error {
 	}
 	s.token.Symbol = symbol
 
-	s.log.Info("token contract resolved",
+	s.log.Info(
+		"token contract resolved",
 		"contract", s.token.Contract,
 		"symbol", s.token.Symbol,
 		"decimals", s.token.Decimals,
@@ -755,6 +791,31 @@ func (s *Service) chainError(stage string, err error) error {
 	return fmt.Errorf("%s: %w", stage, err)
 }
 
+// broadcastError separates "the chain refused this" from "we do not know".
+//
+// The distinction decides what the caller is allowed to do next. A
+// *client.BroadcastError only exists because a node answered and turned the
+// transaction down, so nothing was accepted and a fresh attempt is safe.
+// Anything else — a timeout, a reset connection, a closed stream — means the
+// transaction may have been received and the answer lost, and building a second
+// one for the same intent is how the same transfer happens twice. That case
+// carries ErrBroadcastUnknown and travels with the locally computed txid.
+//
+// A duplicate is the one rejection that is really a success: the node is saying
+// it already holds this exact transaction, which is what a re-broadcast of the
+// same signed bytes looks like from the other side.
+func (s *Service) broadcastError(err error) error {
+	rejection, rejected := errors.AsType[*client.BroadcastError](err)
+	if rejected && rejection.Code == api.Return_DUP_TRANSACTION_ERROR {
+		return nil
+	}
+	if rejected {
+		return s.chainError("broadcast transaction", err)
+	}
+
+	return fmt.Errorf("%w: %w", chain.ErrBroadcastUnknown, err)
+}
+
 // rejectionReason explains the broadcast codes that are about the transaction
 // the caller asked for rather than about the node. An empty string means the
 // rejection is not the caller's to fix — a busy node, too few peers, a chain
@@ -783,10 +844,23 @@ func rejectionReason(code api.ReturnResponseCode) string {
 
 // submit signs a transaction a node built and broadcasts it, returning the txid.
 //
+// The intent is checked first, exactly as in submitWithSigner: there must not
+// be a second signing path with weaker rules than the one the API uses.
+//
 // The broadcast is deliberately not retried: an attempt that reached the
 // network may well have been accepted, and sending the same transaction to the
 // next node could double it.
-func (s *Service) submit(ctx context.Context, tx *api.TransactionExtention, key *ecdsa.PrivateKey) (string, error) {
+func (s *Service) submit(
+	ctx context.Context, intent Intent, tx *api.TransactionExtention, key *ecdsa.PrivateKey,
+) (string, error) {
+	if err := intent.Verify(tx.GetTransaction()); err != nil {
+		return "", err
+	}
+	_, txid, err := transactionDigest(tx.GetTransaction())
+	if err != nil {
+		return "", err
+	}
+
 	if err := s.client.SignTransaction(tx.GetTransaction(), key); err != nil {
 		return "", fmt.Errorf("sign transaction: %w", err)
 	}
@@ -794,18 +868,30 @@ func (s *Service) submit(ctx context.Context, tx *api.TransactionExtention, key 
 	// A rejection arrives as *client.BroadcastError carrying the node's response
 	// code, which is what says whether the transaction or the node is at fault.
 	if _, err := s.client.BroadcastTransaction(ctx, tx.GetTransaction()); err != nil {
-		return "", s.chainError("broadcast transaction", err)
+		return txid, s.broadcastError(err)
 	}
 
-	return hex.EncodeToString(tx.GetTxid()), nil
+	return txid, nil
 }
 
-func (s *Service) submitWithSigner(ctx context.Context, tx *api.TransactionExtention, signer chain.Signer) (string, error) {
-	rawData, err := proto.Marshal(tx.GetTransaction().GetRawData())
-	if err != nil {
-		return "", fmt.Errorf("encode transaction for signing: %w", err)
+// submitWithSigner signs a transaction and broadcasts it, returning the txid.
+//
+// The intent is the whole point of the signature. The transaction handed in was
+// assembled with help from an RPC node, and a node is not trusted: it is given
+// "send 1 TRX to A" and is free to answer with "send everything to B". The
+// signer sees only a 32-byte digest and cannot tell those apart, so the raw data
+// is decoded and checked against the locally held intent before anything is
+// signed. Nothing reaches SignDigest until that check passes.
+func (s *Service) submitWithSigner(
+	ctx context.Context, intent Intent, tx *api.TransactionExtention, signer chain.Signer,
+) (string, error) {
+	if err := intent.Verify(tx.GetTransaction()); err != nil {
+		return "", err
 	}
-	digest := sha256.Sum256(rawData)
+	digest, txid, err := transactionDigest(tx.GetTransaction())
+	if err != nil {
+		return "", err
+	}
 	signature, err := signer.SignDigest(ctx, digest[:])
 	if err != nil {
 		return "", fmt.Errorf("sign transaction: %w", err)
@@ -816,31 +902,40 @@ func (s *Service) submitWithSigner(ctx context.Context, tx *api.TransactionExten
 	}
 	tx.GetTransaction().Signature = append(tx.GetTransaction().Signature, append([]byte(nil), signature...))
 	if _, err := s.client.BroadcastTransaction(ctx, tx.GetTransaction()); err != nil {
-		return "", s.chainError("broadcast transaction", err)
+		return txid, s.broadcastError(err)
 	}
-	return hex.EncodeToString(tx.GetTxid()), nil
+	return txid, nil
 }
 
-func (s *Service) buildTransfer(ctx context.Context, from, to string, asset Asset, amount decimal.Decimal) (*api.TransactionExtention, error) {
+// buildTransfer asks a node to assemble the transfer and returns it together
+// with the intent it is supposed to represent. The two travel as a pair so that
+// no caller can reach a signer holding only the node's answer.
+func (s *Service) buildTransfer(
+	ctx context.Context, from, to string, asset Asset, amount decimal.Decimal,
+) (Intent, *api.TransactionExtention, error) {
 	if err := address.Validate(to); err != nil {
-		return nil, fmt.Errorf("%w: invalid recipient address: %s", ErrInvalidRequest, err)
+		return Intent{}, nil, fmt.Errorf("%w: invalid recipient address: %s", ErrInvalidRequest, err)
 	}
 
 	if amount.LessThanOrEqual(decimal.Zero) {
-		return nil, fmt.Errorf("%w: amount must be greater than zero", ErrInvalidRequest)
+		return Intent{}, nil, fmt.Errorf("%w: amount must be greater than zero", ErrInvalidRequest)
 	}
 
 	var (
-		tx  *api.TransactionExtention
-		err error
+		intent Intent
+		tx     *api.TransactionExtention
+		err    error
 	)
 
 	switch asset {
 	case AssetTRX:
 		sun, convErr := trxAmount(amount)
 		if convErr != nil {
-			return nil, convErr
+			return Intent{}, nil, convErr
 		}
+		// A plain TRX transfer carries no fee limit: that field only bounds
+		// energy spent by a contract call.
+		intent = Intent{Kind: IntentTransferTRX, Owner: from, To: to, Amount: int64(sun)}
 
 		// Building a transaction is a read-only call on the node, so it is safe
 		// to route past an unhealthy endpoint. Only the broadcast below must
@@ -855,7 +950,11 @@ func (s *Service) buildTransfer(ctx context.Context, from, to string, asset Asse
 	case AssetUSDT:
 		tokens, convErr := tokenAmount(amount, s.token.Decimals)
 		if convErr != nil {
-			return nil, convErr
+			return Intent{}, nil, convErr
+		}
+		intent, err = trc20Intent(from, to, s.token.Contract, tokens, s.feeLimit)
+		if err != nil {
+			return Intent{}, nil, err
 		}
 
 		tx, err = retry(ctx, s.nodes, func() (*api.TransactionExtention, error) {
@@ -866,24 +965,24 @@ func (s *Service) buildTransfer(ctx context.Context, from, to string, asset Asse
 		}
 
 	default:
-		return nil, fmt.Errorf("%w: unknown asset %q", ErrInvalidRequest, asset)
+		return Intent{}, nil, fmt.Errorf("%w: unknown asset %q", ErrInvalidRequest, asset)
 	}
 	if err != nil {
-		return nil, err
+		return Intent{}, nil, err
 	}
-	return tx, nil
+	return intent, tx, nil
 }
 
 // Send transfers TRX or the configured TRC20 token and returns the txid.
 func (s *Service) Send(ctx context.Context, from, to string, asset Asset, amount decimal.Decimal, key *ecdsa.PrivateKey) (string, error) {
-	tx, err := s.buildTransfer(ctx, from, to, asset, amount)
+	intent, tx, err := s.buildTransfer(ctx, from, to, asset, amount)
 	if err != nil {
 		return "", err
 	}
 
-	txid, err := s.submit(ctx, tx, key)
+	txid, err := s.submit(ctx, intent, tx, key)
 	if err != nil {
-		return "", err
+		return txid, err
 	}
 
 	s.invalidate(from, to)
@@ -902,13 +1001,13 @@ func (s *Service) SendWithSigner(
 	if signer == nil || signer.Family() != chain.FamilyTron {
 		return "", errors.New("Tron signer is required")
 	}
-	tx, err := s.buildTransfer(ctx, from, to, asset, amount)
+	intent, tx, err := s.buildTransfer(ctx, from, to, asset, amount)
 	if err != nil {
 		return "", err
 	}
-	txid, err := s.submitWithSigner(ctx, tx, signer)
+	txid, err := s.submitWithSigner(ctx, intent, tx, signer)
 	if err != nil {
-		return "", err
+		return txid, err
 	}
 	s.invalidate(from, to)
 	return txid, nil
