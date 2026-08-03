@@ -34,7 +34,7 @@ export function modal({ title, subtitle = "", content, wide = false, onMount }) 
           <h2 id="modal-title">${escapeHTML(title)}</h2>
           ${subtitle ? `<p class="muted">${escapeHTML(subtitle)}</p>` : ""}
         </div>
-        <button class="button icon" type="button" data-close aria-label="Закрыть">×</button>
+        <button class="button icon" type="button" data-close aria-label="Close">×</button>
       </header>
       <div data-content></div>
     </section>`;
@@ -64,7 +64,7 @@ export function modal({ title, subtitle = "", content, wide = false, onMount }) 
   return { element: backdrop, close };
 }
 
-export function setBusy(form, busy, label = "Сохранение…") {
+export function setBusy(form, busy, label = "Saving…") {
   const button = form.querySelector('[type="submit"]');
   if (!button) return;
   if (busy) {

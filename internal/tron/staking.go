@@ -125,7 +125,7 @@ var oneTRX = client.MustFromTRX(decimal.NewFromInt(1))
 // top. That is the slow path here.
 //
 // A failure in any of them fails the whole call. Filling the missing part
-// with zeros would be worse than saying nothing: "В стейке: 0" is a statement
+// with zeros would be worse than saying nothing: "Staked: 0" is a statement
 // about the account, and a read that did not happen must not make it.
 //
 // Nothing here is a limit the caller should enforce. How much may be staked or

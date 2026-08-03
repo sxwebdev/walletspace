@@ -9,41 +9,41 @@ export function renderOnboarding(root, signal) {
       <section class="onboarding-copy">
         <span class="brand-mark" aria-hidden="true">W</span>
         <p class="eyebrow" style="margin-top:24px">Your keys. Your spaces.</p>
-        <h1><span class="gradient-text">Один walletspace.</span><br>Все ваши сети.</h1>
-        <p>Создайте зашифрованную коллекцию кошельков. Можно начать с новой recovery phrase или восстановить свою.</p>
-        <a class="button" href="/settings" data-settings>Настроить RPC до старта</a>
+        <h1><span class="gradient-text">One walletspace.</span><br>All of your networks.</h1>
+        <p>Create an encrypted collection of wallets. Start from a new recovery phrase, or restore your own.</p>
+        <a class="button" href="/settings" data-settings>Set up RPC before starting</a>
       </section>
       <section class="onboarding-card">
-        <p class="eyebrow">Первый запуск</p>
-        <h2>Создать Secure Space</h2>
+        <p class="eyebrow">First run</p>
+        <h2>Create a Secure Space</h2>
         <form class="form-stack" data-form autocomplete="off">
           <label class="field">
-            <span>Название space <small class="muted">(необязательно)</small></span>
+            <span>Space name <small class="muted">(optional)</small></span>
             <input name="name" value="default" maxlength="80">
           </label>
           <label class="field">
-            <span>Своя мнемоника <small class="muted">(необязательно)</small></span>
-            <textarea name="mnemonic" placeholder="Вставьте BIP39-фразу для восстановления" autocomplete="off" spellcheck="false"></textarea>
-            <small class="hint">Пустое поле означает: сгенерировать новую 24-word phrase.</small>
+            <span>Your own mnemonic <small class="muted">(optional)</small></span>
+            <textarea name="mnemonic" placeholder="Paste a BIP39 phrase to restore from" autocomplete="off" spellcheck="false"></textarea>
+            <small class="hint">Leaving this empty means: generate a new 24-word phrase.</small>
           </label>
           <details>
-            <summary>Advanced: BIP39-пасфраза</summary>
+            <summary>Advanced: BIP39 passphrase</summary>
             <label class="field" style="margin-top:12px">
-              <span>BIP39-пасфраза</span>
+              <span>BIP39 passphrase</span>
               <input type="password" name="bip39_passphrase" autocomplete="new-password">
-              <small class="hint">Это часть derivation и она меняет адреса. Это не пароль space.</small>
+              <small class="hint">This is part of the derivation and changes the addresses. It is not the space password.</small>
             </label>
           </details>
           <label class="field">
-            <span>Пароль space</span>
+            <span>Space password</span>
             <input type="password" name="password" required minlength="8" autocomplete="new-password">
           </label>
           <label class="field">
-            <span>Повторите пароль</span>
+            <span>Repeat the password</span>
             <input type="password" name="confirmation" required minlength="8" autocomplete="new-password">
           </label>
           <div class="error-text" data-error role="alert"></div>
-          <button class="button primary" type="submit">Создать Secure Space</button>
+          <button class="button primary" type="submit">Create a Secure Space</button>
         </form>
       </section>
     </main>`;
@@ -61,10 +61,10 @@ export function renderOnboarding(root, signal) {
     const error = form.querySelector("[data-error]");
     error.textContent = "";
     if (password !== confirmation) {
-      error.textContent = "Пароли не совпадают.";
+      error.textContent = "The passwords do not match.";
       return;
     }
-    setBusy(form, true, "Шифруем vault…");
+    setBusy(form, true, "Encrypting the vault…");
     try {
       const result = await createSpace({
         name: values.get("name"),
@@ -80,7 +80,7 @@ export function renderOnboarding(root, signal) {
       if (result.mnemonic_generated) {
         showRecovery(result.mnemonic, () => navigate("/", { replace: true }));
       } else {
-        toast("Space восстановлен");
+        toast("Space restored");
         await navigate("/", { replace: true });
       }
     } catch (cause) {
@@ -93,22 +93,22 @@ export function renderOnboarding(root, signal) {
 
 function showRecovery(mnemonic, done) {
   modal({
-    title: "Сохраните recovery phrase",
-    subtitle: "Она показывается сейчас, но останется доступна после unlock.",
+    title: "Save the recovery phrase",
+    subtitle: "It is shown now, and stays available after an unlock.",
     wide: true,
     content: `
       <div class="form-stack">
-        <div class="notice danger">Любой, у кого есть эта фраза и BIP39-пасфраза, контролирует derived-аккаунты. Не отправляйте её в облако или мессенджер.</div>
+        <div class="notice danger">Anyone holding this phrase and the BIP39 passphrase controls the derived accounts. Do not send it to a cloud service or a messenger.</div>
         <div class="secret" data-secret></div>
-        <button class="button secondary" type="button" data-copy>Копировать</button>
-        <label><input type="checkbox" data-confirm> Я сохранил фразу в безопасном месте</label>
-        <button class="button primary" type="button" data-continue disabled>Перейти в Walletspace</button>
+        <button class="button secondary" type="button" data-copy>Copy</button>
+        <label><input type="checkbox" data-confirm> I have stored the phrase somewhere safe</label>
+        <button class="button primary" type="button" data-continue disabled>Go to Walletspace</button>
       </div>`,
     onMount(element, close) {
       element.querySelector("[data-secret]").textContent = mnemonic;
       element.querySelector("[data-copy]").addEventListener("click", async () => {
         await navigator.clipboard.writeText(mnemonic);
-        toast("Recovery phrase скопирована");
+        toast("Recovery phrase copied");
       });
       const checkbox = element.querySelector("[data-confirm]");
       const button = element.querySelector("[data-continue]");

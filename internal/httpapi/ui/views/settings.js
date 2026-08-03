@@ -35,7 +35,7 @@ export async function render(root, signal) {
     bindPage(root);
   } catch (cause) {
     if (cause.name !== "AbortError") {
-      root.innerHTML = `<div class="boot"><strong>Настройки не загрузились</strong><span>${escapeHTML(cause.message)}</span></div>`;
+      root.innerHTML = `<div class="boot"><strong>The settings did not load</strong><span>${escapeHTML(cause.message)}</span></div>`;
     }
   }
 }
@@ -53,14 +53,14 @@ function renderPage(root) {
       </header>
       <main class="page">
         <section class="page-heading">
-          <div><p class="eyebrow">Typed configuration · revision ${escapeHTML(settings.revision.slice(0, 8))}</p><h1>Настройки</h1><p class="muted">Вся file-backed конфигурация редактируется здесь. Секретные provider headers никогда не возвращаются API.</p></div>
+          <div><p class="eyebrow">Typed configuration · revision ${escapeHTML(settings.revision.slice(0, 8))}</p><h1>Settings</h1><p class="muted">Every file-backed setting is edited here. Secret provider headers are never returned by the API.</p></div>
         </section>
         <div class="settings-layout">
-          <nav class="settings-nav" aria-label="Разделы">
-            <a href="#general">Общие</a>
-            <a href="#security">Безопасность</a>
+          <nav class="settings-nav" aria-label="Sections">
+            <a href="#general">General</a>
+            <a href="#security">Security</a>
             <a href="#discovery">Node Discovery</a>
-            <a href="#networks">Сети и RPC</a>
+            <a href="#networks">Networks and RPC</a>
             <a href="#assets">Assets</a>
           </nav>
           <div class="settings-content">
@@ -77,12 +77,12 @@ function renderPage(root) {
 
 function assetsCard() {
   return `<section class="settings-card" id="assets">
-    <h2>Assets</h2><p class="muted">Контракт проверяется выбранной сетью; symbol и decimals читаются on-chain до сохранения.</p>
+    <h2>Assets</h2><p class="muted">The contract is verified against the chosen network; the symbol and the decimals are read on-chain before saving.</p>
     <form data-assets>
       <label class="field"><span>Network</span><select name="network_id">${networks.map((item, index) => `<option value="${item.id}" ${index === 0 ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
       <label class="field"><span>ERC20 / TRC20 contract</span><input name="contract" required spellcheck="false"></label>
       <div class="error-text" data-error></div>
-      <div class="form-actions"><button class="button primary" type="submit">Проверить и добавить</button></div>
+      <div class="form-actions"><button class="button primary" type="submit">Verify and add</button></div>
     </form>
     <div class="network-overrides" data-assets-list style="margin-top:16px">${assetRows()}</div>
   </section>`;
@@ -92,30 +92,30 @@ function assetRows() {
   return assets.map((item) => `<div class="network-row">
     <div><strong>${escapeHTML(item.name || item.symbol)}</strong><br><span class="muted">${escapeHTML(item.symbol)} · ${escapeHTML(item.kind)}</span></div>
     <span class="address">${escapeHTML(item.contract || "Native asset")}</span>
-    ${item.configured ? `<button class="button" type="button" data-delete-asset="${escapeHTML(item.id)}">Удалить</button>` : '<span class="badge">Built-in</span>'}
+    ${item.configured ? `<button class="button" type="button" data-delete-asset="${escapeHTML(item.id)}">Delete</button>` : '<span class="badge">Built-in</span>'}
   </div>`).join("");
 }
 
 function generalCard() {
   return `<section class="settings-card" id="general">
-    <h2>Общие</h2><p class="muted">Изменение listen address сохранится сейчас и применится после restart.</p>
+    <h2>General</h2><p class="muted">A changed listen address is saved now and takes effect after a restart.</p>
     <form data-general>
       <label class="field"><span>UI address</span><input name="addr" value="${escapeHTML(settings.server.addr)}" required></label>
-      <label><input type="checkbox" name="open_browser" ${settings.server.open_browser ? "checked" : ""}> Открывать браузер при запуске</label>
-      <label class="field"><span>Default space</span><select name="last_space_id"><option value="">Не задан</option>${spaces.map((item) => `<option value="${item.id}" ${settings.ui.last_space_id === item.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
+      <label><input type="checkbox" name="open_browser" ${settings.server.open_browser ? "checked" : ""}> Open a browser on start</label>
+      <label class="field"><span>Default space</span><select name="last_space_id"><option value="">Not set</option>${spaces.map((item) => `<option value="${item.id}" ${settings.ui.last_space_id === item.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
       <div class="error-text" data-error></div>
-      <div class="form-actions"><button class="button primary" type="submit">Сохранить общие</button></div>
+      <div class="form-actions"><button class="button primary" type="submit">Save general</button></div>
     </form>
   </section>`;
 }
 
 function securityCard() {
   return `<section class="settings-card" id="security">
-    <h2>Безопасность</h2><p class="muted">Auto-lock считается отдельно для каждого space.</p>
+    <h2>Security</h2><p class="muted">Auto-lock is counted separately for every space.</p>
     <form data-security>
-      <label class="field"><span>Auto-lock timeout</span><input name="auto_lock" value="${escapeHTML(settings.security.auto_lock)}" placeholder="15m" required><small class="hint">Go duration: 30s, 15m, 2h. Значение 0 отключает auto-lock.</small></label>
+      <label class="field"><span>Auto-lock timeout</span><input name="auto_lock" value="${escapeHTML(settings.security.auto_lock)}" placeholder="15m" required><small class="hint">Go duration: 30s, 15m, 2h. A value of 0 disables auto-lock.</small></label>
       <div class="error-text" data-error></div>
-      <div class="form-actions"><button class="button primary" type="submit">Сохранить безопасность</button></div>
+      <div class="form-actions"><button class="button primary" type="submit">Save security</button></div>
     </form>
   </section>`;
 }
@@ -123,22 +123,22 @@ function securityCard() {
 function discoveryCard() {
   const value = settings.node_discovery;
   return `<section class="settings-card" id="discovery">
-    <h2>Node Discovery</h2><p class="muted">Discovery предоставляет кандидатов. Chain ID и безопасность адреса проверяются локально.</p>
+    <h2>Node Discovery</h2><p class="muted">Discovery supplies candidates. The chain ID and the safety of the address are verified locally.</p>
     <form data-discovery>
-      <label><input type="checkbox" name="enabled" ${value.enabled ? "checked" : ""}> Использовать Node Discovery</label>
-      <label class="field"><span>Service URL</span><input name="url" value="${escapeHTML(value.url)}" placeholder="https://discovery.example"><small class="hint">URL хранится в config.yaml и обязателен только когда Discovery включён.</small></label>
+      <label><input type="checkbox" name="enabled" ${value.enabled ? "checked" : ""}> Use Node Discovery</label>
+      <label class="field"><span>Service URL</span><input name="url" value="${escapeHTML(value.url)}" placeholder="https://discovery.example"><small class="hint">The URL is stored in config.yaml and is only required while Discovery is enabled.</small></label>
       <label class="field"><span>Refresh interval</span><input name="refresh_interval" value="${escapeHTML(value.refresh_interval)}" required></label>
       <label class="field"><span>Request timeout</span><input name="request_timeout" value="${escapeHTML(value.request_timeout)}" required></label>
-      <label><input type="checkbox" name="allow_insecure_rpc" ${value.allow_insecure_rpc ? "checked" : ""}> Разрешить HTTP RPC <span class="badge testnet">не рекомендуется</span></label>
+      <label><input type="checkbox" name="allow_insecure_rpc" ${value.allow_insecure_rpc ? "checked" : ""}> Allow HTTP RPC <span class="badge testnet">not recommended</span></label>
       <div class="error-text" data-error></div>
-      <div class="form-actions"><button class="button primary" type="submit">Сохранить discovery</button></div>
+      <div class="form-actions"><button class="button primary" type="submit">Save discovery</button></div>
     </form>
   </section>`;
 }
 
 function networksCard() {
   return `<section class="settings-card" id="networks">
-    <h2>Сети и RPC</h2><p class="muted">Одна HTTPS RPC URL на строку. Пустой override использует discovery и official fallback.</p>
+    <h2>Networks and RPC</h2><p class="muted">One HTTPS RPC URL per line. An empty override uses discovery and the official fallbacks.</p>
     <div class="network-overrides">
       ${networks.map((item) => {
         const override = overrides[item.id] || {};
@@ -148,14 +148,14 @@ function networksCard() {
           <label class="field"><span class="sr-only">RPC URLs</span><textarea name="rpc_urls" rows="2" placeholder="${escapeHTML(item.rpc_fallbacks[0] || "")}">${escapeHTML((override.rpc_urls || []).join("\n"))}</textarea></label>
           <div class="form-stack">
             <label><input type="checkbox" name="enabled" ${enabled ? "checked" : ""}> Enabled</label>
-            <button class="button secondary" type="submit">Применить</button>
-            ${overrides[item.id] ? '<button class="button" type="button" data-reset>Сбросить</button>' : ""}
+            <button class="button secondary" type="submit">Apply</button>
+            ${overrides[item.id] ? '<button class="button" type="button" data-reset>Reset</button>' : ""}
           </div>
           <details style="grid-column:1/-1">
             <summary>Advanced override</summary>
             <div class="form-stack" style="margin-top:12px">
               <label class="field"><span>Discovery</span><select name="discovery_enabled">
-                <option value="">По global policy</option>
+                <option value="">Per global policy</option>
                 <option value="true" ${override.discovery_enabled === true ? "selected" : ""}>Enabled</option>
                 <option value="false" ${override.discovery_enabled === false ? "selected" : ""}>Disabled</option>
               </select></label>
@@ -163,8 +163,8 @@ function networksCard() {
               <label class="field"><span>Explorer transaction template</span><input name="explorer_tx" value="${escapeHTML(override.explorer?.tx || "")}" placeholder="${escapeHTML(item.explorer.tx)}"></label>
               <label class="field"><span>Explorer block template</span><input name="explorer_block" value="${escapeHTML(override.explorer?.block || "")}" placeholder="${escapeHTML(item.explorer.block)}"></label>
               <label class="field"><span>Provider header name</span><input name="header_name" placeholder="Authorization"></label>
-              <label class="field"><span>Provider header secret</span><input type="password" name="header_value" placeholder="${override.has_headers ? "Секрет уже сохранён; пустое поле не меняет его" : "Необязательно"}" autocomplete="new-password"></label>
-              ${override.has_headers ? '<label><input type="checkbox" name="clear_headers"> Удалить сохранённые provider headers</label>' : ""}
+              <label class="field"><span>Provider header secret</span><input type="password" name="header_value" placeholder="${override.has_headers ? "A secret is already stored; an empty field leaves it alone" : "Optional"}" autocomplete="new-password"></label>
+              ${override.has_headers ? '<label><input type="checkbox" name="clear_headers"> Delete the stored provider headers</label>' : ""}
             </div>
           </details>
           <div class="error-text" data-error style="grid-column:1/-1"></div>
@@ -213,7 +213,7 @@ function bindAssetDeletes() {
         await removeAsset(button.dataset.deleteAsset);
         assets = assets.filter((item) => item.id !== button.dataset.deleteAsset);
         renderAssetRows();
-        toast("Asset удалён");
+        toast("Asset deleted");
       } catch (cause) {
         toast(cause.message, "error");
       }
@@ -320,10 +320,10 @@ async function saveForm(form, action) {
   setBusy(form, true);
   try {
     await action();
-    toast("Настройки сохранены");
+    toast("Settings saved");
   } catch (cause) {
     error.textContent = cause.status === 412
-      ? "Настройки изменились в другой вкладке. Обновите страницу и повторите."
+      ? "The settings changed in another tab. Reload the page and try again."
       : cause.message;
   } finally {
     setBusy(form, false);

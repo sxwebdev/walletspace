@@ -10,12 +10,12 @@ import { escapeHTML, modal, setBusy, toast } from "../../components/ui.js";
 
 export function showUnlock(space, onUnlocked) {
   modal({
-    title: `Разблокировать ${space.name}`,
-    subtitle: "Пароль остаётся только в этом запросе.",
+    title: `Unlock ${space.name}`,
+    subtitle: "The password stays inside this request only.",
     content: `<form class="form-stack" data-form>
-      <label class="field"><span>Пароль space</span><input type="password" name="password" required autocomplete="current-password"></label>
+      <label class="field"><span>Space password</span><input type="password" name="password" required autocomplete="current-password"></label>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Разблокировать</button>
+      <button class="button primary" type="submit">Unlock</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -39,15 +39,15 @@ export function showUnlock(space, onUnlocked) {
 
 export function showCreateSpace(onCreated) {
   modal({
-    title: "Новый space",
-    subtitle: "Отдельный vault без кошельков. Wallet можно создать позже в нужной сети.",
+    title: "New space",
+    subtitle: "A separate vault with no wallets. A wallet can be created later, in the network you need.",
     content: `<form class="form-stack" data-form autocomplete="off">
-      <label class="field"><span>Название</span><input name="name" placeholder="default"></label>
-      <label class="field"><span>Мнемоника (необязательно)</span><textarea name="mnemonic" spellcheck="false"></textarea></label>
-      <label><input type="checkbox" name="imported_only"> Imported-only, без мнемоники</label>
-      <label class="field"><span>Пароль</span><input type="password" name="password" required minlength="8"></label>
+      <label class="field"><span>Name</span><input name="name" placeholder="default"></label>
+      <label class="field"><span>Mnemonic (optional)</span><textarea name="mnemonic" spellcheck="false"></textarea></label>
+      <label><input type="checkbox" name="imported_only"> Imported-only, without a mnemonic</label>
+      <label class="field"><span>Password</span><input type="password" name="password" required minlength="8"></label>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Создать</button>
+      <button class="button primary" type="submit">Create</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -78,10 +78,10 @@ export function showCreateSpace(onCreated) {
 
 export function showRenameSpace(space, onRenamed) {
   modal({
-    title: "Переименовать space",
+    title: "Rename space",
     content: `<form class="form-stack" data-form>
-      <label class="field"><span>Название</span><input name="name" value="${escapeHTML(space.name)}" required></label>
-      <div class="error-text" data-error></div><button class="button primary" type="submit">Сохранить</button>
+      <label class="field"><span>Name</span><input name="name" value="${escapeHTML(space.name)}" required></label>
+      <div class="error-text" data-error></div><button class="button primary" type="submit">Save</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -109,13 +109,13 @@ export async function showMnemonic(spaceID) {
 
 export function showChangePassword(spaceID) {
   modal({
-    title: "Сменить пароль space",
-    subtitle: "Адреса и recovery phrase не изменятся.",
+    title: "Change the space password",
+    subtitle: "The addresses and the recovery phrase stay the same.",
     content: `<form class="form-stack" data-form autocomplete="off">
-      <label class="field"><span>Текущий пароль</span><input type="password" name="current" required></label>
-      <label class="field"><span>Новый пароль</span><input type="password" name="next" minlength="8" required></label>
-      <label class="field"><span>Повторите новый пароль</span><input type="password" name="confirmation" minlength="8" required></label>
-      <div class="error-text" data-error></div><button class="button primary" type="submit">Перешифровать vault</button>
+      <label class="field"><span>Current password</span><input type="password" name="current" required></label>
+      <label class="field"><span>New password</span><input type="password" name="next" minlength="8" required></label>
+      <label class="field"><span>Repeat the new password</span><input type="password" name="confirmation" minlength="8" required></label>
+      <div class="error-text" data-error></div><button class="button primary" type="submit">Re-encrypt the vault</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -123,15 +123,15 @@ export function showChangePassword(spaceID) {
         event.preventDefault();
         const data = new FormData(form);
         if (data.get("next") !== data.get("confirmation")) {
-          form.querySelector("[data-error]").textContent = "Новые пароли не совпадают";
+          form.querySelector("[data-error]").textContent = "The new passwords do not match";
           return;
         }
-        setBusy(form, true, "Перешифровываем…");
+        setBusy(form, true, "Re-encrypting…");
         try {
           await changeSpacePassword(spaceID, data.get("current"), data.get("next"));
           form.reset();
           close();
-          toast("Пароль space изменён");
+          toast("Space password changed");
         } catch (cause) {
           form.querySelector("[data-error]").textContent = cause.message;
         } finally {
@@ -145,7 +145,7 @@ export function showChangePassword(spaceID) {
 export async function backupSpace(space) {
   try {
     await downloadBackup(space.id, space.name);
-    toast("Encrypted backup скачан");
+    toast("Encrypted backup downloaded");
   } catch (cause) {
     toast(cause.message, "error");
   }
@@ -154,11 +154,11 @@ export async function backupSpace(space) {
 function showSecret(title, value) {
   const wrapper = document.createElement("div");
   wrapper.className = "form-stack";
-  wrapper.innerHTML = `<div class="secret" data-secret></div><button class="button secondary" type="button" data-copy-secret>Копировать</button>`;
+  wrapper.innerHTML = `<div class="secret" data-secret></div><button class="button secondary" type="button" data-copy-secret>Copy</button>`;
   wrapper.querySelector("[data-secret]").textContent = value;
   wrapper.querySelector("[data-copy-secret]").addEventListener("click", async () => {
     await navigator.clipboard.writeText(value);
-    toast("Секрет скопирован");
+    toast("Secret copied");
   });
   modal({ title, content: wrapper });
 }

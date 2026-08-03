@@ -8,5 +8,6 @@ config.yaml
 # Build output
 /bin/
 /walletspace
+/dist/
 
 /go.work*

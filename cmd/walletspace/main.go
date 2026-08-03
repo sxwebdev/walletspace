@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -37,13 +38,81 @@ import (
 	"golang.org/x/term"
 )
 
+// version is stamped by the release build; see .goreleaser.yml and the Makefile.
+var version = "dev"
+
+type command int
+
+const (
+	commandServe command = iota
+	commandMigrate
+	commandVersion
+	commandHelp
+	commandUnknown
+)
+
+// parseCommand splits the process arguments into a command and the arguments that
+// belong to it. The server itself takes no flags — its settings come from
+// ~/.walletspace and from the environment — so only subcommands appear here.
+func parseCommand(args []string) (command, []string) {
+	if len(args) == 0 {
+		return commandServe, nil
+	}
+	switch args[0] {
+	case "migrate":
+		return commandMigrate, args[1:]
+	case "version", "--version", "-version":
+		return commandVersion, args[1:]
+	case "help", "--help", "-help", "-h":
+		return commandHelp, args[1:]
+	}
+	return commandUnknown, args
+}
+
+func usage(out io.Writer) {
+	fmt.Fprintf(out, `Walletspace %s — local multichain wallet manager.
+
+Usage:
+  walletspace                     serve the UI on the configured loopback address
+  walletspace migrate --from DIR  import a legacy data directory into a new space
+  walletspace version             print the version
+  walletspace help                print this help
+
+Migrate flags:
+  --from DIR   legacy data directory (required)
+  --home DIR   Walletspace home to create the new space in
+  --name NAME  name for the new space
+  --dry-run    verify every legacy address without writing anything
+
+Environment:
+  WALLETSPACE_HOME          data directory, default ~/.walletspace
+  WALLETSPACE_ADDR          loopback listen address
+  WALLETSPACE_OPEN_BROWSER  open a browser on start, true or false
+
+Everything persistent is edited on the /settings page or in
+~/.walletspace/config.yaml.
+`, version)
+}
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	cmd, args := parseCommand(os.Args[1:])
 	var err error
-	if len(os.Args) > 1 && os.Args[1] == "migrate" {
-		err = runMigration(log, os.Args[2:])
-	} else {
+	switch cmd {
+	case commandServe:
 		err = run(log)
+	case commandMigrate:
+		err = runMigration(log, args)
+	case commandVersion:
+		fmt.Fprintln(os.Stdout, version)
+	case commandHelp:
+		usage(os.Stdout)
+	case commandUnknown:
+		// A mistyped argument used to fall through to the server, which then
+		// started as if nothing had been asked for.
+		fmt.Fprintf(os.Stderr, "unknown argument %q\n\n", args[0])
+		usage(os.Stderr)
+		os.Exit(2)
 	}
 	if err != nil {
 		log.Error("fatal", "error", err)
@@ -202,6 +271,12 @@ func runMigration(log *slog.Logger, args []string) error {
 	nameFlag := flags.String("name", "", "new space name")
 	dryRun := flags.Bool("dry-run", false, "verify every legacy address without writing")
 	if err := flags.Parse(args); err != nil {
+		// -h asked for the usage and got it; the FlagSet has already printed it.
+		// Without this the one subcommand that takes flags is the one whose help
+		// exits non-zero with "fatal error=flag: help requested".
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if strings.TrimSpace(*from) == "" {

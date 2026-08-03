@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Test before Build: `go test ./...` compiles every package anyway, so a
+      # broken build fails here with the test signal rather than without it.
+      - name: Test
+        run: make test
+
+      - name: Build
+        run: make build
+
+      - name: Lint
+        run: make lint
+
+      # A broken release configuration is otherwise only noticed while a tag is
+      # being published, when the tag is already public. `check` also fails on
+      # deprecated options, so this is what keeps the config current.
+      - name: Check the release configuration
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check

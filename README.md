@@ -1,145 +1,105 @@
 # Walletspace
 
-Локальный multichain wallet manager: несколько изолированных spaces, derived и
-imported accounts, Tron и EVM-сети в одном UI. Приватные ключи используются
-только локально и никогда не отправляются RPC-провайдеру.
+Local multichain wallet manager: several isolated spaces, derived and imported
+accounts, Tron and EVM networks in one loopback UI. Private keys are used locally
+and are never sent to an RPC provider.
 
-## Возможности
+## Features
 
-- независимые spaces с отдельным паролем и зашифрованным vault;
-- создание новой BIP39 recovery phrase или восстановление существующей;
-- BIP44 derivation для Tron (`m/44'/195'/0'/0/i`) и EVM
-  (`m/44'/60'/0'/0/i`);
-- явные network bindings: wallet существует только в сетях, куда пользователь
-  его создал или подключил; derivation index начинается с `0` отдельно в каждой
-  сети, а совместимый ключ не дублируется;
-- импорт secp256k1 private key с явной меткой `Imported` в UI;
-- экспорт private key и recovery phrase только из разблокированного space;
-- одновременная работа с 17 сетями:
-  - Tron Mainnet и Nile;
-  - Ethereum Mainnet и Sepolia;
-  - BSC Mainnet и Testnet;
-  - Polygon PoS и Amoy;
-  - OP Mainnet и OP Sepolia;
-  - Arbitrum One и Arbitrum Sepolia;
-  - Base Mainnet;
-  - Robinhood Chain Mainnet и Testnet;
-  - Avalanche C-Chain и Fuji;
-- native/ERC20/TRC20 balances и transfers;
-- Tron resources, staking, delegation и contract deployment;
-- прогрессивная фоновая загрузка балансов без перезагрузки всей таблицы;
-- общий mainnet-баланс в USD и изменение цен за 24 часа через бесплатный
-  keyless price feed DefiLlama с пятиминутным кэшем;
-- фоновый Node Doctor, проверяющий RPC-ноды всех включённых сетей;
-- typed settings UI для RPC, provider headers, explorer, discovery, assets,
-  auto-lock и общих настроек.
+- Independent spaces, each with its own password and encrypted vault.
+- A new BIP39 recovery phrase or recovery of an existing one, with BIP44
+  derivation for Tron (`m/44'/195'/0'/0/i`) and EVM (`m/44'/60'/0'/0/i`).
+- Explicit network bindings: a wallet exists only in the networks it was created
+  or connected in, the derivation index starts at `0` separately in each network,
+  and a compatible key is not duplicated.
+- Import of a secp256k1 private key, marked `Imported` in the UI; export of a
+  private key or a recovery phrase only from an unlocked space.
+- 17 networks at once: Tron, Ethereum, BSC, Polygon PoS, OP, Arbitrum, Robinhood
+  Chain and Avalanche C-Chain, each with its testnet, plus Base mainnet.
+- Native, ERC20 and TRC20 balances and transfers; Tron resources, staking,
+  delegation and contract deployment.
+- Progressive background balance loading, a mainnet USD total and a 24h price
+  change from the keyless DefiLlama feed, cached for five minutes.
+- A background Node Doctor that checks the RPC nodes of every enabled network.
+- Typed settings UI for RPC, provider headers, explorer, discovery, assets,
+  auto-lock and general options.
 
-Подробная архитектура и принятые решения описаны в
-[docs/multichain-plan.md](docs/multichain-plan.md).
+## Security
 
-## Запуск
+> **Not ready for real funds.** The audit in
+> [docs/security-audit.md](docs/security-audit.md) lists two unfixed Critical
+> findings: the local API has no authorization boundary and is reachable from a
+> web page through DNS rebinding, and a Tron transaction is built by the RPC node
+> and signed without any check of its contents. Use testnets until both are
+> closed.
 
-```bash
-go run ./cmd/walletspace
+- The API binds to loopback only; a non-loopback bind is rejected. Loopback
+  constrains the network route, not the authority of the caller — there is no
+  capability token yet, so any local process can call the API.
+- Vaults use Argon2id and AES-256-GCM. The mnemonic, the BIP39 passphrase and
+  imported keys are never written to disk in the clear. Files are created with
+  `0600`, directories with `0700`.
+- Mutating browser requests are checked against Origin and Sec-Fetch-Site and
+  must carry a JSON content type; secret responses get `Cache-Control: no-store`.
+  These are CSRF hardening, not authentication, and the audit's SEC-01 shows how
+  they are bypassed.
+- A space locks itself after a configurable idle period and has to be unlocked
+  before a key export, a signature or an import.
+- Only public identifiers of assets with a non-zero balance leave the machine for
+  the price feed — never addresses, balances or space identifiers.
+- A recovery phrase or a private key is full control over the funds: keep them
+  out of messengers, cloud notes and screenshots.
+
+## Install
+
+### Homebrew (macOS)
+
+```sh
+brew tap sxwebdev/walletspace https://github.com/sxwebdev/walletspace
+brew trust --tap sxwebdev/walletspace
+brew install --cask walletspace
 ```
 
-По умолчанию UI открывается на <http://127.0.0.1:8080>. При первом запуске
-приложение предлагает создать space. Если оставить имя и мнемонику пустыми,
-будет создан `default` с новой 24-word recovery phrase и пустым списком
-кошельков. Первый wallet создаётся отдельно после выбора сети.
+The cask lives in this repository instead of a separate `homebrew-*` one, which is
+why the tap needs a URL. Homebrew loads nothing from a tap it has not been told to
+trust, hence the second line. `brew upgrade --cask walletspace` installs newer
+versions; the release workflow updates the cask as soon as a tag is built.
 
-Runtime-only overrides:
+The binaries carry no Developer ID signature — the project has no Apple
+certificate — and Gatekeeper refuses to run a quarantined file, so the cask
+removes the quarantine flag Homebrew attaches to every download. Trusting the tap
+is the point where that is agreed to; build from source instead if you would
+rather not.
 
-| Переменная                  | Назначение                                  |
-| --------------------------- | ------------------------------------------- |
-| `WALLETSPACE_HOME`          | изменить каталог данных                     |
-| `WALLETSPACE_ADDR`          | изменить loopback listen address            |
-| `WALLETSPACE_OPEN_BROWSER`  | включить или отключить открытие браузера    |
+`brew uninstall --cask walletspace` leaves `~/.walletspace` alone: it holds the
+encrypted vaults, and the cask deliberately has no `zap` stanza so that Homebrew
+cannot throw them away. Remove that directory by hand, and only once every
+recovery phrase is written down.
 
-Persistent-конфигурация редактируется на странице `/settings`. Значения,
-сохранённые как `${ENV_NAME}`, раскрываются только при использовании и
-позволяют не записывать provider secret непосредственно в YAML.
+### Prebuilt binary
 
-## Данные
+Archives for macOS and Linux (amd64 and arm64) are attached to every
+[release](https://github.com/sxwebdev/walletspace/releases). On Linux this is the
+only prebuilt option, since Homebrew casks are macOS-only. Windows is not
+supported: the data directory lock is implemented for unix alone.
 
-Все новые данные располагаются в `~/.walletspace`:
+### go install
 
-```text
-~/.walletspace/
-├── config.yaml
-├── networks.yaml
-├── assets.json
-├── cache/
-└── spaces/
-    └── spc_.../
-        ├── space.json
-        └── operations.json
+```sh
+go install github.com/sxwebdev/walletspace/cmd/walletspace@latest
 ```
 
-`space.json` атомарно объединяет публичные account metadata и зашифрованный
-vault. Vault использует Argon2id и AES-256-GCM; mnemonic, BIP39 passphrase и
-импортированные ключи в открытом виде на диск не записываются. Файлы создаются
-с правами `0600`, каталоги — `0700`.
+### From source
 
-Обычный запуск не ищет и не читает старый `./data`. Legacy-данные переносятся
-только явной командой:
-
-```bash
-go run ./cmd/walletspace migrate --from ./data
-
-# только проверить mnemonic и все адреса, не создавая ~/.walletspace
-go run ./cmd/walletspace migrate --from ./data --dry-run
+```sh
+make build     # ./bin/walletspace, version stamped from git describe
+make install   # the same into $GOBIN
 ```
 
-Команда сначала проверяет соответствие каждого старого Tron-адреса mnemonic и
-только затем атомарно создаёт новый space. Исходные файлы не изменяются и не
-удаляются.
+Start the UI with `walletspace`. It opens on <http://127.0.0.1:8080> by default
+and offers to create a space on the first run. `walletspace help` lists the
+commands, the `migrate` flags and the environment overrides.
 
-## RPC и сети
+## License
 
-Для каждой операции `network_id` передаётся явно — глобальной mutable network
-в backend нет. Если Node Discovery настроен и включён через `/settings`, его
-кандидаты объединяются с официальными fallback. Перед использованием:
-
-- URL фильтруется от небезопасных схем и SSRF;
-- EVM RPC проверяется через `eth_chainId` и `eth_blockNumber`;
-- Tron endpoint проверяется через `net_version` и актуальный блок;
-- успешный endpoint сохраняется в короткоживущий last-known-good cache.
-
-Custom RPC и provider headers задаются через `/settings`. API возвращает только
-признак наличия headers, но не их значения.
-
-## USD-оценка
-
-Portfolio summary учитывает ненулевые балансы во всех включённых mainnet-сетях;
-testnet-активы в USD total не входят. Текущие и исторические котировки получает
-backend от `coins.llama.fi` и кэширует на пять минут. Во внешний запрос попадают
-только публичные идентификаторы assets с ненулевым балансом — адреса кошельков,
-размеры балансов и идентификаторы spaces не передаются. Assets без котировки не
-добавляются в total и отдельно считаются как `без цены`.
-
-`Изменение цен за 24ч` пересчитывает текущие количества assets по котировкам
-сейчас и 24 часа назад. Это market movement, а не исторический P&L: переводы и
-изменение количества активов показатель не реконструирует.
-
-## Безопасность
-
-- API намеренно доступен только на loopback; non-loopback bind отклоняется.
-- Изменяющие browser-запросы защищены проверками Origin/Sec-Fetch-Site и
-  обязательным JSON Content-Type.
-- Space автоматически блокируется после настраиваемого периода неактивности.
-- Secret responses получают `Cache-Control: no-store`.
-- Перед экспортом ключа, подписью или импортом space должен быть разблокирован.
-- Recovery phrase и private key дают полный контроль над средствами — не
-  сохраняйте их в мессенджеры, облачные заметки или скриншоты.
-
-## Разработка
-
-```bash
-go test ./... -count=1 -race
-go vet ./...
-```
-
-Frontend — native ES modules без обязательного build step; страницы, API,
-state, features и components разнесены по отдельным модулям в
-`internal/httpapi/ui`.
+MIT — see [LICENSE](LICENSE).

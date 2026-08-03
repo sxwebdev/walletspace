@@ -1,0 +1,79 @@
+version: 2
+
+project_name: walletspace
+
+builds:
+  - main: ./cmd/walletspace
+    binary: walletspace
+    # The UI is embedded and nothing links against C, so a static build works on
+    # every target and needs no cross toolchain.
+    env:
+      - CGO_ENABLED=0
+    # No windows: internal/storage/lock_unix.go is //go:build unix and nothing
+    # implements AcquireLock for windows, so the target does not compile. Add it
+    # back here once a windows lock exists.
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  # The version is part of the name: two releases otherwise produce archives that
+  # are byte-different under one filename, and a download directory or a mirror
+  # then holds artifacts nothing can tell apart.
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# A cask rather than a formula: GoReleaser deprecated `brews` in v2.16 and
+# Homebrew treats pre-built binaries as cask material. The cask is committed to
+# Casks/ in this repository, which is therefore its own tap — see README.
+# Consequence of casks being macOS-only: `brew install` covers darwin, while
+# Linux and Windows users take an archive from the release page.
+homebrew_casks:
+  - name: walletspace
+    repository:
+      owner: sxwebdev
+      name: walletspace
+    directory: Casks
+    # The cask lands on the default branch, and CI has nothing to say about a
+    # generated file whose release was already tested.
+    commit_msg_template: "chore(cask): release {{ .Tag }} [skip ci]"
+    homepage: "https://github.com/sxwebdev/walletspace"
+    description: "Local multichain wallet manager with encrypted vaults and a loopback UI"
+
+    # The release binaries carry no Developer ID signature, and Homebrew attaches
+    # the quarantine flag to every download, which Gatekeeper then refuses to
+    # execute. Trusting this tap is where that is agreed to. `xattr -dr` exits 0
+    # when the attribute is absent, so this is a no-op for a signed build.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/walletspace"]
+          end
+
+    # No zap stanza on purpose. ~/.walletspace holds the encrypted vaults, and a
+    # recovery phrase that only exists there is the sole way back to the funds —
+    # `brew uninstall --zap` must not be able to throw that away. Removing the
+    # directory stays a deliberate, manual act.
+    caveats: |
+      Wallet data stays in ~/.walletspace and is left in place when the cask is
+      removed. Back up every recovery phrase before deleting that directory:
+      nothing else can restore the wallets.
+
+      Start the UI with `walletspace`; it listens on loopback only.

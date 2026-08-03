@@ -9,14 +9,14 @@ import { escapeHTML, modal, setBusy, toast } from "../../components/ui.js";
 export function showDerive(spaceID, networks, nextIndex, onCreated) {
   const initialNetwork = networks[0];
   modal({
-    title: "Новый wallet",
-    subtitle: "Сеть выбирается для этого wallet. Derivation index считается с нуля независимо в каждой сети.",
+    title: "New wallet",
+    subtitle: "The network is chosen for this wallet. The derivation index starts at zero separately in every network.",
     content: `<form class="form-stack" data-form>
-      <label class="field"><span>Сеть</span><select name="network_id" required>${networkOptions(networks)}</select></label>
+      <label class="field"><span>Network</span><select name="network_id" required>${networkOptions(networks)}</select></label>
       <label class="field"><span>Label</span><input name="label" placeholder="Account ${nextIndex(initialNetwork.id)}"></label>
-      <small class="hint" data-index-hint>Следующий derivation index: ${nextIndex(initialNetwork.id)}</small>
+      <small class="hint" data-index-hint>Next derivation index: ${nextIndex(initialNetwork.id)}</small>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Создать account</button>
+      <button class="button primary" type="submit">Create account</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -24,7 +24,7 @@ export function showDerive(spaceID, networks, nextIndex, onCreated) {
       networkSelect.addEventListener("change", () => {
         const index = nextIndex(networkSelect.value);
         form.querySelector('[name="label"]').placeholder = `Account ${index}`;
-        form.querySelector("[data-index-hint]").textContent = `Следующий derivation index: ${index}`;
+        form.querySelector("[data-index-hint]").textContent = `Next derivation index: ${index}`;
       });
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -47,15 +47,15 @@ export function showDerive(spaceID, networks, nextIndex, onCreated) {
 
 export function showImport(spaceID, networks, onCreated) {
   modal({
-    title: "Импорт private key",
-    subtitle: "Выберите сеть, в которой этот wallet должен быть доступен.",
+    title: "Import a private key",
+    subtitle: "Choose the network this wallet has to be available in.",
     content: `<form class="form-stack" data-form autocomplete="off">
-      <div class="notice">Этот account не восстанавливается из мнемоники space. Сделайте backup space или сохраните ключ отдельно.</div>
-      <label class="field"><span>Сеть</span><select name="network_id" required>${networkOptions(networks)}</select></label>
+      <div class="notice">This account cannot be recovered from the mnemonic of the space. Back the space up, or keep the key somewhere else.</div>
+      <label class="field"><span>Network</span><select name="network_id" required>${networkOptions(networks)}</select></label>
       <label class="field"><span>Private key</span><input type="password" name="private_key" required autocomplete="new-password" spellcheck="false"></label>
       <label class="field"><span>Label</span><input name="label" placeholder="Imported account"></label>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Импортировать</button>
+      <button class="button primary" type="submit">Import</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -89,11 +89,11 @@ function networkOptions(networks) {
 
 export function showRename(spaceID, account, onRenamed) {
   modal({
-    title: "Переименовать account",
+    title: "Rename account",
     content: `<form class="form-stack" data-form>
       <label class="field"><span>Label</span><input name="label" value="${escapeHTML(account.label || "")}"></label>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Сохранить</button>
+      <button class="button primary" type="submit">Save</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -116,23 +116,23 @@ export function showExport(spaceID, account, defaultFamily) {
     ? [account.family]
     : ["tron", "evm"];
   modal({
-    title: "Экспорт private key",
+    title: "Export a private key",
     subtitle: account.kind === "imported"
-      ? "Для импортированного account ключ общий в Tron и EVM."
-      : `Derived wallet использует BIP44 family ${account.family?.toUpperCase() || "legacy"}.`,
+      ? "For an imported account the key is shared between Tron and EVM."
+      : `A derived wallet uses BIP44 family ${account.family?.toUpperCase() || "legacy"}.`,
     content: `<form class="form-stack" data-form>
-      <div class="notice danger">Private key даёт полный контроль над средствами. Не показывайте его никому.</div>
+      <div class="notice danger">A private key is full control over the funds. Do not show it to anyone.</div>
       <label class="field"><span>Address family</span><select name="family">
         ${families.map((family) => `<option value="${family}" ${defaultFamily === family ? "selected" : ""}>${family === "tron" ? "Tron" : "EVM"}</option>`).join("")}
       </select></label>
       <div class="error-text" data-error></div>
-      <button class="button danger" type="submit">Показать ключ</button>
+      <button class="button danger" type="submit">Reveal the key</button>
     </form>`,
     onMount(element) {
       const form = element.querySelector("[data-form]");
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        setBusy(form, true, "Получаем…");
+        setBusy(form, true, "Fetching…");
         try {
           const key = await exportPrivateKey(
             spaceID, account.id, new FormData(form).get("family"),
@@ -151,11 +151,11 @@ export function showExport(spaceID, account, defaultFamily) {
 function secretBlock(value) {
   const wrapper = document.createElement("div");
   wrapper.className = "form-stack";
-  wrapper.innerHTML = `<div class="secret" data-secret></div><button class="button secondary" type="button" data-copy-secret>Копировать</button>`;
+  wrapper.innerHTML = `<div class="secret" data-secret></div><button class="button secondary" type="button" data-copy-secret>Copy</button>`;
   wrapper.querySelector("[data-secret]").textContent = value;
   wrapper.querySelector("[data-copy-secret]").addEventListener("click", async () => {
     await navigator.clipboard.writeText(value);
-    toast("Private key скопирован");
+    toast("Private key copied");
   });
   return wrapper;
 }

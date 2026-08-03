@@ -1,364 +1,381 @@
 # Security audit Walletspace
 
-Дата аудита: 2026-07-31
-Ревизия: `22267c1`
-Объект: весь сервис Walletspace — Go backend, embedded web UI, vault/storage,
-EVM/Tron signing, RPC discovery и Node Doctor.
+Audit date: 2026-07-31
+Revision: `22267c1`
+Scope: the whole Walletspace service — Go backend, embedded web UI,
+vault/storage, EVM/Tron signing, RPC discovery and Node Doctor.
 
-## Итог
+## Outcome
 
-В текущем виде сервис нельзя считать безопасным для хранения или перемещения
-реальных средств. Найдены две критические уязвимости, каждая из которых может
-привести к компрометации seed/private keys или подписанию операции, отличной от
-той, которую запросил пользователь:
+As it stands, the service cannot be considered safe for holding or moving real
+funds. Two critical vulnerabilities were found, each of which can lead to a
+compromise of the seed or private keys, or to signing an operation other than
+the one the user asked for:
 
-1. локальный HTTP API не имеет аутентификации и обходится через DNS rebinding;
-2. Tron-транзакция строится недоверенной RPC-нодой и подписывается без проверки
-   ее фактического содержимого.
+1. the local HTTP API has no authentication and is reachable through DNS
+   rebinding;
+2. a Tron transaction is built by an untrusted RPC node and signed without any
+   check of its actual contents.
 
-Дополнительно подтверждены stored XSS через on-chain metadata, не связанное с
-подписью подтверждение EVM fee, утечка provider credentials на fallback-ноды и
-риск повторной Tron-операции после неопределенного результата broadcast.
+In addition, the audit confirmed stored XSS through on-chain metadata, an EVM
+fee confirmation that is not bound to the signature, a leak of provider
+credentials to fallback nodes, and the risk of a repeated Tron operation after
+an indeterminate broadcast.
 
-| Severity | Количество | Допуск к релизу с реальными средствами |
-| -------- | ---------: | -------------------------------------- |
-| Critical |          2 | Блокирует                              |
-| High     |          4 | Блокирует                              |
-| Medium   |          5 | Исправить до публичного релиза         |
+| Severity |     Count | Admissible for a release with real funds |
+| -------- | --------: | ---------------------------------------- |
+| Critical |         2 | Blocks                                   |
+| High     |         4 | Blocks                                   |
+| Medium   |         5 | Fix before a public release              |
 
-## Модель угроз
+## Threat model
 
-В аудит включены следующие реалистичные противники:
+The audit includes the following realistic adversaries:
 
-- произвольный сайт, открытый пользователем в обычном браузере;
-- непривилегированный локальный процесс или sandboxed-приложение, которому
-  доступен loopback, но недоступны файлы Walletspace;
-- скомпрометированная, ошибочная или злонамеренная RPC/discovery-нода;
-- злонамеренный ERC20/TRC20 контракт с контролируемыми metadata;
-- атакующий, получивший копию encrypted backup или каталога данных;
-- сетевой сбой в момент broadcast.
+- an arbitrary website the user opens in an ordinary browser;
+- an unprivileged local process or sandboxed application that can reach
+  loopback but cannot reach Walletspace's files;
+- a compromised, faulty or malicious RPC/discovery node;
+- a malicious ERC20/TRC20 contract with attacker-controlled metadata;
+- an attacker who obtained a copy of an encrypted backup or of the data
+  directory;
+- a network failure at the moment of a broadcast.
 
-Полная компрометация учетной записи ОС и чтение памяти процесса не считаются
-устранимыми средствами самого Walletspace. Legacy migration не оценивалась как
-целевая функция: по условию проект стартует с чистого формата данных.
+A full compromise of the OS account and reading the process memory are not
+considered fixable by Walletspace itself. Legacy migration was not assessed as
+a target function: by assumption the project starts from a clean data format.
 
-## Найденные уязвимости
+## Findings
 
-### SEC-01 — Critical — локальный API не имеет границы авторизации и уязвим к DNS rebinding
+### SEC-01 — Critical — the local API has no authorization boundary and is vulnerable to DNS rebinding
 
-**Доказательство.** Все чувствительные маршруты, включая unlock, seed/private
-key export и отправку средств, зарегистрированы без authentication middleware в
-`internal/httpapi/platform.go:80-126`. Единственная защита находится в
+**Evidence.** Every sensitive route, including unlock, seed/private key export
+and sending funds, is registered without authentication middleware in
+`internal/httpapi/platform.go:80-126`. The only protection lives in
 `internal/httpapi/server.go:166-201`:
 
-- пустой `Sec-Fetch-Site` разрешен (`:168-173`);
-- `Origin` сравнивается только с полученным от клиента `Host` (`:175-181`);
-- сам `Host` не сверяется с фактическим loopback listen address;
-- capability/session token отсутствует.
+- an empty `Sec-Fetch-Site` is allowed (`:168-173`);
+- `Origin` is only compared against the client-supplied `Host` (`:175-181`);
+- `Host` itself is never checked against the actual loopback listen address;
+- there is no capability/session token.
 
-Bind на loopback проверяется в `internal/config/home.go:274-285`, но loopback
-ограничивает сетевой маршрут, а не полномочия вызывающего кода.
+The loopback bind is enforced in `internal/config/home.go:274-285`, but loopback
+constrains the network route, not the authority of the calling code.
 
-**Эксплуатация.** Атакующий отдает страницу с контролируемого домена и порта
-`8080`, затем меняет DNS-ответ домена на `127.0.0.1`. Последующий browser fetch
-остается same-origin: `Origin` и `Host` равны домену атакующего, а
-`Sec-Fetch-Site` имеет значение `same-origin`. Guard пропускает запрос к
-Walletspace. Возможные действия:
+**Exploitation.** The attacker serves a page from a domain they control on port
+`8080`, then changes the domain's DNS answer to `127.0.0.1`. The subsequent
+browser fetch stays same-origin: `Origin` and `Host` both equal the attacker's
+domain, and `Sec-Fetch-Site` is `same-origin`. The guard lets the request
+through to Walletspace. Possible actions:
 
-- получить mnemonic (`platform.go:235-243`) и private key (`:364-380`) из уже
-  разблокированного space;
-- подписать перевод, staking/delegation или deploy;
-- скачать encrypted backup и атаковать пароль offline;
-- менять RPC/discovery settings;
-- создавать spaces и нагружать CPU/диск.
+- read the mnemonic (`platform.go:235-243`) and a private key (`:364-380`) out of
+  an already unlocked space;
+- sign a transfer, a staking/delegation operation or a deploy;
+- download an encrypted backup and attack the password offline;
+- change RPC/discovery settings;
+- create spaces and load the CPU and the disk.
 
-Обычный локальный процесс может вызывать API еще проще: отсутствие browser
-headers намеренно разрешено и закреплено тестом
+An ordinary local process can call the API even more easily: the absence of
+browser headers is deliberately allowed and pinned by a test,
 `internal/httpapi/guard_test.go:48-56`.
 
-**Что исправить.** На чистом формате рекомендуется не считать loopback
+**What to fix.** On a clean format, loopback should not be treated as an
 authentication boundary:
 
-1. Генерировать при каждом запуске случайный capability token не менее 256 бит.
-   Передавать его UI через URL fragment, хранить только в памяти вкладки и
-   требовать, например, в `X-Walletspace-Token` на **всех** `/api/*`, включая
-   GET и streaming endpoints.
-2. Слушать случайный loopback port; проверять `Host` по точному allowlist
-   фактически открытых IP/port. Не доверять произвольному Host header.
-3. Сравнивать полный origin: scheme, hostname и port. Fetch Metadata и JSON
-   Content-Type оставить как дополнительную CSRF-защиту, а не как
-   аутентификацию.
-4. Более сильный и удобный вариант — native shell/webview с IPC или Unix socket,
-   а HTTP оставить только адаптером с capability authentication.
+1. Generate a random capability token of at least 256 bits on every start. Hand
+   it to the UI through the URL fragment, keep it in the tab's memory only, and
+   require it — for example in `X-Walletspace-Token` — on **all** `/api/*`
+   routes, including GET and streaming endpoints.
+2. Listen on a random loopback port; check `Host` against an exact allowlist of
+   the IP/port actually opened. Do not trust an arbitrary Host header.
+3. Compare the full origin: scheme, hostname and port. Keep Fetch Metadata and
+   the JSON content type as additional CSRF protection, not as authentication.
+4. A stronger and more convenient option is a native shell/webview with IPC or a
+   Unix socket, leaving HTTP as nothing but an adapter with capability
+   authentication.
 
-**Критерий приемки.** Запросы с отсутствующим/неверным token и с
-`Host: attacker.example:8080` отклоняются до routing независимо от
-`Origin`/`Sec-Fetch-Site`. Это покрыто интеграционным DNS-rebinding тестом.
+**Acceptance criterion.** Requests with a missing or wrong token, and requests
+carrying `Host: attacker.example:8080`, are rejected before routing regardless
+of `Origin`/`Sec-Fetch-Site`. This is covered by an integration DNS-rebinding
+test.
 
-### SEC-02 — Critical — Walletspace подписывает Tron-транзакцию, которую целиком вернула недоверенная нода
+### SEC-02 — Critical — Walletspace signs a Tron transaction returned in full by an untrusted node
 
-**Доказательство.** Запрос пользователя валидируется локально, но итоговый
-protobuf transaction создается RPC-нодой:
+**Evidence.** The user's request is validated locally, but the resulting
+protobuf transaction is created by the RPC node:
 
-- TRX/TRC20 transfer: `internal/tron/service.go:824-874` и `:159-185`;
-- staking/delegation: `internal/tron/staking.go:611-735`, затем `:764-785`;
+- TRX/TRC20 transfer: `internal/tron/service.go:824-874` and `:159-185`;
+- staking/delegation: `internal/tron/staking.go:611-735`, then `:764-785`;
 - deploy: `internal/tron/contract.go:189-219`.
 
-После этого `submitWithSigner` сериализует `tx.Transaction.RawData`, вычисляет
-digest и подписывает его без сравнения с исходным intent
-(`internal/tron/service.go:803-821`). Проверка endpoint подтверждает только
-заявленный `net_version` (`internal/chain/tron/adapter.go:117-166`), который
-злонамеренный сервер может вернуть без участия в настоящей сети.
+After that, `submitWithSigner` serialises `tx.Transaction.RawData`, computes the
+digest and signs it without comparing anything to the original intent
+(`internal/tron/service.go:803-821`). The endpoint check only confirms the
+declared `net_version` (`internal/chain/tron/adapter.go:117-166`), which a
+malicious server can return without taking part in the real network.
 
-**Эксплуатация.** Выбранная через custom RPC или discovery нода получает запрос
-«перевести 1 TRX адресу A», но возвращает unsigned transaction «перевести весь
-доступный TRX адресу атакующего». Локальный signer видит только 32-byte digest и
-подписывает подмененный raw data. Аналогично можно заменить TRC20 contract/data,
-receiver delegation, amount, fee limit или содержимое deploy.
+**Exploitation.** A node chosen through a custom RPC or through discovery
+receives the request "transfer 1 TRX to address A" but returns an unsigned
+transaction "transfer the entire available TRX to the attacker's address". The
+local signer sees only a 32-byte digest and signs the substituted raw data. The
+TRC20 contract/data, the delegation receiver, the amount, the fee limit or the
+contents of a deploy can be replaced in the same way.
 
-**Что исправить.** Приватный ключ должен подписывать только локально
-сформированный и проверенный intent:
+**What to fix.** The private key must only ever sign an intent that was built
+and verified locally:
 
-- предпочтительно собирать Tron contract/raw data локально; от RPC получать
-  только head/reference block data;
-- если node-assisted build временно остается, непосредственно перед подписью
-  декодировать transaction и строго проверить: ровно один contract, его type,
-  owner, recipient, amount, token contract/calldata, resource, fee limit,
-  permission id, expiration/reference block и отсутствие дополнительных
-  действий;
-- signer API должен принимать typed intent или уже проверенный canonical
-  transaction, а не произвольный digest от RPC;
-- вычислять txid локально из того же canonical `raw_data`.
+- preferably build the Tron contract/raw data locally, taking only
+  head/reference block data from RPC;
+- if a node-assisted build stays for now, decode the transaction immediately
+  before signing and check strictly: exactly one contract, its type, the owner,
+  the recipient, the amount, the token contract/calldata, the resource, the fee
+  limit, the permission id, the expiration/reference block, and the absence of
+  any extra action;
+- the signer API must accept a typed intent or an already verified canonical
+  transaction, not an arbitrary digest coming from RPC;
+- compute the txid locally from the same canonical `raw_data`.
 
-Проверка нужна отдельно для каждого вида Tron-операции. Проверка только owner
-address или chain identity проблему не решает.
+The check is needed separately for every kind of Tron operation. Checking only
+the owner address or the chain identity does not solve the problem.
 
-**Критерий приемки.** Fake RPC подменяет по одному полю и добавляет второй
-contract; во всех случаях запрос отклоняется и `SignDigest` не вызывается.
+**Acceptance criterion.** A fake RPC substitutes one field at a time and adds a
+second contract; in every case the request is rejected and `SignDigest` is never
+called.
 
-### SEC-03 — High — stored DOM XSS через on-chain symbol токена
+### SEC-03 — High — stored DOM XSS through an on-chain token symbol
 
-**Доказательство.** ERC20 symbol читается как произвольная строка из контракта
-(`internal/chain/evm/adapter.go:254-297`), затем сохраняется без ограничения
-формата (`internal/httpapi/platform.go:717-757`,
-`internal/asset/store.go:91-110`). В dashboard это значение трижды вставляется
-без `escapeHTML`:
+**Evidence.** The ERC20 symbol is read as an arbitrary string from the contract
+(`internal/chain/evm/adapter.go:254-297`), then stored with no format constraint
+(`internal/httpapi/platform.go:717-757`, `internal/asset/store.go:91-110`). In
+the dashboard that value is interpolated three times without `escapeHTML`:
 
 `internal/httpapi/ui/views/dashboard.js:251-255`
 
-Полученная строка разбирается как HTML через `createContextualFragment` в
-`dashboard.js:290-295`. CSP отсутствует (`internal/httpapi/ui/index.html:1-23`),
-общий middleware также не выставляет ее.
+The resulting string is parsed as HTML through `createContextualFragment` in
+`dashboard.js:290-295`. There is no CSP
+(`internal/httpapi/ui/index.html:1-23`), and the shared middleware does not set
+one either.
 
-**Эксплуатация.** Контракт возвращает symbol вида
-`</span><img src=x onerror="...">`. Пользователь добавляет адрес такого токена,
-после чего payload выполняется в origin Walletspace. Скрипт может вызывать API,
-экспортировать seed/keys и подписывать операции, особенно пока space unlocked.
-Эта атака не требует взлома RPC — metadata контролирует сам token contract.
+**Exploitation.** The contract returns a symbol along the lines of
+`</span><img src=x onerror="...">`. The user adds the address of such a token,
+after which the payload executes in Walletspace's origin. The script can call
+the API, export the seed and keys and sign operations, especially while a space
+is unlocked. This attack requires no compromised RPC — the metadata is
+controlled by the token contract itself.
 
-**Что исправить.** Не строить DOM из строк для недоверенных данных: создавать
-узлы и задавать `textContent`. Дополнительно валидировать/ограничить server-side
-symbol и name (разумная длина, printable Unicode), но validation не заменяет
-context-aware escaping. Добавить строгую CSP как второй барьер:
+**What to fix.** Do not build DOM out of strings for untrusted data: create
+nodes and set `textContent`. Additionally validate and bound the symbol and the
+name server-side (a sane length, printable Unicode), but validation does not
+replace context-aware escaping. Add a strict CSP as a second barrier:
 
 `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`
 
-Также нужны `X-Content-Type-Options: nosniff` и `Referrer-Policy: no-referrer`.
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` are needed
+as well.
 
-**Критерий приемки.** Symbol с HTML/SVG/event handler отображается буквальным
-текстом; CSP запрещает inline handler; browser-тест подтверждает отсутствие
-сетевого запроса payload.
+**Acceptance criterion.** A symbol containing HTML/SVG/an event handler is
+displayed as literal text; the CSP forbids an inline handler; a browser test
+confirms that the payload issues no network request.
 
-### SEC-04 — High — подтвержденная EVM fee не связана с подписываемой транзакцией
+### SEC-04 — High — the confirmed EVM fee is not bound to the transaction being signed
 
-**Доказательство.** Estimate получает gas/fees в
-`internal/chain/evm/adapter.go:300-327`. После подтверждения UI вызывает другой
-endpoint, а `Send` повторно запрашивает `EstimateGas`, nonce и fee suggestions
-(`adapter.go:330-399`). Никакой approved fee/gas или hash подготовленной
-транзакции в request/idempotency record нет. `suggestFees` принимает значения
-RPC без верхней границы (`adapter.go:559-571`). UI показывает результат первого
-estimate (`internal/httpapi/ui/views/dashboard.js:675-694`).
+**Evidence.** The estimate obtains gas/fees in
+`internal/chain/evm/adapter.go:300-327`. After the confirmation the UI calls a
+different endpoint, and `Send` requests `EstimateGas`, the nonce and the fee
+suggestions again (`adapter.go:330-399`). Neither an approved fee/gas nor a hash
+of the prepared transaction appears in the request or in the idempotency record.
+`suggestFees` accepts the RPC values with no upper bound
+(`adapter.go:559-571`). The UI shows the result of the first estimate
+(`internal/httpapi/ui/views/dashboard.js:675-694`).
 
-**Эксплуатация.** Ошибочная или злонамеренная RPC сначала возвращает нормальную
-комиссию, а на `Send` — огромный priority fee/gas price. Пользователь видит и
-подтверждает одно значение, но подписывает другое. Высокий tip может привести к
-существенной или полной потере native balance.
+**Exploitation.** A faulty or malicious RPC first returns a normal fee, then on
+`Send` returns an enormous priority fee/gas price. The user sees and confirms
+one value but signs another. A high tip can cost a substantial part of the
+native balance, or all of it.
 
-**Что исправить.** Ввести поток `prepare -> approve -> sign exact bytes`:
+**What to fix.** Introduce a `prepare -> approve -> sign exact bytes` flow:
 
-1. Backend строит canonical unsigned transaction и возвращает все поля плюс
-   одноразовый `intent_id`/hash.
-2. UI показывает полный intent.
-3. Sign endpoint подписывает именно сохраненный immutable transaction либо
-   принимает жесткие user-approved maxima (`max_total_fee`, gas limit, fee cap,
-   tip cap, nonce).
-4. Любое изменение требует нового подтверждения. Добавить absolute/relative fee
-   policy и отказ при аномальном ответе RPC.
+1. The backend builds a canonical unsigned transaction and returns every field
+   plus a single-use `intent_id`/hash.
+2. The UI shows the full intent.
+3. The sign endpoint signs exactly the stored immutable transaction, or accepts
+   hard user-approved maxima (`max_total_fee`, gas limit, fee cap, tip cap,
+   nonce).
+4. Any change requires a new confirmation. Add an absolute/relative fee policy
+   and refuse an anomalous RPC answer.
 
-**Критерий приемки.** Между prepare и sign RPC меняет fee в 100 раз; backend не
-подписывает новую транзакцию и требует повторного подтверждения.
+**Acceptance criterion.** Between prepare and sign, RPC changes the fee by a
+factor of 100; the backend does not sign the new transaction and requires
+another confirmation.
 
-### SEC-05 — High — provider credentials отправляются посторонним fallback/discovery endpoints
+### SEC-05 — High — provider credentials are sent to unrelated fallback/discovery endpoints
 
-**Доказательство.** Resolver объединяет custom RPC с официальными fallback
-(`internal/rpcpool/resolver.go:81-93`), но headers хранятся на уровне всей сети,
-а не endpoint (`resolver.go:164-177`). EVM adapter применяет одни и те же headers
-к каждому кандидату (`internal/chain/evm/adapter.go:478-490`). Node Doctor делает
-то же для EVM и Tron (`cmd/walletspace/main.go:109-124`).
+**Evidence.** The resolver merges custom RPC with the official fallbacks
+(`internal/rpcpool/resolver.go:81-93`), but the headers are stored per network
+rather than per endpoint (`resolver.go:164-177`). The EVM adapter applies the
+same headers to every candidate (`internal/chain/evm/adapter.go:478-490`). Node
+Doctor does the same for EVM and Tron (`cmd/walletspace/main.go:109-124`).
 
-Даже без custom URL можно сохранить headers и включить discovery, после чего
-секрет уйдет всем найденным и fallback-нодам. При наличии custom URL достаточно
-его временной недоступности, чтобы EVM перешел к следующему endpoint.
+Even with no custom URL, headers can be saved and discovery enabled, after
+which the secret goes to every discovered and fallback node. With a custom URL
+present, a moment of unavailability is enough for EVM to move on to the next
+endpoint.
 
-**Влияние.** `Authorization`, API key или bearer token попадает провайдеру, для
-которого он не предназначался. Это может раскрыть account access, платную квоту
-или credentials другого сервиса.
+**Impact.** An `Authorization` header, an API key or a bearer token reaches a
+provider it was never meant for. That can expose account access, a paid quota,
+or the credentials of another service.
 
-**Что исправить.** Перейти от network-wide полей к списку endpoint records:
+**What to fix.** Move from network-wide fields to a list of endpoint records:
 
 ```text
 endpoint = { url, credential_ref, allowed_header_names, trust_level }
 ```
 
-Credential разрешено прикладывать только при точном совпадении
-scheme/hostname/port с записью. Fallback и discovery всегда стартуют без
-credentials, пока пользователь явно не привязал отдельный secret к конкретному
-origin. Secrets хранить через OS keychain/secret store либо как env reference.
+A credential may only be attached on an exact scheme/hostname/port match with
+the record. Fallback and discovery always start without credentials until the
+user has explicitly bound a separate secret to a specific origin. Keep secrets
+in the OS keychain/secret store, or as an env reference.
 
-**Критерий приемки.** Mock custom endpoint падает; fallback получает запрос без
-`Authorization`/provider headers. Тот же тест нужен для Doctor.
+**Acceptance criterion.** A mock custom endpoint fails; the fallback receives
+the request without `Authorization`/provider headers. The same test is needed for
+the Doctor.
 
-### SEC-06 — High — неопределенный Tron broadcast превращается в рекомендацию создать новую транзакцию
+### SEC-06 — High — an indeterminate Tron broadcast turns into advice to build a new transaction
 
-**Доказательство.** `submitWithSigner` уже вычисляет digest локально, но при
-любой ошибке `BroadcastTransaction` возвращает пустой txid
-(`internal/tron/service.go:803-821`). HTTP layer помечает операцию failed, если
-txid пуст (`internal/httpapi/platform.go:884-900` для transfer и аналогично
-`:1079-1089` для staking/delegation). Для failed operation API прямо предлагает
-повторить с новым idempotency key (`platform.go:1244-1252`), а UI сбрасывает key
-после ошибки (`internal/httpapi/ui/views/dashboard.js:698-701`).
+**Evidence.** `submitWithSigner` already computes the digest locally, but on any
+`BroadcastTransaction` error it returns an empty txid
+(`internal/tron/service.go:803-821`). The HTTP layer marks the operation failed
+when the txid is empty (`internal/httpapi/platform.go:884-900` for a transfer
+and likewise `:1079-1089` for staking/delegation). For a failed operation the
+API openly suggests retrying with a new idempotency key
+(`platform.go:1244-1252`), and the UI resets the key after an error
+(`internal/httpapi/ui/views/dashboard.js:698-701`).
 
-**Эксплуатация.** Нода приняла первую транзакцию, но ответ потерялся из-за
-timeout/reset. Пользователь повторяет действие. Backend строит новый Tron raw
-data с другим reference block/timestamp и подписывает вторую самостоятельную
-операцию. Обе могут быть исполнены.
+**Exploitation.** The node accepted the first transaction, but the answer was
+lost to a timeout or a reset. The user repeats the action. The backend builds new
+Tron raw data with a different reference block/timestamp and signs a second,
+independent operation. Both can execute.
 
-**Что исправить.** До сетевого вызова локально вычислить txid и durable-сохранить
-signed bytes/status `broadcasting`. Transport error после отправки — это
-`broadcast_unknown`, не `failed`. Затем:
+**What to fix.** Compute the txid locally before the network call and durably
+store the signed bytes with status `broadcasting`. A transport error after
+sending is `broadcast_unknown`, not `failed`. After that:
 
-- проверять txid через независимые endpoints;
-- при необходимости повторно broadcast **тех же signed bytes**, что безопасно
-  из-за того же txid;
-- не разрешать новый build для того же business intent, пока исходный tx не
-  найден, не истек или пользователь явно не подтвердил replacement.
+- check the txid through independent endpoints;
+- re-broadcast **the same signed bytes** when necessary, which is safe because
+  the txid is the same;
+- do not allow a new build for the same business intent until the original
+  transaction has been found, has expired, or the user has explicitly confirmed
+  a replacement.
 
-**Критерий приемки.** Fake broadcaster принимает tx и обрывает ответ. Повторный
-запрос не вызывает build/sign второй раз, а возвращает исходный локальный txid и
-status `broadcast_unknown`.
+**Acceptance criterion.** A fake broadcaster accepts the transaction and cuts the
+answer off. A repeated request does not build or sign a second time; it returns
+the original local txid with status `broadcast_unknown`.
 
-### SEC-07 — Medium — env-resolved RPC secrets сохраняются в cache и попадают в ошибки
+### SEC-07 — Medium — env-resolved RPC secrets are written to the cache and leak into errors
 
-**Доказательство.** `${ENV}` в RPC URL раскрывается в runtime
-(`internal/rpcpool/resolver.go:83-91`). Успешный endpoint передается в
-`MarkHealthy` и целиком записывается в `cache/rpc-nodes.json`
-(`resolver.go:124-143`; вызовы — `internal/chain/evm/adapter.go:522-525` и
-`internal/chain/tron/adapter.go:612-618`). Если API token находится в path/query,
-его раскрытое значение материализуется на диске, хотя исходный YAML содержал
-только env reference.
+**Evidence.** `${ENV}` inside an RPC URL is expanded at runtime
+(`internal/rpcpool/resolver.go:83-91`). The successful endpoint is passed to
+`MarkHealthy` and written in full into `cache/rpc-nodes.json`
+(`resolver.go:124-143`; the calls are `internal/chain/evm/adapter.go:522-525`
+and `internal/chain/tron/adapter.go:612-618`). If an API token sits in the path
+or the query, its expanded value materialises on disk even though the original
+YAML held nothing but an env reference.
 
-При ручной проверке RPC полный раскрытый endpoint включается в ошибку
-`internal/httpapi/platform.go:685-702`, после чего ошибка возвращается UI и при
-части сценариев пишется в log (`platform.go:1477-1505`).
+During a manual RPC check the fully expanded endpoint is included in the error
+at `internal/httpapi/platform.go:685-702`; the error then goes to the UI and, in
+some scenarios, into the log (`platform.go:1477-1505`).
 
-**Что исправить.** Cache должен хранить opaque endpoint ID либо URL без
-userinfo/query/secret path. Не кешировать custom secret URLs вообще. Для ошибок
-и логов использовать единый redactor, удаляющий userinfo, query и secret path
-segments. Credentials отделить от URL.
+**What to fix.** The cache must store an opaque endpoint ID, or a URL stripped of
+userinfo, query and secret path. Do not cache custom secret URLs at all. For
+errors and logs, use a single redactor that removes userinfo, the query and
+secret path segments. Keep credentials out of the URL.
 
-### SEC-08 — Medium — unlock/create допускают online guessing и resource exhaustion
+### SEC-08 — Medium — unlock/create allow online guessing and resource exhaustion
 
-**Доказательство.** Rate limit, failed-attempt backoff и общий лимит дорогих KDF
-операций отсутствуют. Один unlock использует Argon2id с 64 MiB памяти и тремя
-проходами (`internal/vault/vault.go:54`, `:138-147`), причем глобальный mutex
-Manager удерживается во время KDF (`internal/space/manager.go:422-443`). Это
-блокирует операции всех spaces. Create также выполняет KDF дважды
-(`manager.go:250-314`) и доступен через неаутентифицированный API.
+**Evidence.** There is no rate limit, no failed-attempt backoff and no overall
+limit on expensive KDF operations. A single unlock uses Argon2id with 64 MiB of
+memory and three passes (`internal/vault/vault.go:54`, `:138-147`), and the
+Manager's global mutex is held for the duration of the KDF
+(`internal/space/manager.go:422-443`). That blocks operations across every
+space. Create runs the KDF twice (`manager.go:250-314`) and is reachable through
+the unauthenticated API.
 
-HTTP server задает только `ReadHeaderTimeout`; отсутствуют `ReadTimeout`,
-`WriteTimeout`, `IdleTimeout`, явный `MaxHeaderBytes` и connection/concurrency
-budget (`cmd/walletspace/main.go:148`).
+The HTTP server sets only `ReadHeaderTimeout`; `ReadTimeout`, `WriteTimeout`,
+`IdleTimeout`, an explicit `MaxHeaderBytes` and a connection/concurrency budget
+are all absent (`cmd/walletspace/main.go:148`).
 
-**Влияние.** Browser через SEC-01 или локальный sandboxed process может
-последовательно угадывать пароль, постоянно занимать CPU/KDF mutex, удерживать
-connections и создавать данные до заполнения диска.
+**Impact.** A browser going through SEC-01, or a local sandboxed process, can
+guess the password one attempt after another, occupy the CPU and the KDF mutex
+indefinitely, hold connections open and create data until the disk fills.
 
-**Что исправить.** После capability authentication добавить per-space
-exponential cooldown с jitter, глобальный KDF semaphore, per-space locks вместо
-одного глобального lock, quotas для spaces/assets/operations и server timeouts.
-Ошибки unlock должны оставаться неразличимыми. Состояние rate limit не должно
-позволять обойти его перезапуском без заметного user action.
+**What to fix.** Behind capability authentication, add a per-space exponential
+cooldown with jitter, a global KDF semaphore, per-space locks instead of one
+global lock, quotas for spaces/assets/operations, and server timeouts. Unlock
+errors must stay indistinguishable. The rate-limit state must not be bypassable
+by a restart without a visible user action.
 
-### SEC-09 — Medium — экран подтверждения скрывает большую часть адреса и backend не проверяет EIP-55
+### SEC-09 — Medium — the confirmation screen hides most of the address and the backend does not check EIP-55
 
-**Доказательство.** `shortAddress` оставляет 9 первых и 7 последних символов
-(`internal/httpapi/ui/components/ui.js:80-81`). Именно сокращенный recipient
-показывается перед подписью (`internal/httpapi/ui/views/dashboard.js:681-684`).
-EVM backend использует только `common.IsHexAddress`
-(`internal/chain/evm/adapter.go:424-430`), поэтому mixed-case адрес с неверной
-EIP-55 checksum не отклоняется.
+**Evidence.** `shortAddress` keeps the first 9 and the last 7 characters
+(`internal/httpapi/ui/components/ui.js:80-81`). It is precisely that shortened
+recipient which is shown before signing
+(`internal/httpapi/ui/views/dashboard.js:681-684`). The EVM backend uses only
+`common.IsHexAddress` (`internal/chain/evm/adapter.go:424-430`), so a mixed-case
+address with a wrong EIP-55 checksum is not rejected.
 
-**Влияние.** Address-poisoning/clipboard malware может подобрать похожие начало
-и конец; пользователь не имеет возможности проверить отличающуюся середину на
-финальном экране. Неверный mixed-case checksum не останавливает опечатку.
+**Impact.** Address-poisoning or clipboard malware can match a similar beginning
+and end; the user has no way to check the differing middle on the final screen.
+A wrong mixed-case checksum does not stop a typo.
 
-**Что исправить.** На confirmation показывать полный recipient, сеть, chain ID,
-asset contract, amount и максимальную комиссию; визуально группировать, но не
-скрывать символы. Для EVM принимать полностью lowercase адрес либо адрес с
-валидной EIP-55 checksum; mixed-case с неверной checksum отклонять.
+**What to fix.** On the confirmation, show the full recipient, the network, the
+chain ID, the asset contract, the amount and the maximum fee; group the
+characters visually, but do not hide any. For EVM, accept a fully lowercase
+address or one with a valid EIP-55 checksum; reject mixed case with a wrong
+checksum.
 
-### SEC-10 — Medium — discovery response позволяет создать неограниченный fan-out goroutines
+### SEC-10 — Medium — a discovery response can create an unbounded goroutine fan-out
 
-**Доказательство.** Размер discovery JSON ограничен 2 MiB, но количество URL и
-длина списка не ограничены (`internal/rpcpool/resolver.go:238-260`). Parser
-рекурсивно извлекает строки из произвольной структуры (`resolver.go:323-346`).
-Doctor создает по goroutine на каждый endpoint и только внутри goroutine ждет
-общий limiter (`internal/doctor/doctor.go:201-230`).
+**Evidence.** The size of the discovery JSON is capped at 2 MiB, but neither the
+number of URLs nor the length of the list is bounded
+(`internal/rpcpool/resolver.go:238-260`). The parser recursively pulls strings
+out of an arbitrary structure (`resolver.go:323-346`). The Doctor creates one
+goroutine per endpoint and only waits on the shared limiter inside the goroutine
+(`internal/doctor/doctor.go:201-230`).
 
-**Эксплуатация.** Скомпрометированный discovery service возвращает десятки
-тысяч коротких URL. Каждая минутная проверка выделяет большие slices и запускает
-тысячи goroutines на сеть, вызывая memory/CPU exhaustion.
+**Exploitation.** A compromised discovery service returns tens of thousands of
+short URLs. Every one-minute check allocates large slices and starts thousands
+of goroutines per network, causing memory and CPU exhaustion.
 
-**Что исправить.** Использовать строгую versioned schema; принять не более
-8–16 endpoints на сеть, ограничить длину URL и количество JSON nodes до
-сортировки/DNS lookup. Doctor должен применять фиксированный worker pool, не
-создавая goroutine до получения slot.
+**What to fix.** Use a strict versioned schema; accept no more than 8–16
+endpoints per network and bound the URL length and the number of JSON nodes
+before sorting or any DNS lookup. The Doctor must use a fixed worker pool and
+not create a goroutine before it holds a slot.
 
-### SEC-11 — Medium — export секретов не требует step-up authorization, а unlocked session может быть бессрочной
+### SEC-11 — Medium — exporting secrets needs no step-up authorization, and an unlocked session can last forever
 
-**Доказательство.** Mnemonic/private key export требуют только уже unlocked
-space и не принимают текущий пароль или одноразовое подтверждение
-(`internal/httpapi/platform.go:235-243`, `:364-380`; UI:
-`internal/httpapi/ui/features/accounts/dialogs.js:98-124`). Auto-lock можно
-установить в `0`, что полностью отключает expiration
-(`internal/space/manager.go:935-944`). Минимальная длина vault password — всего
+**Evidence.** Exporting the mnemonic or a private key requires nothing but an
+already unlocked space, and accepts neither the current password nor a one-time
+confirmation (`internal/httpapi/platform.go:235-243`, `:364-380`; UI:
+`internal/httpapi/ui/features/accounts/dialogs.js:98-124`). Auto-lock can be set
+to `0`, which disables expiration entirely
+(`internal/space/manager.go:935-944`). The minimum vault password length is only
 8 bytes (`manager.go:27-30`, `:520-527`).
 
-**Влияние.** Короткий доступ к разблокированной вкладке, same-origin XSS или
-локальный API client сразу получает долгоживущие master secrets. Копия backup с
-человеческим восьмисимвольным паролем допускает offline guessing.
+**Impact.** Brief access to an unlocked tab, a same-origin XSS or a local API
+client immediately yields long-lived master secrets. A copy of a backup with a
+human eight-character password is open to offline guessing.
 
-**Что исправить.** Для mnemonic/private-key export требовать повторный пароль
-или короткоживущий одноразовый step-up grant с явным user gesture. Для отправки
-средств — отдельное подтверждение exact intent. Не разрешать полностью отключать
-auto-lock в production profile; показывать риск и установить безопасный верхний
-предел. Вместо одной проверки длины применять оценку слабых/скомпрометированных
-паролей и рекомендовать password manager.
+**What to fix.** For a mnemonic or private-key export, require the password
+again, or a short-lived one-time step-up grant tied to an explicit user gesture.
+For sending funds, require a separate confirmation of the exact intent. Do not
+allow auto-lock to be switched off entirely in a production profile; show the
+risk and impose a safe upper bound. Instead of a single length check, score weak
+and breached passwords and recommend a password manager.
 
-## Рекомендуемая архитектура подписи
+## Recommended signing architecture
 
-С учетом старта с чистого листа стоит унифицировать EVM и Tron вокруг одного
-неизменяемого signing pipeline:
+Given that the project starts from a clean slate, EVM and Tron are worth
+unifying around a single immutable signing pipeline:
 
 ```text
 User input
@@ -374,73 +391,81 @@ User input
   -> confirmed | rejected | broadcast_unknown
 ```
 
-RPC никогда не должен выбирать получателя, amount, contract calldata или fee
-после пользовательского подтверждения. RPC может предоставить chain state
-(nonce, base fee, head/reference block), но эти значения должны пройти policy и
-стать частью immutable prepared transaction.
+RPC must never choose the recipient, the amount, the contract calldata or the
+fee after the user has confirmed. RPC may supply chain state (nonce, base fee,
+head/reference block), but those values have to pass policy and become part of
+the immutable prepared transaction.
 
-## Порядок исправления
+## Fix order
 
-### P0 — до любых реальных средств
+### P0 — before any real funds
 
-1. SEC-01: capability-authenticated local transport + строгий Host/origin.
-2. SEC-02: локальная сборка/полная semantic verification Tron transaction.
-3. SEC-03: устранить HTML sinks для on-chain data и включить CSP.
-4. SEC-04: связать UI approval с exact EVM transaction и fee maxima.
+1. SEC-01: a capability-authenticated local transport plus a strict Host/origin
+   check.
+2. SEC-02: local construction, or full semantic verification, of a Tron
+   transaction.
+3. SEC-03: remove the HTML sinks for on-chain data and enable a CSP.
+4. SEC-04: bind the UI approval to the exact EVM transaction and to fee maxima.
 
-### P1 — до публичного тестирования
+### P1 — before public testing
 
 5. SEC-05: endpoint-scoped credentials.
-6. SEC-06: durable `broadcast_unknown` и повтор exact signed transaction.
-7. SEC-08: rate limits, KDF/connections/quotas.
-8. SEC-11: step-up для seed/private-key export.
+6. SEC-06: durable `broadcast_unknown` and a retry of the exact signed
+   transaction.
+7. SEC-08: rate limits, KDF/connection/quota budgets.
+8. SEC-11: step-up for a seed or private-key export.
 
-### P2 — hardening перед release
+### P2 — hardening before release
 
-9. SEC-07: secret-safe cache/error/log model.
-10. SEC-09: полный адрес и checksum policy.
-11. SEC-10: строгая discovery schema и bounded workers.
+9. SEC-07: a secret-safe cache/error/log model.
+10. SEC-09: the full address and a checksum policy.
+11. SEC-10: a strict discovery schema and bounded workers.
 
-## Что уже сделано правильно
+## What is already right
 
-Следующие механизмы проверены и не являются findings:
+The following mechanisms were checked and are not findings:
 
-- vault использует Argon2id и AES-256-GCM с random salt/nonce и AAD;
-- параметры KDF/ciphertext ограничены перед выделением памяти
+- the vault uses Argon2id and AES-256-GCM with a random salt/nonce and AAD;
+- the KDF/ciphertext parameters are bounded before any allocation
   (`internal/vault/vault.go:114-147`);
-- файлы пишутся атомарно с `0600`, каталоги приводятся к `0700`
+- files are written atomically with `0600`, directories are forced to `0700`
   (`internal/storage/storage.go:28-84`);
-- private RPC dialer блокирует loopback/private/special IP и повторно проверяет
-  DNS при соединении; redirects отключены (`internal/rpcpool/resolver.go:180-211`);
-- EVM chain ID и Tron declared network identity проверяются перед выбором
-  endpoint;
-- write bodies ограничены, JSON decoder запрещает неизвестные поля;
-- secret responses получают `Cache-Control: no-store`;
-- provider header values не возвращаются settings API;
-- EVM transaction hash вычисляется локально до broadcast и уже имеет состояние
-  `broadcast_unknown` при ошибке отправки.
+- the private RPC dialer blocks loopback, private and special IPs and re-checks
+  DNS on connect; redirects are disabled
+  (`internal/rpcpool/resolver.go:180-211`);
+- the EVM chain ID and the declared Tron network identity are verified before an
+  endpoint is chosen;
+- write bodies are bounded and the JSON decoder rejects unknown fields;
+- secret responses get `Cache-Control: no-store`;
+- provider header values are not returned by the settings API;
+- the EVM transaction hash is computed locally before the broadcast and already
+  has a `broadcast_unknown` state on a send error.
 
-Эти меры полезны, но не компенсируют findings выше.
+These measures are useful, but they do not compensate for the findings above.
 
-## Проверки и ограничения аудита
+## Checks and limits of this audit
 
-Выполнено:
+Performed:
 
-- ручной review всех production packages и embedded UI;
-- прослеживание trust boundaries от HTTP request до signer/broadcast;
-- `go test ./... -count=1` — успешно вне sandbox (тестам нужен loopback bind);
-- `go vet ./...` — успешно;
-- `govulncheck -show verbose ./...` на 2026-07-31 — достижимых уязвимых
-  символов не найдено.
+- a manual review of every production package and of the embedded UI;
+- tracing the trust boundaries from the HTTP request to the signer and the
+  broadcast;
+- `go test ./... -count=1` — passes outside the sandbox (the tests need a
+  loopback bind);
+- `go vet ./...` — passes;
+- `govulncheck -show verbose ./...` on 2026-07-31 — no reachable vulnerable
+  symbols found.
 
-`govulncheck` дополнительно сообщил о двух недостижимых advisories:
+`govulncheck` additionally reported two unreachable advisories:
 
-- [GO-2026-5158](https://pkg.go.dev/vuln/GO-2026-5158) для импортируемого
-  `go.opentelemetry.io/otel@v1.43.0`, исправлено в `v1.44.0`, уязвимый symbol из
-  Walletspace не вызывается;
-- [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) для неиспользуемого здесь
-  `golang.org/x/crypto/openpgp`; уязвимый package/symbol не вызывается.
+- [GO-2026-5158](https://pkg.go.dev/vuln/GO-2026-5158) for the imported
+  `go.opentelemetry.io/otel@v1.43.0`, fixed in `v1.44.0`; the vulnerable symbol
+  is never called from Walletspace;
+- [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) for
+  `golang.org/x/crypto/openpgp`, which is unused here; the vulnerable
+  package/symbol is never called.
 
-Не выполнялись live-операции с реальными сетями и fuzzing внешних RPC responses.
-После P0/P1 нужен повторный security review и adversarial integration suite с
-fake browser origin, fake discovery и fake Tron/EVM RPC.
+No live operations against real networks and no fuzzing of external RPC
+responses were carried out. After P0/P1, another security review is needed,
+together with an adversarial integration suite using a fake browser origin, a
+fake discovery service and fake Tron/EVM RPC.

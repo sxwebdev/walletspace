@@ -141,7 +141,7 @@ func TestResources(t *testing.T) {
 		t.Fatalf("got %d delegations, want 2", len(got.Delegations))
 	}
 
-	// The UI offers "Вернуть" only when there is no lock, so an unlocked
+	// The UI offers "Reclaim" only when there is no lock, so an unlocked
 	// delegation must not carry a date at all.
 	if got.Delegations[0].LockedUntil != nil {
 		t.Errorf("unlocked delegation reported locked_until = %v", got.Delegations[0].LockedUntil)

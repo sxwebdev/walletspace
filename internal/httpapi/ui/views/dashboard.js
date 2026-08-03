@@ -61,9 +61,9 @@ export async function render(root, signal) {
     });
     if (!availableNetworks.length) {
       root.innerHTML = `<div class="boot">
-        <strong>Нет включённых сетей</strong>
-        <span>Включите хотя бы одну сеть на странице настроек.</span>
-        <button class="button primary" type="button" data-open-settings>Открыть настройки</button>
+        <strong>No enabled networks</strong>
+        <span>Enable at least one network on the settings page.</span>
+        <button class="button primary" type="button" data-open-settings>Open the settings</button>
       </div>`;
       root.querySelector("[data-open-settings]").addEventListener("click", () => navigate("/settings"));
       return cleanup;
@@ -83,7 +83,7 @@ export async function render(root, signal) {
     doctorTimer = window.setInterval(refreshNetworkHealth, 15000);
   } catch (cause) {
     if (cause.name !== "AbortError") {
-      root.innerHTML = `<div class="boot"><strong>Walletspace не загрузился</strong><span>${escapeHTML(cause.message)}</span></div>`;
+      root.innerHTML = `<div class="boot"><strong>Walletspace did not load</strong><span>${escapeHTML(cause.message)}</span></div>`;
     }
   }
   return cleanup;
@@ -112,48 +112,48 @@ function renderShell(root) {
         <div class="toolbar">
           <label class="sr-only" for="space-select">Space</label>
           <select class="control" id="space-select">${spaceOptions()}</select>
-          <button class="button icon" type="button" data-new-space title="Новый space">＋</button>
-          <button class="button icon" type="button" data-lock title="${space.locked ? "Разблокировать" : "Заблокировать"}">${space.locked ? "🔒" : "🔓"}</button>
+          <button class="button icon" type="button" data-new-space title="New space">＋</button>
+          <button class="button icon" type="button" data-lock title="${space.locked ? "Unlock" : "Lock"}">${space.locked ? "🔒" : "🔓"}</button>
           <div class="menu" data-space-menu>
-            <button class="button icon" type="button" data-menu-toggle aria-label="Действия space" aria-haspopup="menu" aria-expanded="false">•••</button>
+            <button class="button icon" type="button" data-menu-toggle aria-label="Space actions" aria-haspopup="menu" aria-expanded="false">•••</button>
             <div class="menu-popover">
-              <button type="button" data-space-action="rename">Переименовать space</button>
-              <button type="button" data-space-action="mnemonic">Показать recovery phrase</button>
-              <button type="button" data-space-action="password">Сменить пароль</button>
-              <button type="button" data-space-action="backup">Скачать encrypted backup</button>
+              <button type="button" data-space-action="rename">Rename space</button>
+              <button type="button" data-space-action="mnemonic">Show the recovery phrase</button>
+              <button type="button" data-space-action="password">Change the password</button>
+              <button type="button" data-space-action="backup">Download an encrypted backup</button>
             </div>
           </div>
         </div>
-        <button class="button icon" type="button" data-settings title="Настройки">⚙</button>
+        <button class="button icon" type="button" data-settings title="Settings">⚙</button>
       </header>
       <main class="page">
         <section class="page-heading">
           <div>
-            <p class="eyebrow">Secure Space · все сети</p>
+            <p class="eyebrow">Secure Space · every network</p>
             <h1>${escapeHTML(space.name)}</h1>
-            <p class="muted">${space.locked ? "Read-only · разблокируйте space для подписи и ключей" : "Vault разблокирован локально"}</p>
+            <p class="muted">${space.locked ? "Read-only · unlock the space for signatures and keys" : "The vault is unlocked locally"}</p>
           </div>
           <div class="toolbar">
-            <button class="button" type="button" data-refresh>Обновить</button>
+            <button class="button" type="button" data-refresh>Refresh</button>
             <div class="menu" data-create-menu>
-              <button class="button primary" type="button" data-menu-toggle aria-haspopup="menu" aria-expanded="false">Создать ▾</button>
+              <button class="button primary" type="button" data-menu-toggle aria-haspopup="menu" aria-expanded="false">Create ▾</button>
               <div class="menu-popover">
-                <button type="button" data-derive>Новый derived account</button>
-                <button type="button" data-import>Импортировать private key</button>
+                <button type="button" data-derive>New derived account</button>
+                <button type="button" data-import>Import a private key</button>
               </div>
             </div>
           </div>
         </section>
         <section class="summary-grid">
-          <article class="summary-card"><span>Общий баланс · mainnet</span><strong data-total-usd>Считаем…</strong><small class="muted" data-market-change>Загружаем балансы и USD-котировки</small></article>
-          <article class="summary-card"><span>Кошельки с балансом</span><strong data-funded-wallets>—</strong><small class="muted" data-holding-detail>позиций: — · mainnet без цены: —</small></article>
-          <article class="summary-card"><span>Node doctor</span><strong data-rpc-status>Checking…</strong><small class="muted" data-rpc-detail>Проверяем все сети и RPC-ноды</small><button class="doctor-details" type="button" data-doctor-details>Детали</button></article>
+          <article class="summary-card"><span>Total balance · mainnet</span><strong data-total-usd>Calculating…</strong><small class="muted" data-market-change>Loading balances and USD quotes</small></article>
+          <article class="summary-card"><span>Wallets with a balance</span><strong data-funded-wallets>—</strong><small class="muted" data-holding-detail>positions: — · mainnet without a price: —</small></article>
+          <article class="summary-card"><span>Node doctor</span><strong data-rpc-status>Checking…</strong><small class="muted" data-rpc-detail>Checking every network and RPC node</small><button class="doctor-details" type="button" data-doctor-details>Details</button></article>
         </section>
         <section class="panel">
           <header class="panel-header">
-            <div><h2>Кошельки</h2><span class="muted">Space: ${escapeHTML(space.name)} · балансы сразу во всех подключённых сетях</span></div>
+            <div><h2>Wallets</h2><span class="muted">Space: ${escapeHTML(space.name)} · balances across every connected network at once</span></div>
             <label class="filter-control">
-              <span class="sr-only">Фильтр сети</span>
+              <span class="sr-only">Network filter</span>
               <select class="control" data-account-filter>${accountFilterOptions()}</select>
             </label>
           </header>
@@ -181,8 +181,8 @@ function assetsFor(network) {
 
 function accountFilterOptions() {
   return [
-    `<option value="all" ${state.accountFilter === "all" ? "selected" : ""}>Все сети</option>`,
-    `<option value="unassigned" ${state.accountFilter === "unassigned" ? "selected" : ""}>Нужно назначить сеть</option>`,
+    `<option value="all" ${state.accountFilter === "all" ? "selected" : ""}>Every network</option>`,
+    `<option value="unassigned" ${state.accountFilter === "unassigned" ? "selected" : ""}>Needs a network</option>`,
     ...state.networks.map((item) =>
       `<option value="${item.id}" ${state.accountFilter === item.id ? "selected" : ""}>${escapeHTML(item.name)}${item.enabled ? "" : " · disabled"}</option>`),
   ].join("");
@@ -226,8 +226,8 @@ function accountCards() {
   const accounts = filteredAccounts();
   if (!accounts.length) {
     return `<div class="empty">${state.accounts.length
-      ? "В этом фильтре пока нет кошельков."
-      : "Кошельков пока нет. Нажмите «Создать» и выберите сеть в модальном окне."}</div>`;
+      ? "No wallets match this filter yet."
+      : "No wallets yet. Press “Create” and choose a network in the dialog."}</div>`;
   }
   return accounts.map((account) => {
     const connectable = connectableNetworks(account);
@@ -236,16 +236,16 @@ function accountCards() {
         <div class="account-identity">
           <div class="account-title">
             <strong>${escapeHTML(account.label || `Account ${account.index ?? ""}`)}</strong>
-            <span class="badge ${account.kind === "imported" ? "imported" : ""}" title="${account.kind === "imported" ? "Не восстанавливается из мнемоники space" : "Восстанавливается из мнемоники space"}">${account.kind === "imported" ? "Импортирован" : "Derived"}</span>
+            <span class="badge ${account.kind === "imported" ? "imported" : ""}" title="${account.kind === "imported" ? "Cannot be recovered from the mnemonic of the space" : "Recoverable from the mnemonic of the space"}">${account.kind === "imported" ? "Imported" : "Derived"}</span>
             <span class="badge">Space · ${escapeHTML(currentSpace().name)}</span>
           </div>
         </div>
         <div class="menu">
-          <button class="button icon" type="button" data-account-menu aria-label="Действия" aria-haspopup="menu" aria-expanded="false">•••</button>
+          <button class="button icon" type="button" data-account-menu aria-label="Actions" aria-haspopup="menu" aria-expanded="false">•••</button>
           <div class="menu-popover">
-            ${connectable.length ? '<button type="button" data-action="bind">Подключить ещё одну сеть</button>' : ""}
-            <button type="button" data-action="rename">Переименовать</button>
-            <button type="button" data-action="export">Экспорт private key</button>
+            ${connectable.length ? '<button type="button" data-action="bind">Connect another network</button>' : ""}
+            <button type="button" data-action="rename">Rename</button>
+            <button type="button" data-action="export">Export the private key</button>
           </div>
         </div>
         <div class="account-networks">${accountNetworkRows(account)}</div>
@@ -262,29 +262,29 @@ function accountNetworkRows(account) {
   const rows = accountNetworks(account).map((networkID) => {
     const network = state.networks.find((item) => item.id === networkID);
     if (!network) {
-      return `<div class="wallet-network"><div><strong>${escapeHTML(networkID)}</strong><small class="muted">Сеть отсутствует в конфигурации</small></div></div>`;
+      return `<div class="wallet-network"><div><strong>${escapeHTML(networkID)}</strong><small class="muted">This network is missing from the configuration</small></div></div>`;
     }
     const address = account.addresses[network.family] || "";
     const balances = network.enabled ? visibleAssets(account, network).map((asset) => {
       const item = state.balances.get(balanceKey(state.currentSpaceID, network.id, account.id, asset.id));
       const symbol = escapeHTML(asset.symbol);
       if (!item) return `<div class="balance"><div class="skeleton"></div><span>${symbol}</span></div>`;
-      if (item.error) return `<div class="balance"><strong>—</strong><span title="${escapeHTML(item.error)}">${symbol} · ошибка</span></div>`;
+      if (item.error) return `<div class="balance"><strong>—</strong><span title="${escapeHTML(item.error)}">${symbol} · error</span></div>`;
       return `<div class="balance ${item.stale ? "stale" : ""}"><strong>${escapeHTML(item.amount || "0")}</strong><span>${symbol}${item.stale ? " · cached" : ""}</span></div>`;
-    }).join("") : '<span class="muted">Сеть отключена в настройках</span>';
+    }).join("") : '<span class="muted">This network is disabled in the settings</span>';
     return `<section class="wallet-network" data-network="${escapeHTML(network.id)}">
       <div class="wallet-network-identity">
         <div class="network-badges"><strong>${escapeHTML(network.name)}</strong>${network.testnet ? '<span class="badge testnet">TESTNET</span>' : ""}${network.enabled ? "" : '<span class="badge danger">OFF</span>'}</div>
-        <button class="address" type="button" data-copy="${escapeHTML(address)}" title="Копировать адрес">${escapeHTML(shortAddress(address))}</button>
+        <button class="address" type="button" data-copy="${escapeHTML(address)}" title="Copy the address">${escapeHTML(shortAddress(address))}</button>
       </div>
       <div class="wallet-balances">${balances}</div>
       <div class="wallet-actions">
-        ${network.enabled ? `<button class="button" type="button" data-action="send" data-network="${escapeHTML(network.id)}">Отправить</button>` : ""}
+        ${network.enabled ? `<button class="button" type="button" data-action="send" data-network="${escapeHTML(network.id)}">Send</button>` : ""}
         ${network.enabled && network.family === "tron" ? `<button class="button icon" type="button" data-action="resources" data-network="${escapeHTML(network.id)}" title="Resources & staking">R</button><button class="button icon" type="button" data-action="deploy" data-network="${escapeHTML(network.id)}" title="Deploy contract">D</button>` : ""}
       </div>
     </section>`;
   });
-  return rows.length ? rows.join("") : '<div class="notice danger">Сеть не назначена. Подключите сеть через меню wallet.</div>';
+  return rows.length ? rows.join("") : '<div class="notice danger">No network assigned. Connect one from the wallet menu.</div>';
 }
 
 function visibleAssets(account, network) {
@@ -317,10 +317,10 @@ function renderPortfolioSummary() {
   if (!totalElement || !changeElement || !fundedElement || !holdingDetailElement) return;
 
   if (state.balancesLoading) {
-    totalElement.textContent = "Считаем…";
-    changeElement.textContent = "Загружаем mainnet-балансы";
+    totalElement.textContent = "Calculating…";
+    changeElement.textContent = "Loading mainnet balances";
     fundedElement.textContent = "—";
-    holdingDetailElement.textContent = "позиций: — · mainnet без цены: —";
+    holdingDetailElement.textContent = "positions: — · mainnet without a price: —";
     return;
   }
 
@@ -329,44 +329,44 @@ function renderPortfolioSummary() {
   const fundedWallets = new Set(holdings.map((holding) => holding.account.id));
   const testnetPositions = holdings.filter((holding) => holding.network.testnet).length;
   const failedNetworks = state.balanceFailures || 0;
-  const failureSuffix = failedNetworks ? ` · ошибок сетей: ${failedNetworks}` : "";
+  const failureSuffix = failedNetworks ? ` · failed networks: ${failedNetworks}` : "";
   fundedElement.textContent = failedNetworks
     ? fundedWallets.size ? `≥ ${fundedWallets.size}` : "—"
     : String(fundedWallets.size);
-  holdingDetailElement.textContent = `позиций: ${holdings.length} · mainnet без цены: ${portfolio.unpriced.size}${failureSuffix}`;
+  holdingDetailElement.textContent = `positions: ${holdings.length} · mainnet without a price: ${portfolio.unpriced.size}${failureSuffix}`;
   if (!portfolio.assets.size) {
     if (failedNetworks) {
       totalElement.textContent = "—";
-      changeElement.textContent = `Не удалось загрузить балансы в ${failedNetworks} сетях`;
+      changeElement.textContent = `Balances could not be loaded in ${failedNetworks} networks`;
       return;
     }
     totalElement.textContent = formatUSD(0);
     changeElement.textContent = testnetPositions
-      ? "Testnet-балансы не входят в USD total"
-      : "Нет mainnet-активов с балансом";
+      ? "Testnet balances are not part of the USD total"
+      : "No mainnet assets with a balance";
     return;
   }
   if (state.pricesLoading) {
-    totalElement.textContent = "Считаем…";
-    changeElement.textContent = "Загружаем USD-котировки";
+    totalElement.textContent = "Calculating…";
+    changeElement.textContent = "Loading USD quotes";
     return;
   }
   if (!portfolio.priced.size) {
     totalElement.textContent = "—";
-    changeElement.textContent = state.pricesError || "Для активов не найдены котировки";
+    changeElement.textContent = state.pricesError || "No quotes found for these assets";
     return;
   }
 
   totalElement.textContent = `${portfolio.unpriced.size || failedNetworks ? "≈ " : ""}${formatUSD(portfolio.current)}`;
   const cached = state.pricesStale ? " · cached quotes" : "";
   if (!portfolio.historyComplete || portfolio.previous <= 0) {
-    changeElement.textContent = `24ч: недостаточно исторических котировок${cached}${failureSuffix}`;
+    changeElement.textContent = `24h: not enough historical quotes${cached}${failureSuffix}`;
     return;
   }
   const delta = portfolio.current - portfolio.previous;
   const percent = delta / portfolio.previous * 100;
   const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
-  changeElement.textContent = `Изменение цен: ${sign}${formatUSD(Math.abs(delta))} · ${sign}${Math.abs(percent).toFixed(2)}% за 24ч${cached}${failureSuffix}`;
+  changeElement.textContent = `Price change: ${sign}${formatUSD(Math.abs(delta))} · ${sign}${Math.abs(percent).toFixed(2)}% over 24h${cached}${failureSuffix}`;
 }
 
 function calculatePortfolio() {
@@ -449,7 +449,7 @@ async function loadPrices() {
     if (generation !== priceGeneration) return;
     update({
       prices: new Map(), pricesLoading: false, pricesStale: false,
-      pricesError: "Котировки временно недоступны",
+      pricesError: "Quotes are temporarily unavailable",
     });
   }
   renderPortfolioSummary();
@@ -487,7 +487,7 @@ function bindShell(root) {
     closeMenus();
     openImport(state.currentSpaceID, enabledNetworks(), (created) => {
       upsertAccount(created);
-      toast("Ключ импортирован. Не забудьте backup.");
+      toast("Key imported. Do not forget the backup.");
       renderAccounts();
       startBalances(true, [created.id]);
     });
@@ -519,7 +519,7 @@ function bindAccountActions() {
     button.addEventListener("click", async () => {
       closeMenus();
       await navigator.clipboard.writeText(button.dataset.copy);
-      toast("Адрес скопирован");
+      toast("Address copied");
     });
   });
   document.querySelectorAll("[data-action]").forEach((button) => {
@@ -601,15 +601,15 @@ function showBindNetwork(account) {
   if (!candidates.length) return;
   const legacy = !accountNetworks(account).length;
   modal({
-    title: "Подключить сеть",
+    title: "Connect a network",
     subtitle: legacy
-      ? "Это старая запись без network binding. Выберите только ту сеть, где вы действительно создавали этот wallet."
-      : "Тот же key source станет доступен для балансов и операций в выбранной сети.",
+      ? "This is an old record with no network binding. Choose only the network this wallet was actually created in."
+      : "The same key source becomes available for balances and operations in the chosen network.",
     content: `<form class="form-stack" data-form>
-      ${legacy ? '<div class="notice danger">Назначение определит address family старой записи. Проверьте сеть перед продолжением.</div>' : ""}
-      <label class="field"><span>Сеть</span><select name="network_id">${candidates.map((network) => `<option value="${escapeHTML(network.id)}">${escapeHTML(network.name)}${network.testnet ? " · TESTNET" : ""}</option>`).join("")}</select></label>
+      ${legacy ? '<div class="notice danger">The assignment fixes the address family of the old record. Check the network before continuing.</div>' : ""}
+      <label class="field"><span>Network</span><select name="network_id">${candidates.map((network) => `<option value="${escapeHTML(network.id)}">${escapeHTML(network.name)}${network.testnet ? " · TESTNET" : ""}</option>`).join("")}</select></label>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Подключить wallet</button>
+      <button class="button primary" type="submit">Connect the wallet</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -626,7 +626,7 @@ function showBindNetwork(account) {
           close();
           renderAccounts();
           startBalances(true, [updated.id]);
-          toast(`Wallet подключён к ${network.name}`);
+          toast(`Wallet connected to ${network.name}`);
         } catch (cause) {
           element.querySelector("[data-error]").textContent = cause.message;
         } finally {
@@ -676,20 +676,20 @@ async function refreshNetworkHealth() {
       ? "var(--success)"
       : health.status === "checking" ? "var(--muted)" : "var(--danger)";
     detail.textContent = health.status === "checking"
-      ? "Первичная проверка всех RPC-ноды"
-      : `${health.healthy}/${health.total} сетей healthy · ${health.failed_nodes} нод недоступно`;
+      ? "First pass over every RPC node"
+      : `${health.healthy}/${health.total} networks healthy · ${health.failed_nodes} nodes unreachable`;
   } catch (cause) {
     if (cause.name === "AbortError" || !status?.isConnected) return;
     status.textContent = "● Unavailable";
     status.style.color = "var(--danger)";
-    detail.textContent = "Doctor API недоступен";
+    detail.textContent = "The doctor API is unreachable";
   }
 }
 
 function showDoctorDetails() {
   const snapshot = lastDoctorSnapshot;
   if (!snapshot) {
-    toast("Doctor ещё выполняет первичную проверку");
+    toast("The doctor is still running its first pass");
     return;
   }
   const rows = snapshot.networks.map((networkStatus) => {
@@ -698,13 +698,13 @@ function showDoctorDetails() {
     return `<article class="doctor-row">
       <div><strong>${escapeHTML(network?.name || networkStatus.network_id)}</strong><span class="badge ${networkStatus.status === "healthy" ? "" : "danger"}">${escapeHTML(networkStatus.status)}</span></div>
       <small class="muted">${networkStatus.healthy}/${networkStatus.total} nodes healthy${failed.length
-        ? ` · недоступны: ${failed.map((node) => escapeHTML(node.label)).join(", ")}`
+        ? ` · unreachable: ${failed.map((node) => escapeHTML(node.label)).join(", ")}`
         : ""}</small>
     </article>`;
   }).join("");
   modal({
     title: "Node Doctor",
-    subtitle: "Фоновая проверка chain identity и доступности всех RPC endpoints.",
+    subtitle: "A background check of the chain identity and the reachability of every RPC endpoint.",
     wide: true,
     content: `<div class="doctor-list">${rows}</div>`,
   });
@@ -785,7 +785,7 @@ function reportBalanceFailures(requests) {
     const failures = results.filter((result) =>
       result.status === "rejected" && result.reason?.name !== "AbortError");
     if (failures.length) {
-      toast(`Не удалось обновить баланс в ${failures.length} сетях: ${failures[0].reason.message}`, "error");
+      toast(`Balances could not be refreshed in ${failures.length} networks: ${failures[0].reason.message}`, "error");
     }
     return failures.length;
   });
@@ -820,16 +820,16 @@ function rerenderShell() {
 function showSend(account, network) {
   const assets = assetsFor(network);
   modal({
-    title: `Отправить · ${network.name}`,
+    title: `Send · ${network.name}`,
     subtitle: `${network.testnet ? "TESTNET · " : ""}Chain ID ${network.chain_id}`,
     content: `<form class="form-stack" data-form>
-      ${network.testnet ? '<div class="notice">Это testnet. Токены не имеют mainnet-стоимости.</div>' : ""}
+      ${network.testnet ? '<div class="notice">This is a testnet. The tokens have no mainnet value.</div>' : ""}
       <label class="field"><span>Asset</span><select name="asset_id">${assets.map((asset) => `<option value="${asset.id}">${escapeHTML(asset.name || asset.symbol)} · ${escapeHTML(asset.symbol)}</option>`).join("")}</select></label>
       <label class="field"><span>Recipient</span><input name="to" required spellcheck="false" autocomplete="off"></label>
       <div class="field"><label for="send-amount">Amount</label><div class="input-action"><input id="send-amount" name="amount" required inputmode="decimal" placeholder="0.0"><button class="button" type="button" data-max>MAX</button></div></div>
       <div data-estimate></div>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Рассчитать комиссию</button>
+      <button class="button primary" type="submit">Estimate the fee</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -847,20 +847,20 @@ function showSend(account, network) {
         confirmedBody = body;
         form.querySelector("[data-estimate]").innerHTML = `
           <div class="notice">
-            <strong>Проверьте перед подписью</strong><br>
+            <strong>Check this before signing</strong><br>
             ${escapeHTML(network.name)} · Chain ${escapeHTML(network.chain_id)}<br>
             From: <span class="mono">${escapeHTML(shortAddress(account.addresses[network.family]))}</span><br>
             To: <span class="mono">${escapeHTML(shortAddress(body.to))}</span><br>
             Amount: ${escapeHTML(body.amount)} · Max fee: ${escapeHTML(estimate.fee)} ${escapeHTML(network.native.symbol)}
           </div>`;
-        form.querySelector('[type="submit"]').dataset.label = "Подписать и отправить";
-        form.querySelector('[type="submit"]').textContent = "Подписать и отправить";
+        form.querySelector('[type="submit"]').dataset.label = "Sign and send";
+        form.querySelector('[type="submit"]').textContent = "Sign and send";
       };
       maxButton.addEventListener("click", async () => {
         const requestBody = transferBody("max");
         form.querySelector("[data-error]").textContent = "";
         if (!String(requestBody.to).trim()) {
-          form.querySelector("[data-error]").textContent = "Сначала укажите получателя — от него зависит комиссия";
+          form.querySelector("[data-error]").textContent = "Enter the recipient first — the fee depends on it";
           return;
         }
         maxButton.disabled = true;
@@ -882,7 +882,7 @@ function showSend(account, network) {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const body = transferBody();
-        setBusy(form, true, confirmedBody ? "Подписываем…" : "Считаем…");
+        setBusy(form, true, confirmedBody ? "Signing…" : "Calculating…");
         form.querySelector("[data-error]").textContent = "";
         try {
           if (!confirmedBody || JSON.stringify(confirmedBody) !== JSON.stringify(body)) {
@@ -896,7 +896,7 @@ function showSend(account, network) {
             state.currentSpaceID, network.id, body, idempotencyKey, routeSignal,
           );
           close();
-          toast(`Транзакция отправлена: ${shortAddress(operation.tx_hash)}`);
+          toast(`Transaction sent: ${shortAddress(operation.tx_hash)}`);
           trackReceipt(state.currentSpaceID, network.id, operation.tx_hash, account.id, body.to);
         } catch (cause) {
           if (cause.status && !String(cause.message).includes("still in progress")) {
@@ -911,7 +911,7 @@ function showSend(account, network) {
         confirmedBody = null;
         idempotencyKey = undefined;
         form.querySelector("[data-estimate]").replaceChildren();
-        form.querySelector('[type="submit"]').textContent = "Рассчитать комиссию";
+        form.querySelector('[type="submit"]').textContent = "Estimate the fee";
       });
     },
   });
@@ -940,18 +940,18 @@ async function showResources(account, network) {
     title: "Tron resources",
     subtitle: `${network.name} · ${shortAddress(account.addresses.tron)}`,
     wide: true,
-    content: '<div class="boot" style="min-height:220px">Загружаем staking position…</div>',
+    content: '<div class="boot" style="min-height:220px">Loading the staking position…</div>',
   });
   try {
     const position = await resources(state.currentSpaceID, network.id, account.id, routeSignal);
     dialog.element.querySelector("[data-content]").innerHTML = `
       <div class="summary-grid">
-        <article class="summary-card"><span>Bandwidth</span><strong>${escapeHTML(position.bandwidth.available)}</strong><small class="muted">из ${escapeHTML(position.bandwidth.total)}</small></article>
-        <article class="summary-card"><span>Energy</span><strong>${escapeHTML(position.energy.available)}</strong><small class="muted">из ${escapeHTML(position.energy.total)}</small></article>
+        <article class="summary-card"><span>Bandwidth</span><strong>${escapeHTML(position.bandwidth.available)}</strong><small class="muted">of ${escapeHTML(position.bandwidth.total)}</small></article>
+        <article class="summary-card"><span>Energy</span><strong>${escapeHTML(position.energy.available)}</strong><small class="muted">of ${escapeHTML(position.energy.total)}</small></article>
         <article class="summary-card"><span>Unstaking</span><strong>${escapeHTML(position.unstaking)}</strong><small class="muted">TRX · withdrawable ${escapeHTML(position.withdrawable_now)}</small></article>
       </div>
       <form class="form-stack" data-form>
-        <label class="field"><span>Операция</span><select name="action">
+        <label class="field"><span>Operation</span><select name="action">
           <option value="stake">Stake TRX</option>
           <option value="unstake">Unstake TRX</option>
           <option value="delegate">Delegate resource</option>
@@ -963,9 +963,9 @@ async function showResources(account, network) {
         <label class="field" data-amount><span>Amount</span><input name="amount" inputmode="decimal" placeholder="1"></label>
         <label class="field" data-to hidden><span>Receiver</span><input name="to" spellcheck="false"></label>
         <label data-all hidden><input type="checkbox" name="all"> Reclaim all</label>
-        <div class="notice">Stake/unstake amount задаётся в TRX. Delegate/reclaim amount задаётся в bandwidth/energy units.</div>
+        <div class="notice">A stake/unstake amount is given in TRX. A delegate/reclaim amount is given in bandwidth/energy units.</div>
         <div class="error-text" data-error></div>
-        <div class="form-actions"><button class="button primary" type="submit">Проверить и подписать</button></div>
+        <div class="form-actions"><button class="button primary" type="submit">Sign and submit</button></div>
       </form>`;
     const form = dialog.element.querySelector("[data-form]");
     const action = form.querySelector('[name="action"]');
@@ -992,7 +992,7 @@ async function showResources(account, network) {
       event.preventDefault();
       const data = new FormData(form);
       const actionName = data.get("action");
-      setBusy(form, true, "Подписываем…");
+      setBusy(form, true, "Signing…");
       try {
         const operationBody = stakingRequestBody(actionName, data);
         const signature = JSON.stringify({ actionName, operationBody });
@@ -1027,10 +1027,10 @@ async function showResources(account, network) {
 function showDeploy(account, network) {
   modal({
     title: "Deploy Tron contract",
-    subtitle: `${network.name} · deployment расходует энергию даже при failure`,
+    subtitle: `${network.name} · a deployment spends energy even when it fails`,
     wide: true,
     content: `<form class="form-stack" data-form>
-      <div class="notice danger">Сначала обязательно проверьте estimate и минимальный Fee Limit.</div>
+      <div class="notice danger">Always check the estimate and the minimum fee limit first.</div>
       <label class="field"><span>Contract name</span><input name="name"></label>
       <label class="field"><span>Bytecode (hex)</span><textarea name="bytecode" required spellcheck="false"></textarea></label>
       <label class="field"><span>ABI JSON</span><textarea name="abi" spellcheck="false"></textarea></label>
@@ -1039,7 +1039,7 @@ function showDeploy(account, network) {
       <label class="field"><span>Consume user resource, %</span><input type="number" name="consume_user_resource_percent" value="100" min="0" max="100"></label>
       <label class="field"><span>Origin energy limit</span><input type="number" name="origin_energy_limit" value="10000000" min="0"></label>
       <div data-estimate></div><div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Рассчитать deployment</button>
+      <button class="button primary" type="submit">Estimate the deployment</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
@@ -1058,11 +1058,14 @@ function showDeploy(account, network) {
         confirmed = null;
         idempotencyKey = undefined;
         form.querySelector("[data-estimate]").replaceChildren();
+        // An edit invalidates the estimate, so the next click estimates again.
+        // Leaving the label on "Sign and deploy" claimed the opposite.
+        form.querySelector('[type="submit"]').textContent = "Estimate the deployment";
       });
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const requestBody = body();
-        setBusy(form, true, confirmed ? "Deploy…" : "Считаем…");
+        setBusy(form, true, confirmed ? "Deploy…" : "Calculating…");
         try {
           if (!confirmed || JSON.stringify(confirmed) !== JSON.stringify(requestBody)) {
             const cost = await estimateDeploy(
@@ -1073,8 +1076,8 @@ function showDeploy(account, network) {
               Energy ${escapeHTML(cost.energy)} · fee ${escapeHTML(cost.fee)} TRX · minimum Fee Limit ${escapeHTML(cost.min_fee_limit)} TRX
             </div>`;
             setBusy(form, false);
-            form.querySelector('[type="submit"]').dataset.label = "Подписать и deploy";
-            form.querySelector('[type="submit"]').textContent = "Подписать и deploy";
+            form.querySelector('[type="submit"]').dataset.label = "Sign and deploy";
+            form.querySelector('[type="submit"]').textContent = "Sign and deploy";
             return;
           }
           idempotencyKey ||= crypto.randomUUID();
@@ -1106,7 +1109,7 @@ async function trackReceipt(spaceID, networkID, txID, senderID, recipient) {
     try {
       const status = await transactionStatus(spaceID, networkID, txID, routeSignal);
       if (status.status === "pending") continue;
-      toast(status.status === "confirmed" ? "Транзакция подтверждена" : "Транзакция завершилась ошибкой",
+      toast(status.status === "confirmed" ? "Transaction confirmed" : "The transaction failed",
         status.status === "confirmed" ? "" : "error");
       if (spaceID !== state.currentSpaceID) return;
       const family = state.networks.find((item) => item.id === networkID)?.family;
