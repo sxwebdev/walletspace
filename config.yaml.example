@@ -1,23 +1,24 @@
-# Copy to config.yaml and edit. Every field can also be set through the
-# environment variable named in the comment; the environment wins.
+# Persistent settings are stored as ~/.walletspace/config.yaml.
+# Prefer editing them through http://127.0.0.1:8080/settings.
+schema_version: 1
 
-addr: 127.0.0.1:8080 # ADDR — keep it on localhost, the API is unauthenticated
-data_dir: ./data # DATA_DIR — wallets.json and mnemonic.txt live here
-open_browser: true # OPEN_BROWSER
+server:
+  # Loopback only. A change is applied after restart.
+  addr: 127.0.0.1:8080
+  open_browser: true
 
-# MNEMONIC — leave empty to generate one into {data_dir}/mnemonic.txt on first run.
-mnemonic: ""
-# PASSPHRASE — the BIP39 passphrase. Changing it after wallets exist changes
-# every address and the service will refuse to start.
-passphrase: ""
+security:
+  # Go duration. Zero disables automatic locking.
+  auto_lock: 15m0s
 
-network: mainnet # NETWORK — mainnet or nile
+node_discovery:
+  # Configure the service URL through /settings before enabling discovery.
+  enabled: false
+  url: ""
+  refresh_interval: 30m0s
+  request_timeout: 5s
+  # HTTP and private-address RPC endpoints stay disabled by default.
+  allow_insecure_rpc: false
 
-# NODES — comma-separated, "scheme://host[:port][|tier]".
-# Schemes: grpc, grpcs (TLS), http, https. Empty uses the network defaults.
-# nodes: "grpcs://grpc.trongrid.io:50051,https://api.trongrid.io,https://tron-rpc.publicnode.com|1"
-nodes: ""
-
-api_key: "" # TRON_PRO_API_KEY — TronGrid key, optional but avoids rate limits
-usdt_contract: "" # USDT_CONTRACT — empty uses the network default
-fee_limit_trx: 50 # FEE_LIMIT_TRX — fee cap for TRC20 transfers
+ui:
+  last_space_id: ""

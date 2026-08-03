@@ -1,6 +1,8 @@
 # План реализации Walletspace: spaces и multichain
 
-Статус документа: целевая архитектура до начала миграции.
+Статус документа: core первой итерации реализован; документ остаётся
+архитектурным контрактом, а release hardening и gated live checks из раздела 20
+— обязательными воротами перед публикацией.
 
 Документ описывает переход от текущего локального Tron-only приложения к
 Walletspace первой итерации:
@@ -65,8 +67,9 @@ Walletspace первой итерации:
 - Network всегда явно передаётся в запросе. В backend нет изменяемого
   глобального `activeNetwork`.
 - EVM chain ID хранится строкой или `big.Int`, а не JavaScript `number`.
-- Адрес принадлежит паре `(account, address family)`, а не network:
-  EVM-адрес одинаков во всех EVM-сетях, Tron-адрес одинаков в mainnet и Nile.
+- Wallet хранит key source и адрес family один раз, а доступность в сети задают
+  явные `network_ids`. Совместимый адрес может быть одинаков в нескольких
+  сетях, но без binding wallet в них не отображается и не подписывает операции.
 - Баланс, nonce, fee estimate, tx и кеш всегда принадлежат конкретному
   `network_id`.
 - Подпись выполняется только локально. RPC никогда не получает приватный ключ.
@@ -75,7 +78,7 @@ Walletspace первой итерации:
 
 ## 3. Сети первой итерации
 
-В первой итерации поддерживается 16 сетей.
+В первой итерации поддерживается 17 сетей.
 
 | Network ID          | Family | Сеть                    | Network/chain ID | Native asset | Testnet |
 | ------------------- | ------ | ----------------------- | ---------------: | ------------ | ------- |
@@ -91,6 +94,7 @@ Walletspace первой итерации:
 | `optimism-sepolia`  | EVM    | OP Sepolia              |       `11155420` | ETH          | да      |
 | `arbitrum-mainnet`  | EVM    | Arbitrum One            |          `42161` | ETH          | нет     |
 | `arbitrum-sepolia`  | EVM    | Arbitrum Sepolia        |         `421614` | ETH          | да      |
+| `base-mainnet`      | EVM    | Base                    |           `8453` | ETH          | нет     |
 | `robinhood-mainnet` | EVM    | Robinhood Chain         |           `4663` | ETH          | нет     |
 | `robinhood-testnet` | EVM    | Robinhood Chain Testnet |          `46630` | ETH          | да      |
 | `avalanche-mainnet` | EVM    | Avalanche C-Chain       |          `43114` | AVAX         | нет     |
@@ -130,7 +134,7 @@ chain ID, native asset или explorer.
 - native EVM send и ERC20 transfer;
 - оценка комиссии до подписи;
 - ожидание receipt и точечное фоновое обновление;
-- явный выбор любой из 16 сетей в UI;
+- явный выбор любой из 17 сетей в UI;
 - работа нескольких вкладок с разными выбранными сетями;
 - экспорт private key с явным указанием family;
 - безопасная ручная миграция текущих данных.
@@ -330,6 +334,8 @@ type Account struct {
     ID          AccountID
     Label       string
     Kind        AccountKind // derived | imported
+    Family      AddressFamily
+    NetworkIDs  []NetworkID
     KeySource   KeySource
     Addresses   map[AddressFamily]string
     CreatedAt   time.Time
@@ -360,13 +366,15 @@ type ImportedSource struct {
 
 ### Derived account
 
-Один визуальный account с индексом `i` получает:
+Derived wallet принадлежит одной address family. Индекс выделяется отдельно в
+каждой network, начиная с `0`:
 
 - Tron key: `m/44'/195'/0'/0/{i}`;
 - EVM key: `m/44'/60'/0'/0/{i}`.
 
-Это два разных private keys. Поэтому export derived account обязан спрашивать
-family: «ключ для Tron» или «ключ для EVM».
+BIP44 не содержит стандартного идентификатора конкретной EVM- или Tron-сети.
+Если index `0` в совместимой сети даёт уже сохранённый key source, Walletspace
+добавляет к нему binding, а не хранит дубликат ключа.
 
 Derivation profile version хранится в account. Изменение будущих defaults не
 может молча изменить уже созданные адреса.
@@ -385,16 +393,17 @@ Derivation profile version хранится в account. Изменение бу�
 - EVM address из Keccak-256 public key;
 - Tron address из того же public key с Tron encoding.
 
-Значит imported account виден во всех Tron и EVM networks. Внутри space
-дубликат определяется по `(curve, public-key fingerprint)` и отклоняется.
-Импорт того же ключа в другой space разрешён.
+Imported wallet становится видим только в network, указанной при импорте.
+Повторный импорт того же fingerprint в другой network добавляет binding к
+существующему wallet; повтор в той же network отклоняется.
 
 UI показывает постоянный badge `Импортирован` и tooltip:
 
 > Этот аккаунт не восстанавливается из мнемоники space. Для восстановления
 > нужен backup всего space или отдельный private key.
 
-В фильтрах доступны `Все`, `Derived`, `Imported`.
+В фильтрах доступны `Все сети`, каждая включённая network и
+`Нужно назначить сеть` для безопасной миграции старых записей.
 
 ### Signer boundary
 
@@ -423,7 +432,7 @@ Raw export — отдельный auditable use case, а не метод общ�
 
 ## 9. Network registry
 
-Built-in registry компилируется в бинарь и покрывает 16 сетей. Пользовательский
+Built-in registry компилируется в бинарь и покрывает 17 сетей. Пользовательский
 `~/.walletspace/networks.yaml` может:
 
 - заменить/добавить RPC;
@@ -449,7 +458,7 @@ networks:
   tron-mainnet:
     rpc:
       urls:
-        - https://api.trongrid.io
+        - https://tron-rpc.publicnode.com
       headers:
         TRON-PRO-API-KEY: ${TRON_PRO_API_KEY}
 ```
@@ -459,13 +468,12 @@ Resolved secrets не логируются и не возвращаются че
 
 ## 10. Node Discovery и RPC resolution
 
-Используется API:
+Walletspace не содержит адрес discovery-сервиса. Пользователь задаёт base URL
+в `/settings`; для него используется API:
 
 - EVM candidates: `GET /api/v1/nodes/{chain_id}`;
 - best EVM candidate: `GET /api/v1/best/{chain_id}`;
-- Tron candidates: `GET /api/v1/tron/nodes/{network}`;
-- описание: <https://node-discovery.neuvox.dev/api/v1/docs>;
-- OpenAPI: <https://node-discovery.neuvox.dev/api/v1/openapi.json>.
+- Tron candidates: `GET /api/v1/tron/nodes/{network}`.
 
 Node Discovery — источник кандидатов, а не доверенный RPC registry. На момент
 подготовки плана `/best/{chain_id}` может вернуть обычный `http://` endpoint,
@@ -518,6 +526,15 @@ Chain ID проверяется при каждом новом transport и по
 - health и cache не блокируют запуск приложения: official fallback работает
   без Node Discovery;
 - cache имеет TTL и last-known-good, но не является доказательством chain ID.
+
+### Node Doctor
+
+Отдельный background service независимо от выбранной в UI network проверяет
+каждый endpoint всех включённых сетей. Он хранит redacted snapshot
+`healthy | degraded | unavailable`: в UI возвращается только порядковая метка
+ноды, chain identity status и время проверки, без hostname/path/query/provider
+secrets. Tron probe дополнительно требует свежий head block.
+Изменение RPC settings немедленно ставит внеочередную проверку в очередь.
 
 ## 11. Adapter interfaces
 
@@ -651,10 +668,12 @@ GET    /api/spaces/{space_id}/accounts
 POST   /api/spaces/{space_id}/accounts/derive
 POST   /api/spaces/{space_id}/accounts/import
 PATCH  /api/spaces/{space_id}/accounts/{account_id}
+POST   /api/spaces/{space_id}/accounts/{account_id}/networks
 POST   /api/spaces/{space_id}/accounts/{account_id}/private-key
 
 GET    /api/networks
 GET    /api/networks/{network_id}/health
+GET    /api/doctor
 
 GET    /api/settings
 PATCH  /api/settings/general
@@ -680,7 +699,8 @@ POST   /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/delega
 ...
 ```
 
-Создание первого и последующих seeded spaces использует один контракт:
+Создание первого и последующих seeded spaces использует один контракт и не
+создаёт кошельки:
 
 ```json
 {
@@ -700,19 +720,21 @@ POST   /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/delega
 - `bip39_passphrase` опциональна и влияет на derived addresses;
 - `password` и его подтверждение обязательны в UI; confirmation не отправляется
   на сервер;
-- space и первый derived account с index `0` записываются одной атомарной
-  операцией;
+- space записывается атомарно с пустым списком accounts;
 - response сообщает `mnemonic_generated: true|false`; generated mnemonic
   возвращается только когда она действительно была создана сервером.
 
 Пустые `name` и `mnemonic` — нормальный happy path, а не validation error:
-создаётся unlocked space `default` с новой mnemonic и account `0`.
+создаётся unlocked space `default` с новой mnemonic и без accounts. Первый
+derived или imported wallet пользователь создаёт отдельным запросом, явно
+указывая `network_id`; его derivation index начинается с `0` в этой сети.
 
 Import request:
 
 ```json
 {
   "curve": "secp256k1",
+  "network_id": "ethereum-mainnet",
   "private_key": "0x...",
   "label": "Treasury"
 }
@@ -774,7 +796,7 @@ canonical request hash и tx hash:
 - lock state;
 - family/network selector;
 - заметный testnet badge;
-- RPC health indicator без показа секретных provider URLs.
+- глобальный Node Doctor indicator без показа секретных provider URLs.
 
 Network selector группирует:
 
@@ -784,6 +806,7 @@ Network selector группирует:
 - Polygon: Mainnet, Amoy;
 - Optimism: Mainnet, Sepolia;
 - Arbitrum: Mainnet, Sepolia;
+- Base: Mainnet;
 - Robinhood: Mainnet, Testnet;
 - Avalanche: Mainnet, Fuji.
 
@@ -795,12 +818,12 @@ Network selector группирует:
 Если `GET /api/spaces` вернул пустой список, dashboard не показывается. Вместо
 него открывается onboarding:
 
-1. `Название space` — необязательное поле, placeholder `default`.
+1. `Название space` — необязательное поле, предзаполненное значением `default`.
 2. `Восстановить из своей мнемоники` — необязательное textarea.
 3. `BIP39-пасфраза` — необязательное поле в раскрываемом advanced-блоке с
    предупреждением, что она меняет адреса.
 4. `Пароль space` и подтверждение — обязательны для шифрования vault.
-5. Кнопка `Создать space`.
+5. Кнопка `Создать Secure Space`.
 
 Поведение:
 
@@ -813,7 +836,8 @@ Network selector группирует:
   требует явного подтверждения «Я сохранил фразу» перед переходом в dashboard;
 - если пользователь закрыл окно, seed не теряется: она уже находится в
   encrypted vault и доступна через отдельный reveal flow после unlock;
-- созданный space сразу unlocked и выбран, account `0` уже присутствует.
+- созданный space сразу unlocked и выбран, список accounts остаётся пустым;
+- первый wallet создаётся отдельным действием после выбора сети.
 
 Backend не создаёт `default` автоматически при одном лишь старте процесса:
 создание происходит только после submit onboarding. Это позволяет пользователю
@@ -843,8 +867,8 @@ network, поэтому безопасный delete flow проектирует�
 Строка показывает:
 
 - label;
-- адрес для выбранной family;
-- native и configured token balances выбранной network;
+- адрес и badges явно подключённых networks;
+- отдельные строки и balances всех явно подключённых networks;
 - badge `Derived` или `Импортирован`;
 - отдельный warning для imported account;
 - menu действий, зависящее от capabilities network;
@@ -859,25 +883,28 @@ Import dialog:
 
 - поле `type=password`;
 - принимает paste, но не сохраняет в history/localStorage;
-- объясняет, что secp256k1 account появится в Tron и EVM;
+- объясняет, что secp256k1 wallet появится только в выбранной network;
 - очищает field сразу после ответа;
-- после успеха показывает публичные Tron/EVM addresses;
+- позволяет позже подключить тот же key source к совместимым networks;
 - добавляет persistent imported badge;
 - напоминает сделать backup space.
 
-Export dialog для derived account сначала спрашивает Tron или EVM. Для imported
-secp256k1 account объясняет, что ключ общий для обеих families.
+Export dialog для derived wallet фиксирован на его family. Для imported
+secp256k1 wallet объясняет, что ключ общий для обеих families.
 
-### Balances и переключение network
+### Balances и portfolio summary
 
 - cache key: `(space_id, network_id, account_id, asset_id)`;
 - last known value показывается сразу;
 - stale value отмечается, refresh идёт в фоне;
-- смена network отменяет старый stream через `AbortController`;
-- late response старой network отбрасывается по generation/version;
+- все включённые networks загружаются параллельно без глобального network switch;
+- смена space отменяет старые streams через `AbortController`;
+- late response старого space отбрасывается по generation/version;
 - после send обновляются только sender и локально известный recipient;
-- summary не суммирует ETH, BNB, POL и AVAX в одно число без price feed;
-- portfolio summary относится только к выбранной network.
+- mainnet balances агрегируются в USD через keyless DefiLlama price feed;
+- price cache живёт пять минут, testnets исключаются, assets без цены считаются отдельно;
+- изменение цен за 24 часа использует текущие количества и historical quotes,
+  поэтому не является историческим P&L с учётом переводов.
 
 ### Страница настроек
 
@@ -889,7 +916,7 @@ secp256k1 account объясняет, что ключ общий для обеи
 
 Разделы:
 
-1. **Общие** — адрес UI, открытие браузера при старте, default space/network.
+1. **Общие** — адрес UI, открытие браузера при старте, default space.
 2. **Безопасность** — auto-lock timeout и управление паролем выбранного space.
 3. **Node Discovery** — enabled, URL, refresh interval, timeout.
 4. **Сети и RPC** — список сетей, enabled state, RPC mode, endpoints, headers,
@@ -946,15 +973,14 @@ security:
   auto_lock: 15m
 
 node_discovery:
-  enabled: true
-  url: https://node-discovery.neuvox.dev
+  enabled: false
+  url: ""
   refresh_interval: 30m
   request_timeout: 5s
   allow_insecure_rpc: false
 
 ui:
   last_space_id: ""
-  last_network_id: tron-mainnet
 ```
 
 Старые глобальные поля `NETWORK`, `NODES`, `USDT_CONTRACT`,
@@ -1138,8 +1164,8 @@ Native ES modules загружаются браузером без npm/build ste
 - `features/` владеет конкретным use case, его templates, actions и локальным
   state;
 - `api/` содержит только transport DTO, AbortSignal и нормализацию ошибок;
-- `state/` хранит session-wide normalized state: выбранные space/network,
-  accounts, balances и settings revision;
+- `state/` хранит session-wide normalized state: выбранный space, accounts,
+  multichain balances, USD quotes и settings revision;
 - `components/` — переиспользуемые presentation primitives без знания wallet
   domain;
 - `styles/tokens.css` — единый источник цветов, spacing и typography;
@@ -1177,7 +1203,7 @@ streams и pending reads. Долговременная операция отпр
 ### Этап 0. Зафиксировать контракты и test vectors
 
 - утвердить термины и network IDs;
-- добавить built-in registry для 16 сетей;
+- добавить built-in registry для 17 сетей;
 - записать known address vectors для Tron и EVM derivation/import;
 - определить versioned schemas `space.json`, config и operations;
 - сделать threat model для vault, HTTP и dynamic RPC.
@@ -1208,9 +1234,9 @@ streams и pending reads. Долговременная операция отпр
 - HTTP API и unit/integration tests.
 
 Готово, когда два spaces независимо блокируются, password change не меняет
-addresses, first-run создаёт `default` и account `0` атомарно, custom mnemonic
-не заменяется сгенерированной, tampering обнаруживается, backup открывается
-только правильным password.
+addresses, first-run создаёт пустой `default` атомарно, custom mnemonic не
+заменяется сгенерированной, tampering обнаруживается, backup открывается только
+правильным password.
 
 ### Этап 3. Account model и private-key import
 
@@ -1228,7 +1254,7 @@ derived export Tron/EVM возвращает разные ожидаемые key
 
 ### Этап 4. Network registry, Node Discovery и RPC pools
 
-- built-in metadata 16 networks;
+- built-in metadata 17 networks;
 - network override merge;
 - Node Discovery client;
 - HTTPS/SSRF filtering;
@@ -1265,10 +1291,10 @@ mainnet UI.
 
 Сначала включить Ethereum mainnet/Sepolia как reference pair. После прохождения
 adapter conformance suite включить конфигом BSC, Polygon, Optimism, Arbitrum,
-Robinhood и Avalanche. Для каждой пары обязательны chain-specific smoke tests,
+Base, Robinhood и Avalanche. Для каждой пары обязательны chain-specific smoke tests,
 но не отдельная копия adapter.
 
-Готово, когда все 14 EVM networks проходят одинаковый read conformance suite,
+Готово, когда все 15 EVM networks проходят одинаковый read conformance suite,
 все testnets проходят gated send/receipt test, а mainnet send проверяется через
 offline signing vectors без траты средств.
 
@@ -1402,7 +1428,7 @@ native transfer, receipt и balance refresh. Mainnet tests — только read
 - storage backup/restore drill;
 - migration dry-run и real-run на fixture legacy data;
 - ни один secret не найден log-capture тестом;
-- все 16 network metadata проходят identity validation;
+- все 17 network metadata проходят identity validation;
 - приложение полностью работает при недоступном Node Discovery через fallback;
 - вся file-backed конфигурация доступна через settings UI;
 - `index.html` не содержит application business logic;
@@ -1446,7 +1472,7 @@ TON не следует заранее втискивать в `DerivedSource{In
 4. Первая итерация импортирует только secp256k1 private key.
 5. Network указывается в каждом on-chain request; глобального switch backend
    нет.
-6. Все 14 EVM networks используют один generic EVM adapter.
+6. Все 15 EVM networks используют один generic EVM adapter.
 7. Node Discovery не является hard dependency и не отменяет official fallback.
 8. Dynamic insecure HTTP RPC по умолчанию запрещены.
 9. Public metadata и encrypted vault space записываются атомарно одним файлом.
@@ -1479,8 +1505,6 @@ TON не следует заранее втискивать в `DerivedSource{In
 
 Проверено 2026-07-31:
 
-- Node Discovery API:
-  <https://node-discovery.neuvox.dev/api/v1/docs>
 - Ethereum chain IDs: <https://ethereum.org/developers/>
 - BNB Smart Chain:
   <https://docs.bnbchain.org/bnb-smart-chain/developers/wallet-configuration/>
@@ -1490,6 +1514,8 @@ TON не следует заранее втискивать в `DerivedSource{In
   <https://docs.optimism.io/op-mainnet/network-information/connecting-to-op>
 - Arbitrum:
   <https://docs.arbitrum.io/>
+- Base:
+  <https://docs.base.org/base-chain/api-reference/rpc-overview>
 - Robinhood Chain:
   <https://docs.robinhood.com/chain/connecting/>
 - Avalanche C-Chain/Fuji:

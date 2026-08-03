@@ -725,8 +725,10 @@ func TestServesUI(t *testing.T) {
 		t.Fatalf("read body error = %v", err)
 	}
 
-	if !strings.Contains(string(body), "walletspace") {
-		t.Error("GET / did not return the UI page")
+	page := string(body)
+	if !strings.Contains(page, "<title>Walletspace</title>") ||
+		!strings.Contains(page, `<script type="module" src="/app.js"></script>`) {
+		t.Error("GET / did not return the Walletspace application shell")
 	}
 }
 

@@ -1,7 +1,7 @@
-# Local state: wallets.json and the generated mnemonic live here.
+# Legacy local state. New state lives outside the repository in ~/.walletspace.
 /data/
 
-# Local configuration may contain the mnemonic and API keys.
+# Legacy local configuration and developer environment secrets.
 config.yaml
 .env
 

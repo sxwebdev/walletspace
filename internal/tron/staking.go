@@ -11,6 +11,7 @@ import (
 	"github.com/sxwebdev/gotron/pkg/address"
 	"github.com/sxwebdev/gotron/pkg/client"
 	"github.com/sxwebdev/gotron/schema/pb/api"
+	"github.com/sxwebdev/walletspace/internal/chain"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -607,6 +608,132 @@ func (s *Service) CancelUnstakes(ctx context.Context, from string, key *ecdsa.Pr
 	})
 }
 
+func (s *Service) StakeWithSigner(
+	ctx context.Context, from string, resource Resource, amount decimal.Decimal, signer chain.Signer,
+) (string, error) {
+	kind, err := resource.toClient()
+	if err != nil {
+		return "", err
+	}
+	sun, err := stakeAmount(amount)
+	if err != nil {
+		return "", err
+	}
+	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+		return s.client.Stake(ctx, from, kind, sun)
+	})
+}
+
+func (s *Service) UnstakeWithSigner(
+	ctx context.Context, from string, resource Resource, amount decimal.Decimal, signer chain.Signer,
+) (string, error) {
+	kind, err := resource.toClient()
+	if err != nil {
+		return "", err
+	}
+	sun, err := stakeAmount(amount)
+	if err != nil {
+		return "", err
+	}
+	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+		return s.client.Unstake(ctx, from, kind, sun)
+	})
+}
+
+func (s *Service) DelegateWithSigner(
+	ctx context.Context,
+	from, to string,
+	resource Resource,
+	units decimal.Decimal,
+	signer chain.Signer,
+) (string, error) {
+	if err := counterparty(from, to); err != nil {
+		return "", err
+	}
+	kind, err := resource.toClient()
+	if err != nil {
+		return "", err
+	}
+	sun, err := s.stakeBehind(ctx, from, resource, units)
+	if err != nil {
+		return "", err
+	}
+	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+		return s.client.DelegateResource(ctx, from, to, kind, sun, false, 0)
+	})
+}
+
+func (s *Service) ReclaimWithSigner(
+	ctx context.Context,
+	from, to string,
+	resource Resource,
+	units decimal.Decimal,
+	signer chain.Signer,
+) (string, error) {
+	if err := counterparty(from, to); err != nil {
+		return "", err
+	}
+	kind, err := resource.toClient()
+	if err != nil {
+		return "", err
+	}
+	sun, err := s.stakeBehind(ctx, from, resource, units)
+	if err != nil {
+		return "", err
+	}
+	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+		return s.client.ReclaimResource(ctx, from, to, kind, sun)
+	})
+}
+
+func (s *Service) ReclaimAllWithSigner(
+	ctx context.Context,
+	from, to string,
+	resource Resource,
+	signer chain.Signer,
+) (string, error) {
+	if err := counterparty(from, to); err != nil {
+		return "", err
+	}
+	kind, err := resource.toClient()
+	if err != nil {
+		return "", err
+	}
+	lent, err := retry(ctx, s.nodes, emptyIfMissing(func() ([]client.Delegation, error) {
+		return s.client.GetDelegatedResourcesV2(ctx, from)
+	}))
+	if err != nil {
+		return "", fmt.Errorf("read delegations: %w", err)
+	}
+	staked, err := reclaimable(splitDelegations(lent), to, resource, time.Now())
+	if err != nil {
+		return "", err
+	}
+	sun, err := trxAmount(staked)
+	if err != nil {
+		return "", err
+	}
+	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+		return s.client.ReclaimResource(ctx, from, to, kind, sun)
+	})
+}
+
+func (s *Service) WithdrawUnstakedWithSigner(
+	ctx context.Context, from string, signer chain.Signer,
+) (string, error) {
+	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+		return s.client.WithdrawUnstaked(ctx, from)
+	})
+}
+
+func (s *Service) CancelUnstakesWithSigner(
+	ctx context.Context, from string, signer chain.Signer,
+) (string, error) {
+	return s.stakeOpSigner(ctx, from, signer, func() (*api.TransactionExtention, error) {
+		return s.client.CancelAllUnstakes(ctx, from)
+	})
+}
+
 // stakeOp is the shape every staking operation shares: have a node build the
 // transaction, sign it locally, broadcast it, and drop the now-stale balance.
 //
@@ -631,5 +758,29 @@ func (s *Service) stakeOp(ctx context.Context, from string, key *ecdsa.PrivateKe
 	// the cached balance is wrong either way.
 	s.invalidate(from)
 
+	return txid, nil
+}
+
+func (s *Service) stakeOpSigner(
+	ctx context.Context,
+	from string,
+	signer chain.Signer,
+	build func() (*api.TransactionExtention, error),
+) (string, error) {
+	if signer == nil || signer.Family() != chain.FamilyTron {
+		return "", errors.New("Tron signer is required")
+	}
+	if err := address.Validate(from); err != nil {
+		return "", fmt.Errorf("%w: invalid sender address: %s", ErrInvalidRequest, err)
+	}
+	tx, err := retry(ctx, s.nodes, build)
+	if err != nil {
+		return "", s.chainError("build transaction", err)
+	}
+	txid, err := s.submitWithSigner(ctx, tx, signer)
+	if err != nil {
+		return "", err
+	}
+	s.invalidate(from)
 	return txid, nil
 }

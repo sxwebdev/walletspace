@@ -1,0 +1,18 @@
+# Per-network overrides are stored as ~/.walletspace/networks.yaml.
+# The settings UI validates RPC identity before saving changes.
+schema_version: 1
+
+networks:
+  ethereum-sepolia:
+    enabled: true
+    rpc_urls:
+      - https://ethereum-sepolia-rpc.publicnode.com
+    discovery_enabled: true
+    # Values support ${ENV_NAME}; the resolved secret is never returned by API.
+    headers:
+      Authorization: ${SEPOLIA_RPC_AUTH}
+
+  tron-nile:
+    enabled: true
+    rpc_urls:
+      - https://nile.trongrid.io
