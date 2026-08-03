@@ -12,9 +12,11 @@ require (
 	github.com/sxwebdev/gotron v0.0.0-20260728212623-3852652709a3
 	github.com/sxwebdev/xconfig v0.4.1
 	github.com/sxwebdev/xconfig/decoders/xconfigyaml v0.0.0-20260505165448-c5f59ca4c792
+	github.com/sxwebdev/xutils v0.0.0-20260625155121-842ebff2b685
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.45.0
+	google.golang.org/grpc v1.83.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -58,5 +60,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260729162451-8efbd57d26e0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260729162451-8efbd57d26e0 // indirect
-	google.golang.org/grpc v1.83.0 // indirect
 )

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -51,13 +52,85 @@ func RequestHash(value any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// NormalizeKey brings a client-supplied idempotency key to the one spelling
+// this package stores it under. It exists so that every entry point agrees on
+// it — which Begin and Update used not to do.
+//
+// Begin trimmed the key; Update took the raw header. net/textproto strips
+// leading and trailing spaces and tabs from a header value, but not \v, \f or
+// U+00A0, so a key padded with any of those was reserved under one name and
+// looked up under another. The mismatch surfaced only after the transaction had
+// been signed and broadcast: Update reported "operation not found", the txid
+// was lost, the record stuck at building, and every retry got a permanent 409.
+func NormalizeKey(key string) string {
+	return strings.TrimSpace(key)
+}
+
+const (
+	// maxOperations bounds the file. Every send, stake and deployment adds a
+	// record and nothing ever removed one, so the file grew for the life of the
+	// space — and it is read and rewritten in full on every operation, which
+	// makes an unbounded file a cost paid on each one.
+	maxOperations = 512
+	// retention is how long a settled record is worth keeping. It answers the
+	// replay of an interrupted request, which happens in seconds, and gives the
+	// user a window in which the history is still there.
+	retention = 30 * 24 * time.Hour
+)
+
+// resolved reports whether a record has reached a final state, so dropping it
+// cannot lead to a duplicate transaction.
+//
+// This is a narrower question than InFlight asks. A confirmed transaction is
+// on chain and its record is history; an unresolved one is what a replay is
+// recognised by, and losing it would let the same intent be signed twice.
+func resolved(status string) bool {
+	return status == StatusConfirmed || status == StatusFailed
+}
+
+// prune keeps the file bounded, dropping the oldest droppable records and only
+// as far as it has to.
+//
+// A record is droppable once it is resolved, or once it is old enough that an
+// unresolved one is stale rather than pending. If nothing can be dropped, the
+// new operation is refused rather than an unresolved record being displaced —
+// being unable to start another transfer is recoverable; forgetting one that is
+// already in flight is not.
+func prune(operations map[string]Operation, now time.Time) error {
+	if len(operations) < maxOperations {
+		return nil
+	}
+	droppable := make([]Operation, 0, len(operations))
+	for _, item := range operations {
+		if !resolved(item.Status) && now.Sub(item.UpdatedAt) < retention {
+			continue
+		}
+		droppable = append(droppable, item)
+	}
+	sort.Slice(droppable, func(i, j int) bool {
+		return droppable[i].UpdatedAt.Before(droppable[j].UpdatedAt)
+	})
+	for _, item := range droppable {
+		if len(operations) < maxOperations {
+			break
+		}
+		delete(operations, item.Key)
+	}
+	if len(operations) >= maxOperations {
+		return fmt.Errorf(
+			"%d operations are still in progress; wait for them to settle", len(operations),
+		)
+	}
+	return nil
+}
+
 // Begin reserves an idempotency key. existing is true when the same request was
 // already reserved or completed.
 func (s *Store) Begin(spaceID, key, requestHash, networkID string) (operation Operation, existing bool, err error) {
 	if !storage.ValidID(spaceID, "spc_") {
 		return Operation{}, false, errors.New("invalid space id")
 	}
-	key = strings.TrimSpace(key)
+	key = NormalizeKey(key)
 	if key == "" || len(key) > 128 {
 		return Operation{}, false, errors.New("Idempotency-Key is required and must be at most 128 characters")
 	}
@@ -74,9 +147,12 @@ func (s *Store) Begin(spaceID, key, requestHash, networkID string) (operation Op
 		return previous, true, nil
 	}
 	now := time.Now().UTC()
+	if err := prune(current.Operations, now); err != nil {
+		return Operation{}, false, err
+	}
 	created := Operation{
 		Key: key, RequestHash: requestHash, NetworkID: networkID,
-		Status: "building", CreatedAt: now, UpdatedAt: now,
+		Status: StatusBuilding, CreatedAt: now, UpdatedAt: now,
 	}
 	current.Operations[key] = created
 	if err := s.saveLocked(spaceID, current); err != nil {
@@ -89,6 +165,7 @@ func (s *Store) Update(spaceID, key, txHash, status string) (Operation, error) {
 	if !storage.ValidID(spaceID, "spc_") {
 		return Operation{}, errors.New("invalid space id")
 	}
+	key = NormalizeKey(key)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, err := s.loadLocked(spaceID)
@@ -99,7 +176,12 @@ func (s *Store) Update(spaceID, key, txHash, status string) (Operation, error) {
 	if !ok {
 		return Operation{}, errors.New("operation not found")
 	}
-	item.TxHash = txHash
+	// A transaction that is already known keeps its id. The recorder writes it
+	// before the broadcast, and a later failure must not erase the one piece of
+	// information that says which transaction may be on chain.
+	if txHash != "" {
+		item.TxHash = txHash
+	}
 	item.Status = status
 	item.UpdatedAt = time.Now().UTC()
 	current.Operations[key] = item

@@ -18,10 +18,12 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/shopspring/decimal"
 	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/network"
+	"github.com/sxwebdev/walletspace/internal/operation"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -42,8 +44,11 @@ func (StaticEndpoints) Endpoints(_ context.Context, item network.Network) ([]str
 	return append([]string(nil), item.RPCFallbacks...), nil
 }
 
+// HeaderProvider resolves the credentials that belong to one endpoint. The
+// endpoint is part of the question: a provider key configured for a custom URL
+// must not travel to the official fallback the resolver moves on to.
 type HeaderProvider interface {
-	Headers(item network.Network) (http.Header, error)
+	Headers(item network.Network, endpoint string) (http.Header, error)
 }
 
 type EndpointReporter interface {
@@ -181,9 +186,7 @@ func (a *Adapter) BalanceStream(
 		group, groupCtx := errgroup.WithContext(ctx)
 		group.SetLimit(8)
 		for _, holder := range accounts {
-			holder := holder
 			for _, asset := range assets {
-				asset := asset
 				group.Go(func() error {
 					amount, err := a.Balance(groupCtx, networkID, holder.Address, asset)
 					result := chain.Balance{AccountID: holder.AccountID, AssetID: asset.ID}
@@ -228,7 +231,7 @@ func (a *Adapter) Balance(ctx context.Context, networkID, holder string, asset c
 			return "", packErr
 		}
 		result, callErr := client.CallContract(ctx, ethereum.CallMsg{
-			To: ptr(common.HexToAddress(asset.Contract)), Data: input,
+			To: new(common.HexToAddress(asset.Contract)), Data: input,
 		}, nil)
 		if callErr != nil {
 			return "", callErr
@@ -445,7 +448,14 @@ func (a *Adapter) Send(
 	if err != nil {
 		return chain.Transaction{}, fmt.Errorf("read pending nonce: %w", err)
 	}
-	fees, err := suggestFees(ctx, client)
+	current, err := suggestFees(ctx, client)
+	if err != nil {
+		return chain.Transaction{}, err
+	}
+	// What gets signed is what the user approved, never the answer the node
+	// just gave. The fresh numbers are consulted only to notice that the
+	// approval has gone stale, in which case the user has to see the new ones.
+	fees, gasLimit, err := approvedFees(req.Approved, current, gasLimit)
 	if err != nil {
 		return chain.Transaction{}, err
 	}
@@ -474,10 +484,32 @@ func (a *Adapter) Send(
 	}
 	hash := signed.Hash().Hex()
 	if err := client.SendTransaction(ctx, signed); err != nil {
-		return chain.Transaction{NetworkID: networkID, Hash: hash, Status: "broadcast_unknown"},
-			fmt.Errorf("broadcast %s: %w", hash, err)
+		if rejected(err) {
+			return chain.Transaction{
+					NetworkID: networkID, Hash: hash, Status: operation.StatusFailed,
+				},
+				fmt.Errorf("%w: broadcast %s: %w", chain.ErrInvalidRequest, hash, err)
+		}
+		return chain.Transaction{
+				NetworkID: networkID, Hash: hash, Status: operation.StatusBroadcastUnknown,
+			},
+			fmt.Errorf("broadcast %s: %w", hash, errors.Join(chain.ErrBroadcastUnknown, err))
 	}
-	return chain.Transaction{NetworkID: networkID, Hash: hash, Status: "pending"}, nil
+	return chain.Transaction{NetworkID: networkID, Hash: hash, Status: operation.StatusPending}, nil
+}
+
+// rejected reports that the node answered and turned the transaction down, as
+// opposed to never answering at all.
+//
+// The distinction decides what the caller may do next, and it used to be
+// missing here: every send error became broadcast_unknown, so a flat
+// "insufficient funds for gas" — where nothing reached the chain and a corrected
+// retry is exactly right — was reported as a transaction that might be on chain
+// and must not be replaced. A JSON-RPC error object only exists because the node
+// produced one; a timeout or a reset connection arrives as anything but.
+func rejected(err error) bool {
+	var rpcErr rpc.Error
+	return errors.As(err, &rpcErr)
 }
 
 func (a *Adapter) Transaction(ctx context.Context, networkID, hash string) (chain.Transaction, error) {
@@ -502,19 +534,58 @@ func (a *Adapter) Transaction(ctx context.Context, networkID, hash string) (chai
 	return chain.Transaction{NetworkID: networkID, Hash: hash, Status: status}, nil
 }
 
+// parseRecipient accepts the two forms of an EVM address a person can be
+// expected to hold, and rejects the one that means something went wrong.
+//
+// common.IsHexAddress only checks length and hex digits, so it says yes to an
+// address whose EIP-55 checksum is broken. That checksum exists precisely to
+// catch a mistyped or tampered character, and every wallet and explorer emits
+// the mixed-case form — so a mixed-case address that fails it is not a
+// stylistic variation, it is a corrupted address, and sending to it burns the
+// funds. An address in a single case carries no checksum to verify and is the
+// canonical pre-EIP-55 form, so it is taken as given.
+func parseRecipient(value string) (common.Address, error) {
+	if !common.IsHexAddress(value) {
+		return common.Address{}, fmt.Errorf("%w: invalid EVM address", chain.ErrInvalidRequest)
+	}
+	digits := strings.TrimPrefix(strings.TrimPrefix(value, "0x"), "0X")
+	if digits == strings.ToLower(digits) || digits == strings.ToUpper(digits) {
+		return common.HexToAddress(value), nil
+	}
+	// ValidChecksum compares the original spelling against Hex(), which always
+	// emits a lower-case "0x". So the prefix has to be normalised first, or a
+	// correctly checksummed address written bare or with "0X" — the form several
+	// explorers and CSV exports produce — would be reported as corrupted.
+	mixed, err := common.NewMixedcaseAddressFromString("0x" + digits)
+	if err != nil || !mixed.ValidChecksum() {
+		return common.Address{}, fmt.Errorf(
+			"%w: the address checksum does not match, so at least one character is wrong; "+
+				"paste it again, or enter it in lower case to skip the check",
+			chain.ErrInvalidRequest,
+		)
+	}
+
+	return mixed.Address(), nil
+}
+
 func (a *Adapter) transferCall(item network.Network, req chain.TransferRequest) (ethereum.CallMsg, *big.Int, error) {
 	if req.Asset.NetworkID != item.ID {
 		return ethereum.CallMsg{}, nil, fmt.Errorf("%w: asset belongs to another network", chain.ErrInvalidRequest)
 	}
-	if !common.IsHexAddress(req.From) || !common.IsHexAddress(req.To) {
+	if !common.IsHexAddress(req.From) {
 		return ethereum.CallMsg{}, nil, fmt.Errorf("%w: invalid EVM address", chain.ErrInvalidRequest)
+	}
+	// The recipient is the one address a person types or pastes, so it is the
+	// one worth checking properly rather than for hex-ness alone.
+	to, err := parseRecipient(req.To)
+	if err != nil {
+		return ethereum.CallMsg{}, nil, err
 	}
 	units, err := decimalUnits(req.Amount, req.Asset.Decimals)
 	if err != nil {
 		return ethereum.CallMsg{}, nil, err
 	}
 	from := common.HexToAddress(req.From)
-	to := common.HexToAddress(req.To)
 	switch req.Asset.Kind {
 	case "native":
 		return ethereum.CallMsg{From: from, To: &to, Value: units}, units, nil
@@ -559,7 +630,7 @@ func (a *Adapter) client(ctx context.Context, networkID string) (network.Network
 		for _, endpoint := range endpoints {
 			var headers http.Header
 			if provider, ok := a.endpoints.(HeaderProvider); ok {
-				headers, err = provider.Headers(item)
+				headers, err = provider.Headers(item, endpoint)
 				if err != nil {
 					return network.Network{}, nil, err
 				}
@@ -637,19 +708,103 @@ type fees struct {
 
 func (f fees) maxFee() *big.Int { return new(big.Int).Set(f.feeCap) }
 
+// maxSuggestedGasPriceWei is the highest per-gas price this wallet will take
+// from a node without calling it nonsense: 10,000 gwei.
+//
+// Both inputs to an EIP-1559 estimate come from the node, so a hostile or
+// broken one can name any price it likes and the whole native balance goes to
+// the miner as a tip. Real congestion on the supported chains peaks two orders
+// of magnitude below this, so the ceiling only ever catches an answer that was
+// never plausible.
+var maxSuggestedGasPriceWei = new(big.Int).SetUint64(10_000 * params.GWei)
+
 func suggestFees(ctx context.Context, client *ethclient.Client) (fees, error) {
 	header, headerErr := client.HeaderByNumber(ctx, nil)
 	tip, tipErr := client.SuggestGasTipCap(ctx)
 	if headerErr == nil && tipErr == nil && header.BaseFee != nil {
 		feeCap := new(big.Int).Mul(header.BaseFee, big.NewInt(2))
 		feeCap.Add(feeCap, tip)
-		return fees{model: "eip1559", tipCap: tip, feeCap: feeCap}, nil
+		result := fees{model: "eip1559", tipCap: tip, feeCap: feeCap}
+		return result, result.sane()
 	}
 	price, err := client.SuggestGasPrice(ctx)
 	if err != nil {
 		return fees{}, fmt.Errorf("suggest gas price: %w", err)
 	}
-	return fees{model: "legacy", tipCap: new(big.Int), feeCap: price}, nil
+	result := fees{model: "legacy", tipCap: new(big.Int), feeCap: price}
+	return result, result.sane()
+}
+
+func (f fees) sane() error {
+	if f.feeCap == nil || f.tipCap == nil || f.feeCap.Sign() < 0 || f.tipCap.Sign() < 0 {
+		return fmt.Errorf("%w: RPC returned a negative gas price", chain.ErrInvalidRequest)
+	}
+	if f.feeCap.Cmp(maxSuggestedGasPriceWei) > 0 || f.tipCap.Cmp(maxSuggestedGasPriceWei) > 0 {
+		return fmt.Errorf(
+			"%w: RPC suggested %s wei per gas, above the %s wei ceiling",
+			chain.ErrInvalidRequest, f.feeCap, maxSuggestedGasPriceWei,
+		)
+	}
+
+	return nil
+}
+
+// approvedFees turns the user's approval into the values that will actually be
+// signed, refusing when the network has moved past what they agreed to.
+//
+// Signing the approved caps is what makes the confirmation meaningful: the
+// sender cannot be charged above them whatever the node says next. The staleness
+// checks are about the transaction still being useful — a gas limit below what
+// the call now needs would run out of gas and burn the fee, and a fee cap under
+// the current base fee would simply never be mined.
+func approvedFees(approval *chain.FeeApproval, current fees, currentGas uint64) (fees, uint64, error) {
+	if approval == nil {
+		return fees{}, 0, fmt.Errorf(
+			"%w: this transfer was not confirmed against a fee estimate", chain.ErrInvalidRequest,
+		)
+	}
+	if approval.FeeModel != current.model {
+		return fees{}, 0, fmt.Errorf(
+			"%w: the network switched from %s to %s pricing",
+			chain.ErrFeeChanged, approval.FeeModel, current.model,
+		)
+	}
+	feeCap, ok := new(big.Int).SetString(approval.MaxFeePerGas, 10)
+	if !ok || feeCap.Sign() < 0 {
+		return fees{}, 0, fmt.Errorf("%w: approved max fee per gas is not a number", chain.ErrInvalidRequest)
+	}
+	tipCap, ok := new(big.Int).SetString(approval.MaxPriorityFeePerGas, 10)
+	if !ok || tipCap.Sign() < 0 {
+		return fees{}, 0, fmt.Errorf("%w: approved priority fee is not a number", chain.ErrInvalidRequest)
+	}
+	if approval.GasLimit == 0 {
+		return fees{}, 0, fmt.Errorf("%w: approved gas limit is zero", chain.ErrInvalidRequest)
+	}
+	approved := fees{model: approval.FeeModel, tipCap: tipCap, feeCap: feeCap}
+	// An approval is user input on its way to a signature, so it is bounded by
+	// the same ceiling as anything a node suggests.
+	if err := approved.sane(); err != nil {
+		return fees{}, 0, err
+	}
+	if tipCap.Cmp(feeCap) > 0 {
+		return fees{}, 0, fmt.Errorf(
+			"%w: approved priority fee is above the approved max fee", chain.ErrInvalidRequest,
+		)
+	}
+	if currentGas > approval.GasLimit {
+		return fees{}, 0, fmt.Errorf(
+			"%w: this transfer now needs %d gas, %d was approved",
+			chain.ErrFeeChanged, currentGas, approval.GasLimit,
+		)
+	}
+	if current.feeCap.Cmp(feeCap) > 0 {
+		return fees{}, 0, fmt.Errorf(
+			"%w: the network now asks %s wei per gas, %s was approved",
+			chain.ErrFeeChanged, current.feeCap, feeCap,
+		)
+	}
+
+	return approved, approval.GasLimit, nil
 }
 
 func decimalUnits(value string, decimals uint8) (*big.Int, error) {
@@ -664,7 +819,8 @@ func decimalUnits(value string, decimals uint8) (*big.Int, error) {
 	return scaled.BigInt(), nil
 }
 
-func ptr[T any](value T) *T { return &value }
+//go:fix inline
+func ptr[T any](value T) *T { return new(value) }
 
 func publicKey(raw []byte) (*ecdsa.PublicKey, error) {
 	key, err := crypto.UnmarshalPubkey(raw)

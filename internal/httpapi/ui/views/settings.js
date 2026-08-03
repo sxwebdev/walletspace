@@ -79,12 +79,12 @@ function assetsCard() {
   return `<section class="settings-card" id="assets">
     <h2>Assets</h2><p class="muted">The contract is verified against the chosen network; the symbol and the decimals are read on-chain before saving.</p>
     <form data-assets>
-      <label class="field"><span>Network</span><select name="network_id">${networks.map((item, index) => `<option value="${item.id}" ${index === 0 ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>Network</span><select name="network_id">${networks.map((item, index) => `<option value="${escapeHTML(item.id)}" ${index === 0 ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
       <label class="field"><span>ERC20 / TRC20 contract</span><input name="contract" required spellcheck="false"></label>
       <div class="error-text" data-error></div>
       <div class="form-actions"><button class="button primary" type="submit">Verify and add</button></div>
     </form>
-    <div class="network-overrides" data-assets-list style="margin-top:16px">${assetRows()}</div>
+    <div class="network-overrides gap-above-md" data-assets-list>${assetRows()}</div>
   </section>`;
 }
 
@@ -102,7 +102,7 @@ function generalCard() {
     <form data-general>
       <label class="field"><span>UI address</span><input name="addr" value="${escapeHTML(settings.server.addr)}" required></label>
       <label><input type="checkbox" name="open_browser" ${settings.server.open_browser ? "checked" : ""}> Open a browser on start</label>
-      <label class="field"><span>Default space</span><select name="last_space_id"><option value="">Not set</option>${spaces.map((item) => `<option value="${item.id}" ${settings.ui.last_space_id === item.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>Default space</span><select name="last_space_id"><option value="">Not set</option>${spaces.map((item) => `<option value="${escapeHTML(item.id)}" ${settings.ui.last_space_id === item.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
       <div class="error-text" data-error></div>
       <div class="form-actions"><button class="button primary" type="submit">Save general</button></div>
     </form>
@@ -113,7 +113,7 @@ function securityCard() {
   return `<section class="settings-card" id="security">
     <h2>Security</h2><p class="muted">Auto-lock is counted separately for every space.</p>
     <form data-security>
-      <label class="field"><span>Auto-lock timeout</span><input name="auto_lock" value="${escapeHTML(settings.security.auto_lock)}" placeholder="15m" required><small class="hint">Go duration: 30s, 15m, 2h. A value of 0 disables auto-lock.</small></label>
+      <label class="field"><span>Auto-lock timeout</span><input name="auto_lock" value="${escapeHTML(settings.security.auto_lock)}" placeholder="15m" required><small class="hint">Go duration: 5m, 15m, 2h. Between 1m and 24h — auto-lock is what takes the decrypted seed back out of memory, so it cannot be switched off.</small></label>
       <div class="error-text" data-error></div>
       <div class="form-actions"><button class="button primary" type="submit">Save security</button></div>
     </form>
@@ -143,17 +143,18 @@ function networksCard() {
       ${networks.map((item) => {
         const override = overrides[item.id] || {};
         const enabled = override.enabled ?? item.enabled;
-        return `<form class="network-row" data-network="${item.id}">
+        const urls = (override.endpoints || []).map((endpoint) => endpoint.url);
+        return `<form class="network-row" data-network="${escapeHTML(item.id)}">
           <div><strong>${escapeHTML(item.name)}</strong><br><span class="muted">${escapeHTML(item.family.toUpperCase())} · ${escapeHTML(item.chain_id)}</span></div>
-          <label class="field"><span class="sr-only">RPC URLs</span><textarea name="rpc_urls" rows="2" placeholder="${escapeHTML(item.rpc_fallbacks[0] || "")}">${escapeHTML((override.rpc_urls || []).join("\n"))}</textarea></label>
+          <label class="field"><span class="sr-only">RPC URLs</span><textarea name="rpc_urls" rows="2" placeholder="${escapeHTML(item.rpc_fallbacks[0] || "")}">${escapeHTML(urls.join("\n"))}</textarea></label>
           <div class="form-stack">
             <label><input type="checkbox" name="enabled" ${enabled ? "checked" : ""}> Enabled</label>
             <button class="button secondary" type="submit">Apply</button>
             ${overrides[item.id] ? '<button class="button" type="button" data-reset>Reset</button>' : ""}
           </div>
-          <details style="grid-column:1/-1">
+          <details class="span-full">
             <summary>Advanced override</summary>
-            <div class="form-stack" style="margin-top:12px">
+            <div class="form-stack gap-above">
               <label class="field"><span>Discovery</span><select name="discovery_enabled">
                 <option value="">Per global policy</option>
                 <option value="true" ${override.discovery_enabled === true ? "selected" : ""}>Enabled</option>
@@ -162,16 +163,54 @@ function networksCard() {
               <label class="field"><span>Explorer address template</span><input name="explorer_address" value="${escapeHTML(override.explorer?.address || "")}" placeholder="${escapeHTML(item.explorer.address)}"></label>
               <label class="field"><span>Explorer transaction template</span><input name="explorer_tx" value="${escapeHTML(override.explorer?.tx || "")}" placeholder="${escapeHTML(item.explorer.tx)}"></label>
               <label class="field"><span>Explorer block template</span><input name="explorer_block" value="${escapeHTML(override.explorer?.block || "")}" placeholder="${escapeHTML(item.explorer.block)}"></label>
-              <label class="field"><span>Provider header name</span><input name="header_name" placeholder="Authorization"></label>
-              <label class="field"><span>Provider header secret</span><input type="password" name="header_value" placeholder="${override.has_headers ? "A secret is already stored; an empty field leaves it alone" : "Optional"}" autocomplete="new-password"></label>
-              ${override.has_headers ? '<label><input type="checkbox" name="clear_headers"> Delete the stored provider headers</label>' : ""}
+              <div class="form-stack" data-credentials>${credentialRows(urls, storedCredentials(override))}</div>
             </div>
           </details>
-          <div class="error-text" data-error style="grid-column:1/-1"></div>
+          <div class="error-text span-full" data-error></div>
         </form>`;
       }).join("")}
     </div>
   </section>`;
+}
+
+function storedCredentials(override) {
+  return new Set((override.endpoints || []).filter((endpoint) => endpoint.has_headers)
+    .map((endpoint) => endpoint.url));
+}
+
+// One credential block per URL, not one per network. A provider key is sent
+// only to the endpoint it sits under: the rest of the list, the official
+// fallbacks and anything discovery suggests never see it.
+function credentialRows(urls, stored) {
+  if (!urls.length) {
+    return '<p class="muted">Add an RPC URL above to attach a provider credential to it.</p>';
+  }
+  return urls.map((url, index) => `<fieldset class="endpoint-credential">
+    <legend>${escapeHTML(url)}</legend>
+    <label class="field"><span>Provider header name</span><input name="header_name_${index}" placeholder="Authorization"></label>
+    <label class="field"><span>Provider header secret</span><input type="password" name="header_value_${index}" placeholder="${stored.has(url) ? "A secret is stored for this endpoint; an empty field leaves it alone" : "Optional"}" autocomplete="new-password"></label>
+    ${stored.has(url) ? `<label><input type="checkbox" name="clear_headers_${index}"> Delete the stored credential</label>` : ""}
+  </fieldset>`).join("");
+}
+
+function urlsOf(form) {
+  return String(form.elements.rpc_urls.value).split(/\s+/).filter(Boolean);
+}
+
+// The credential blocks are keyed by URL, so they have to follow the textarea
+// rather than the state that was last saved. Without this a secret typed after
+// an edit would be attached to the endpoint that used to be on that line.
+function renderCredentialRows(form) {
+  const container = form.querySelector("[data-credentials]");
+  const next = credentialRows(urlsOf(form), storedCredentials(overrides[form.dataset.network] || {}));
+  if (container.dataset.rendered !== next) {
+    container.innerHTML = next;
+    container.dataset.rendered = next;
+  }
+}
+
+function bindCredentialRows(form) {
+  form.elements.rpc_urls.addEventListener("input", () => renderCredentialRows(form));
 }
 
 function bindPage(root) {
@@ -190,6 +229,7 @@ function bindPage(root) {
   discoveryForm.addEventListener("submit", submitDiscovery);
   root.querySelectorAll("[data-network]").forEach((form) => {
     form.addEventListener("submit", submitNetwork);
+    bindCredentialRows(form);
     form.querySelector("[data-reset]")?.addEventListener("click", () => resetNetwork(form));
   });
   const assetsForm = root.querySelector("[data-assets]");
@@ -283,24 +323,37 @@ async function submitNetwork(event) {
     const explorerAddress = data.get("explorer_address");
     const explorerTX = data.get("explorer_tx");
     const explorerBlock = data.get("explorer_block");
-    const headerName = String(data.get("header_name") || "").trim();
-    const headerValue = String(data.get("header_value") || "");
     const result = await saveNetwork(form.dataset.network, {
       enabled: data.get("enabled") === "on",
-      rpc_urls: String(data.get("rpc_urls")).split(/\s+/).filter(Boolean),
+      endpoints: urlsOf(form).map((url, index) => endpointBody(url, data, index)),
       discovery_enabled: discoveryValue === "" ? null : discoveryValue === "true",
       explorer: explorerAddress || explorerTX || explorerBlock ? {
         address: explorerAddress,
         tx: explorerTX,
         block: explorerBlock,
       } : null,
-      provider_headers: headerName && headerValue ? { [headerName]: headerValue } : {},
-      clear_headers: data.get("clear_headers") === "on",
     }, networkRevision);
     overrides = result.networks;
     networkRevision = result.revision;
     settings.revision = result.revision;
+    // A credential that was just saved is now stored, so the block for it has to
+    // switch to "already stored" and offer the delete checkbox.
+    form.querySelectorAll('[name^="header_value_"]').forEach((input) => {
+      input.value = "";
+    });
+    renderCredentialRows(form);
   });
+}
+
+// An omitted headers field leaves whatever is stored for that endpoint alone;
+// an empty object deletes it. The browser is never given the stored secret, so
+// it cannot send one back, and "unchanged" has to be expressible without it.
+function endpointBody(url, data, index) {
+  const name = String(data.get(`header_name_${index}`) || "").trim();
+  const value = String(data.get(`header_value_${index}`) || "");
+  if (data.get(`clear_headers_${index}`) === "on") return { url, headers: {} };
+  if (name && value) return { url, headers: { [name]: value } };
+  return { url };
 }
 
 async function resetNetwork(form) {
@@ -310,6 +363,7 @@ async function resetNetwork(form) {
     networkRevision = result.revision;
     settings.revision = result.revision;
     form.querySelector('[name="rpc_urls"]').value = "";
+    renderCredentialRows(form);
     form.querySelector("[data-reset]")?.remove();
   });
 }

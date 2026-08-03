@@ -38,6 +38,18 @@ type platformFixture struct {
 	prices  *priceFake
 }
 
+// The address the test guard accepts, and the token it demands. Requests built
+// by platformRequest carry both; anything testing the boundary itself varies
+// them deliberately.
+const (
+	testHost  = "127.0.0.1:8080"
+	testToken = "test-capability-token"
+)
+
+func testAccess() httpapi.Access {
+	return httpapi.Access{Token: testToken, Hosts: []string{testHost}}
+}
+
 type priceFake struct {
 	mu        sync.Mutex
 	requested []string
@@ -79,7 +91,7 @@ func newPlatformFixture(t *testing.T) platformFixture {
 		t.Fatalf("config.NewHomeManager() error = %v", err)
 	}
 	spaces, err := space.NewManager(home, 15*time.Minute, vault.Params{
-		Time: 1, MemoryKiB: 8 * 1024, Parallelism: 1,
+		Time: 2, MemoryKiB: 32 * 1024, Parallelism: 1,
 	})
 	if err != nil {
 		t.Fatalf("space.NewManager() error = %v", err)
@@ -110,7 +122,7 @@ func newPlatformFixture(t *testing.T) platformFixture {
 	prices := &priceFake{}
 	handler, err := httpapi.NewPlatform(
 		spaces, settings, registry, operation.New(home), mustAssetStore(t, home), evm, tron, nodeDoctor,
-		prices,
+		prices, testAccess(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
@@ -150,6 +162,8 @@ func platformRequest(t *testing.T, handler http.Handler, method, path string, bo
 	if method != http.MethodGet && method != http.MethodHead {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	request.Host = testHost
+	request.Header.Set(httpapi.TokenHeader, testToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
@@ -173,7 +187,7 @@ func TestPlatformFirstRunAndSecretHeaders(t *testing.T) {
 		t.Fatalf("GET /api/spaces = %d %s", empty.Code, empty.Body.String())
 	}
 	created := platformRequest(t, fixture.handler, http.MethodPost, "/api/spaces", map[string]any{
-		"name": "", "mnemonic": "", "password": "password",
+		"name": "", "mnemonic": "", "password": "test-vault-password",
 		"network_id": "tron-mainnet",
 	})
 	if created.Code != http.StatusCreated {
@@ -212,7 +226,7 @@ func TestPlatformImportBadgeAndLockedSecrets(t *testing.T) {
 
 	fixture := newPlatformFixture(t)
 	created, err := fixture.spaces.Create(space.CreateRequest{
-		Password: "password", ImportedOnly: true,
+		Password: "test-vault-password", ImportedOnly: true,
 	})
 	if err != nil {
 		t.Fatalf("spaces.Create() error = %v", err)
@@ -238,11 +252,78 @@ func TestPlatformImportBadgeAndLockedSecrets(t *testing.T) {
 	if err := fixture.spaces.Lock(created.Space.ID); err != nil {
 		t.Fatalf("spaces.Lock() error = %v", err)
 	}
-	exported := platformRequest(t, fixture.handler, http.MethodPost,
-		"/api/spaces/"+created.Space.ID+"/accounts/"+payload.Account.ID+"/private-key",
+	path := "/api/spaces/" + created.Space.ID + "/accounts/" + payload.Account.ID + "/private-key"
+
+	// No password: refused before the lock state is even consulted.
+	exported := platformRequest(t, fixture.handler, http.MethodPost, path,
 		map[string]string{"family": "evm"})
-	if exported.Code != http.StatusLocked {
-		t.Fatalf("locked export = %d %s", exported.Code, exported.Body.String())
+	if exported.Code != http.StatusUnauthorized {
+		t.Fatalf("export without a password = %d %s", exported.Code, exported.Body.String())
+	}
+
+	// Wrong password: the same answer, so neither confirms the other.
+	wrong := platformRequest(t, fixture.handler, http.MethodPost, path,
+		map[string]string{"family": "evm", "password": "not-the-password"})
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("export with a wrong password = %d %s", wrong.Code, wrong.Body.String())
+	}
+
+	// Right password, but the space is locked: the step-up does not substitute
+	// for unlocking it.
+	locked := platformRequest(t, fixture.handler, http.MethodPost, path,
+		map[string]string{"family": "evm", "password": "test-vault-password"})
+	if locked.Code != http.StatusLocked {
+		t.Fatalf("locked export = %d %s", locked.Code, locked.Body.String())
+	}
+	if strings.Contains(locked.Body.String(), "private_key") {
+		t.Error("a locked export returned key material")
+	}
+}
+
+// An unlocked space is not evidence that the person asking is the owner: a tab
+// left open, a same-origin script or any local client holding the capability
+// token all inherit that state. The password is the one thing none of them has.
+func TestPlatformSecretExportNeedsTheSpacePassword(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPlatformFixture(t)
+	created := platformRequest(t, fixture.handler, http.MethodPost, "/api/spaces", map[string]any{
+		"password": "correct horse battery", "network_id": "tron-nile", "first": true,
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST /api/spaces = %d %s", created.Code, created.Body.String())
+	}
+	var space struct {
+		Space struct {
+			ID string `json:"id"`
+		} `json:"space"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &space); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	path := "/api/spaces/" + space.Space.ID + "/mnemonic"
+
+	for _, body := range []map[string]string{
+		{},
+		{"password": ""},
+		{"password": "correct horse batter"},
+	} {
+		response := platformRequest(t, fixture.handler, http.MethodPost, path, body)
+		if response.Code != http.StatusUnauthorized {
+			t.Errorf("mnemonic with %v = %d %s", body, response.Code, response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), "abandon") {
+			t.Error("a refused request returned the recovery phrase")
+		}
+	}
+
+	revealed := platformRequest(t, fixture.handler, http.MethodPost, path,
+		map[string]string{"password": "correct horse battery"})
+	if revealed.Code != http.StatusOK {
+		t.Fatalf("mnemonic with the right password = %d %s", revealed.Code, revealed.Body.String())
+	}
+	if !strings.Contains(revealed.Body.String(), "mnemonic") {
+		t.Errorf("mnemonic response = %s", revealed.Body.String())
 	}
 }
 
@@ -251,7 +332,7 @@ func TestPlatformDerivesPerNetworkAndReusesCompatibleWallet(t *testing.T) {
 
 	fixture := newPlatformFixture(t)
 	created := platformRequest(t, fixture.handler, http.MethodPost, "/api/spaces", map[string]any{
-		"password": "password", "network_id": "tron-nile",
+		"password": "test-vault-password", "network_id": "tron-nile",
 	})
 	if created.Code != http.StatusCreated {
 		t.Fatalf("POST /api/spaces = %d %s", created.Code, created.Body.String())
@@ -424,9 +505,11 @@ func TestPlatformRejectsTrailingJSON(t *testing.T) {
 	fixture := newPlatformFixture(t)
 	request := httptest.NewRequestWithContext(
 		t.Context(), http.MethodPost, "/api/spaces",
-		strings.NewReader(`{"password":"password"} {"password":"second"}`),
+		strings.NewReader(`{"password":"test-vault-password"} {"password":"second"}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
+	request.Host = testHost
+	request.Header.Set(httpapi.TokenHeader, testToken)
 	response := httptest.NewRecorder()
 	fixture.handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {

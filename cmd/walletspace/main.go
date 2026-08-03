@@ -8,10 +8,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -179,7 +181,10 @@ func run(log *slog.Logger) error {
 	nodeDoctor, err := doctor.New(
 		ctx, registry, resolver,
 		func(checkCtx context.Context, item network.Network, endpoint string) error {
-			headers, headerErr := resolver.Headers(item)
+			// Per endpoint, not per network: the Doctor probes the official
+			// fallbacks and whatever discovery suggested alongside the user's own
+			// nodes, and a provider credential belongs to exactly one of them.
+			headers, headerErr := resolver.Headers(item, endpoint)
 			if headerErr != nil {
 				return headerErr
 			}
@@ -189,8 +194,7 @@ func run(log *slog.Logger) error {
 				)
 			}
 			return tronchain.ProbeEndpoint(
-				checkCtx, item, endpoint, headers.Get("TRON-PRO-API-KEY"),
-				resolver.HTTPClient(item),
+				checkCtx, item, endpoint, headers, resolver.HTTPClient(item),
 			)
 		},
 		doctor.Options{Networks: func() []network.Network {
@@ -208,26 +212,52 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer nodeDoctor.Close()
-	handler, err := httpapi.NewPlatform(
-		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor,
-		price.New(price.Options{}), log,
-	)
-	if err != nil {
-		return err
-	}
 
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
-	addr := snapshot.Config.Server.Addr
-	listener, err := net.Listen("tcp", addr)
+	// The listener comes first: the guard checks the Host header against the
+	// address actually opened, and with the default port of 0 that address is
+	// only known once the kernel has chosen one.
+	configured := snapshot.Config.Server.Addr
+	listener, err := net.Listen("tcp", configured)
 	if err != nil {
 		if errors.Is(err, syscall.EADDRINUSE) {
 			return fmt.Errorf(
 				"%s is already in use — another walletspace is probably still running; "+
 					"stop it (lsof -nP -iTCP:%s -sTCP:LISTEN) or change the address in settings",
-				addr, portOf(addr),
+				configured, portOf(configured),
 			)
 		}
-		return fmt.Errorf("listen on %s: %w", addr, err)
+		return fmt.Errorf("listen on %s: %w", configured, err)
+	}
+	defer listener.Close()
+	addr := listener.Addr().String()
+
+	token, err := httpapi.NewToken()
+	if err != nil {
+		return err
+	}
+	access, err := httpapi.LoopbackAccess(token, listener.Addr())
+	if err != nil {
+		return err
+	}
+
+	handler, err := httpapi.NewPlatform(
+		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor,
+		price.New(price.Options{}), access, log,
+	)
+	if err != nil {
+		return err
+	}
+
+	server := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// Comfortably above the longest legitimate response: the balance stream
+		// runs for up to five minutes on a large portfolio behind rate-limited
+		// public nodes, and a deployment waits ninety seconds for its receipt.
+		WriteTimeout:   6 * time.Minute,
+		IdleTimeout:    2 * time.Minute,
+		MaxHeaderBytes: 64 << 10,
 	}
 
 	errCh := make(chan error, 1)
@@ -238,12 +268,16 @@ func run(log *slog.Logger) error {
 		}
 	}()
 
-	url := uiURL(addr)
+	// The token rides in the fragment, which browsers keep to themselves: it is
+	// never sent to the server, never lands in a Referer header and never shows
+	// up in a proxy or access log the way a query parameter would.
+	entryURL := uiURL(addr, token)
 	if snapshot.Config.Server.OpenBrowser {
-		openBrowser(url, log)
-	} else {
-		log.Info("UI available", "url", url)
+		openBrowser(entryURL, log)
 	}
+	// Printed either way. With a random port and a per-run token this line is
+	// the only way back into the UI if the browser did not open or was closed.
+	fmt.Fprintf(os.Stdout, "Walletspace is ready:\n  %s\n", entryURL)
 
 	select {
 	case err := <-errCh:
@@ -315,7 +349,8 @@ func runMigration(log *slog.Logger, args []string) error {
 		return fmt.Errorf("legacy verification failed: %w", err)
 	}
 	if *dryRun {
-		fmt.Fprintf(os.Stdout,
+		fmt.Fprintf(
+			os.Stdout,
 			"Dry run complete: %d legacy addresses match the mnemonic. No files were written.\n",
 			len(accounts),
 		)
@@ -362,7 +397,8 @@ func runMigration(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	log.Info("legacy data migrated",
+	log.Info(
+		"legacy data migrated",
 		"space_id", result.Space.ID,
 		"space_file", filepath.Join(home, "spaces", result.Space.ID, "space.json"),
 		"legacy_unchanged", *from,
@@ -383,7 +419,7 @@ func portOf(addr string) string {
 	return port
 }
 
-func uiURL(addr string) string {
+func uiURL(addr, token string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "http://" + addr
@@ -391,22 +427,78 @@ func uiURL(addr string) string {
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
-	return "http://" + net.JoinHostPort(host, port)
+	return "http://" + net.JoinHostPort(host, port) + "/#token=" + url.QueryEscape(token)
 }
 
-func openBrowser(url string, log *slog.Logger) {
+// openBrowser hands the entry URL to the desktop browser without putting the
+// capability token where another process can read it.
+//
+// The obvious `open <url>` puts the token in the helper's argv, and on Linux
+// /proc/<pid>/cmdline is world-readable — so the one secret separating this UI
+// from any other local program would be published to exactly the adversary it
+// exists to exclude. Instead the URL goes into a 0600 file that only this user
+// can open, and the browser is pointed at the file. That keeps the token inside
+// the wallet's own files, which the threat model already assumes the adversary
+// cannot reach.
+//
+// The token never reaches the log either, for the same reason a fragment is
+// used in the first place: a log outlives the run.
+func openBrowser(entryURL string, log *slog.Logger) {
+	target, cleanup, err := browserEntryPoint(entryURL)
+	if err != nil {
+		log.Warn("could not prepare the browser entry point", "error", err)
+		return
+	}
 	var command *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		command = exec.Command("open", url)
+		command = exec.Command("open", target)
 	case "windows":
-		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
 	default:
-		command = exec.Command("xdg-open", url)
+		command = exec.Command("xdg-open", target)
 	}
 	if err := command.Start(); err != nil {
-		log.Warn("could not open a browser, open the UI manually", "url", url, "error", err)
+		cleanup()
+		log.Warn("could not open a browser, use the printed URL", "error", err)
 		return
 	}
-	log.Info("UI opened", "url", url)
+	// Long enough for a cold browser start, short enough that the file is not
+	// left lying around. The printed URL is the fallback either way.
+	time.AfterFunc(2*time.Minute, cleanup)
+	log.Info("UI opened")
+}
+
+// browserEntryPoint writes a redirect page readable only by this user and
+// returns a file:// URL for it.
+func browserEntryPoint(entryURL string) (string, func(), error) {
+	file, err := os.CreateTemp("", "walletspace-*.html")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create browser entry point: %w", err)
+	}
+	name := file.Name()
+	cleanup := func() { _ = os.Remove(name) }
+	// CreateTemp already makes the file 0600; this is belt and braces for a
+	// umask or filesystem that says otherwise.
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("restrict browser entry point: %w", err)
+	}
+	escaped := html.EscapeString(entryURL)
+	page := "<!doctype html><meta charset=\"utf-8\">" +
+		"<meta http-equiv=\"refresh\" content=\"0; url=" + escaped + "\">" +
+		"<title>Walletspace</title>" +
+		"<p>Opening Walletspace… <a href=\"" + escaped + "\">continue</a></p>"
+	if _, err := file.WriteString(page); err != nil {
+		file.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("write browser entry point: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("close browser entry point: %w", err)
+	}
+
+	return "file://" + name, cleanup, nil
 }

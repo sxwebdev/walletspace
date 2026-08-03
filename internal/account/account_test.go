@@ -58,7 +58,6 @@ func TestParsePrivateKeyRejectsInvalidScalars(t *testing.T) {
 		"fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
 	}
 	for _, value := range tests {
-		value := value
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
 			_, _, err := account.ParsePrivateKey(value)

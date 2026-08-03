@@ -4,11 +4,17 @@ schema_version: 1
 
 server:
   # Loopback only. A change is applied after restart.
-  addr: 127.0.0.1:8080
+  #
+  # Port 0 asks the kernel for a free port on every start, which is the default
+  # and the safer setting: a fixed, well-known port is one of the two things a
+  # DNS-rebinding page needs to know in advance. Pin a port only if something
+  # else has to reach the UI at a stable address.
+  addr: 127.0.0.1:0
   open_browser: true
 
 security:
-  # Go duration. Zero disables automatic locking.
+  # Go duration, between 1m and 24h. It cannot be disabled: auto-lock is what
+  # takes the decrypted seed back out of memory after the user walks away.
   auto_lock: 15m0s
 
 node_discovery:
@@ -22,3 +28,24 @@ node_discovery:
 
 ui:
   last_space_id: ""
+
+# Per-network RPC overrides live in ~/.walletspace/networks.yaml, not here.
+# Schema 2 shown for reference; a schema 1 file is migrated on the next start,
+# and its headers are attached to the first URL only — the one they were typed
+# next to. Prefer editing this through /settings.
+#
+#   schema_version: 2
+#   networks:
+#     ethereum-mainnet:
+#       enabled: true
+#       endpoints:
+#         # Credentials belong to the endpoint they sit under and are sent to
+#         # nothing else — not to the next endpoint in this list, not to the
+#         # official fallbacks the resolver moves on to, not to a node discovery
+#         # suggested. Keep the secret out of the file with an ${ENV} reference:
+#         # it is expanded at use, and the reference is what the settings UI
+#         # shows back.
+#         - url: https://paid-provider.example/v3/${PROVIDER_KEY}
+#           headers:
+#             Authorization: Bearer ${PROVIDER_TOKEN}
+#         - url: https://spare.example

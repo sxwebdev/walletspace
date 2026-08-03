@@ -8,7 +8,7 @@ export function renderOnboarding(root, signal) {
     <main class="onboarding">
       <section class="onboarding-copy">
         <span class="brand-mark" aria-hidden="true">W</span>
-        <p class="eyebrow" style="margin-top:24px">Your keys. Your spaces.</p>
+        <p class="eyebrow gap-above-lg">Your keys. Your spaces.</p>
         <h1><span class="gradient-text">One walletspace.</span><br>All of your networks.</h1>
         <p>Create an encrypted collection of wallets. Start from a new recovery phrase, or restore your own.</p>
         <a class="button" href="/settings" data-settings>Set up RPC before starting</a>
@@ -28,7 +28,7 @@ export function renderOnboarding(root, signal) {
           </label>
           <details>
             <summary>Advanced: BIP39 passphrase</summary>
-            <label class="field" style="margin-top:12px">
+            <label class="field gap-above">
               <span>BIP39 passphrase</span>
               <input type="password" name="bip39_passphrase" autocomplete="new-password">
               <small class="hint">This is part of the derivation and changes the addresses. It is not the space password.</small>
@@ -36,11 +36,11 @@ export function renderOnboarding(root, signal) {
           </details>
           <label class="field">
             <span>Space password</span>
-            <input type="password" name="password" required minlength="8" autocomplete="new-password">
+            <input type="password" name="password" required minlength="12" autocomplete="new-password">
           </label>
           <label class="field">
             <span>Repeat the password</span>
-            <input type="password" name="confirmation" required minlength="8" autocomplete="new-password">
+            <input type="password" name="confirmation" required minlength="12" autocomplete="new-password">
           </label>
           <div class="error-text" data-error role="alert"></div>
           <button class="button primary" type="submit">Create a Secure Space</button>

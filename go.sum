@@ -202,6 +202,8 @@ github.com/sxwebdev/xconfig v0.4.1 h1:rRCaYLiZ7Lld5pTZNVsc/3hVtVN83R+1n7uDMW5tqG
 github.com/sxwebdev/xconfig v0.4.1/go.mod h1:AQdju1tuvzyrBw9OXxXKGuVGdYnte9DoqyY1EY73qFM=
 github.com/sxwebdev/xconfig/decoders/xconfigyaml v0.0.0-20260505165448-c5f59ca4c792 h1:ya6dNZpCrp0qrcgpMBb1eT67wYZVWXqUn0Wz1cbOa2s=
 github.com/sxwebdev/xconfig/decoders/xconfigyaml v0.0.0-20260505165448-c5f59ca4c792/go.mod h1:pZP8dv6J/FmYeyrF9cMIig4/d7X2b7fq3c9NAPbX6YI=
+github.com/sxwebdev/xutils v0.0.0-20260625155121-842ebff2b685 h1:0O+DqqdeKJ940wWmloFLs1NHey5wCGWQZ8A8N/cbFfA=
+github.com/sxwebdev/xutils v0.0.0-20260625155121-842ebff2b685/go.mod h1:NSf6TEDo8UJ5/2dr24uZ6l/nJEvKM+sp93gHZi/jvNE=
 github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 h1:epCh84lMvA70Z7CTTCmYQn2CKbY8j86K7/FAIr141uY=
 github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7/go.mod h1:q4W45IWZaF22tdD+VEXcAWRA037jwmWEB5VWYORlTpc=
 github.com/tklauser/go-sysconf v0.4.0 h1:7H0uAN+7RkwWRaxhYXDLqa5V3LPrJeV8wmD9dRUgPQU=

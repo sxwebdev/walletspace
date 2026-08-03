@@ -1,6 +1,8 @@
 package asset_test
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,5 +173,152 @@ func TestCustomAssetDoesNotDuplicateNewBuiltin(t *testing.T) {
 	}
 	if usdcCount != 1 {
 		t.Errorf("USDC count = %d, want 1", usdcCount)
+	}
+}
+
+// A token symbol is whatever the contract chose to return, so it is
+// attacker-controlled text that reaches the DOM and a stored file. Escaping at
+// the sink is what makes it safe to render; refusing the absurd cases here
+// keeps a hostile contract from filling the asset file or hiding what it is.
+func TestAddRejectsHostileMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		symbol   string
+		contract string
+	}{
+		{name: "null byte", symbol: "TE\x00ST", contract: "0xABCDEF"},
+		{name: "newline", symbol: "TEST\nEVIL", contract: "0xABCDEF"},
+		{name: "bidi override", symbol: "TEST‮EVIL", contract: "0xABCDEF"},
+		{name: "too long", symbol: strings.Repeat("A", 65), contract: "0xABCDEF"},
+		{name: "invalid utf-8", symbol: "TEST\xff\xfe", contract: "0xABCDEF"},
+		{name: "quote in the contract", symbol: "TEST", contract: `0xAB" onmouseover=alert(1) x="`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			store, err := asset.New(home)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			err = store.Add(chain.Asset{
+				ID:        asset.ID("ethereum-sepolia", "erc20", tt.contract),
+				NetworkID: "ethereum-sepolia", Kind: "erc20", Symbol: tt.symbol,
+				Decimals: 6, Contract: tt.contract,
+			})
+			if err == nil {
+				t.Fatal("Add() accepted hostile metadata")
+			}
+			if !errors.Is(err, asset.ErrInvalidMetadata) {
+				t.Errorf("Add() error = %v, want ErrInvalidMetadata so the API answers 400", err)
+			}
+			if _, statErr := os.Stat(filepath.Join(home, "assets.json")); statErr == nil {
+				t.Error("a rejected asset was still written to disk")
+			}
+		})
+	}
+}
+
+// The identifier embeds the contract straight from the request body and is
+// rendered into an HTML attribute, so it has to hold the line on its own rather
+// than lean on the address validation the chain adapters happen to do first.
+func TestValidID(t *testing.T) {
+	t.Parallel()
+
+	valid := []string{
+		"ethereum-sepolia:erc20:0xabcdef",
+		"tron-nile:trc20:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+	}
+	for _, id := range valid {
+		if !asset.ValidID(id) {
+			t.Errorf("ValidID(%q) = false, want true", id)
+		}
+	}
+
+	invalid := []string{
+		"", `eth:erc20:0x" onmouseover=x`, "eth:erc20:0x<script>", "eth:erc20:0x\n",
+		"eth:erc20:" + strings.Repeat("a", 128),
+	}
+	for _, id := range invalid {
+		if asset.ValidID(id) {
+			t.Errorf("ValidID(%q) = true, want false", id)
+		}
+	}
+}
+
+// Markup in a symbol is stored verbatim on purpose. Escaping at the sink is
+// what makes it safe to display, and a blocklist here would only obscure
+// whether that escaping actually holds.
+func TestAddKeepsMarkupVerbatimForTheSinkToEscape(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	store, err := asset.New(home)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	const hostile = `</span><img src=x onerror=alert(1)>`
+	id := asset.ID("ethereum-sepolia", "erc20", "0xABCDEF")
+	if err := store.Add(chain.Asset{
+		ID: id, NetworkID: "ethereum-sepolia", Kind: "erc20", Symbol: hostile,
+		Decimals: 6, Contract: "0xABCDEF",
+	}); err != nil {
+		t.Fatalf("Add() error = %v, want the symbol stored for the sink to escape", err)
+	}
+
+	registry, err := network.Builtin()
+	if err != nil {
+		t.Fatalf("Builtin() error = %v", err)
+	}
+	item, err := registry.Get("ethereum-sepolia")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	for _, stored := range store.List(item) {
+		if stored.ID == id && stored.Symbol != hostile {
+			t.Errorf("symbol = %q, want it stored unchanged", stored.Symbol)
+		}
+	}
+}
+
+// Every configured asset is one more contract call per account on every balance
+// refresh, and the list is reloaded on start — so an unbounded list makes each
+// refresh permanently more expensive.
+func TestConfiguredAssetsAreCapped(t *testing.T) {
+	t.Parallel()
+
+	store, err := asset.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("asset.New() error = %v", err)
+	}
+	var last chain.Asset
+	for i := range 256 {
+		token := chain.Asset{
+			ID:        fmt.Sprintf("ethereum-mainnet:erc20:0x%040x", i),
+			NetworkID: "ethereum-mainnet", Kind: "erc20",
+			Contract: fmt.Sprintf("0x%040x", i), Symbol: "TKN", Decimals: 18,
+		}
+		if err := store.Add(token); err != nil {
+			t.Fatalf("Add(%d) error = %v", i, err)
+		}
+		last = token
+	}
+	overflow := chain.Asset{
+		ID:        "ethereum-mainnet:erc20:0xffffffffffffffffffffffffffffffffffffffff",
+		NetworkID: "ethereum-mainnet", Kind: "erc20",
+		Contract: "0xffffffffffffffffffffffffffffffffffffffff", Symbol: "TKN", Decimals: 18,
+	}
+	if err := store.Add(overflow); !errors.Is(err, asset.ErrQuotaExceeded) {
+		t.Fatalf("Add() past the ceiling error = %v, want ErrQuotaExceeded", err)
+	}
+	// Updating one that is already stored is not adding one, so it still works
+	// at the ceiling — otherwise refreshing metadata would become impossible.
+	last.Symbol = "RENAMED"
+	if err := store.Add(last); err != nil {
+		t.Errorf("Add() replacing an existing asset at the ceiling error = %v", err)
 	}
 }

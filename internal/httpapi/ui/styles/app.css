@@ -660,6 +660,25 @@
   border-radius: var(--radius-sm);
 }
 
+/* One block per RPC endpoint, so it is visible which URL a provider secret is
+   being attached to — it is sent to that endpoint and to no other. */
+.endpoint-credential {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.endpoint-credential legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .toast-stack {
   position: fixed;
   z-index: 200;
@@ -685,6 +704,42 @@
 .error-text {
   color: var(--danger);
   font-size: 13px;
+}
+
+/* Small layout adjustments that used to ride along as style="" attributes.
+   The Content-Security-Policy sets style-src 'self' with no 'unsafe-inline',
+   which blocks an inline style attribute, so they live here instead. */
+.gap-above {
+  margin-top: var(--space-3);
+}
+
+.gap-above-md {
+  margin-top: var(--space-4);
+}
+
+.gap-above-lg {
+  margin-top: var(--space-6);
+}
+
+.span-full {
+  grid-column: 1 / -1;
+}
+
+.boot-inline {
+  min-height: 220px;
+}
+
+/* The full recipient on the confirmation screen: every character visible, in
+   groups of four so they can be checked by eye. The chunks are separated by
+   margin rather than whitespace, so selecting the address copies it unbroken. */
+.address-full {
+  display: inline-flex;
+  flex-wrap: wrap;
+  word-break: break-all;
+}
+
+.addr-chunk + .addr-chunk {
+  margin-left: 0.42ch;
 }
 
 @media (max-width: 900px) {

@@ -26,25 +26,62 @@ and are never sent to an RPC provider.
 
 ## Security
 
-> **Not ready for real funds.** The audit in
-> [docs/security-audit.md](docs/security-audit.md) lists two unfixed Critical
-> findings: the local API has no authorization boundary and is reachable from a
-> web page through DNS rebinding, and a Tron transaction is built by the RPC node
-> and signed without any check of its contents. Use testnets until both are
-> closed.
+> **Still not recommended for large balances.** All eleven findings from the
+> audit in [docs/security-audit.md](docs/security-audit.md) are closed, plus two
+> raised while fixing them. Two pieces of follow-up work are deliberately left
+> for a live testnet — building Tron transaction data locally, and re-sending
+> the stored bytes of a broadcast whose answer was lost — and are described in
+> that document. No follow-up review has been done yet, which is the main reason
+> for this warning.
 
-- The API binds to loopback only; a non-loopback bind is rejected. Loopback
-  constrains the network route, not the authority of the caller — there is no
-  capability token yet, so any local process can call the API.
+- The API binds to loopback and is guarded by a capability token generated on
+  every start. Loopback constrains the network route, not the authority of the
+  caller, so the token is what actually separates the UI this process launched
+  from any other local program. It is handed to the browser in the URL fragment,
+  which is never sent to a server, and required on every `/api/` route. It is
+  never logged, and never passed on a command line — the browser is pointed at a
+  `0600` redirect file, because a process's arguments are readable by others.
+- The listener takes a random port by default, and the `Host` header is checked
+  against the address actually opened. Together those close the DNS-rebinding
+  path: a page on an attacker's domain arrives with the attacker's own hostname,
+  whatever the DNS answer said.
+- A Tron transaction is assembled with help from an RPC node, but the raw data
+  is decoded and compared field by field against a locally held intent before
+  anything is signed — recipient, amount, contract, calldata, resource, fee
+  limit, permission id, and the number of contracts. The transaction id is
+  computed from the bytes that were signed rather than read back from the node.
+- The EVM fee the user confirms is what gets signed. The sender does not re-ask
+  the node at signing time; if the network has moved past the approved ceiling
+  the transfer is refused and has to be confirmed again.
+- A transaction id is written down before the transaction is signed, and a
+  broadcast whose answer never came back is reported as exactly that rather than
+  as a failure. Only an operation that provably never reached a node is allowed
+  to be replaced — otherwise a retry would sign a second transfer while the
+  first was still in flight.
 - Vaults use Argon2id and AES-256-GCM. The mnemonic, the BIP39 passphrase and
   imported keys are never written to disk in the clear. Files are created with
   `0600`, directories with `0700`.
 - Mutating browser requests are checked against Origin and Sec-Fetch-Site and
   must carry a JSON content type; secret responses get `Cache-Control: no-store`.
-  These are CSRF hardening, not authentication, and the audit's SEC-01 shows how
-  they are bypassed.
-- A space locks itself after a configurable idle period and has to be unlocked
-  before a key export, a signature or an import.
+  These are CSRF hardening on top of the token, not a substitute for it.
+- A strict Content-Security-Policy, `nosniff` and `no-referrer` are set on every
+  response, and on-chain token metadata is escaped at every point it reaches the
+  DOM.
+- A space locks itself after a configurable idle period — between one minute and
+  a day, and it cannot be switched off. Revealing a recovery phrase or a private
+  key asks for the space password again even while the space is unlocked, and
+  what is revealed hides itself afterwards.
+- Wrong passwords earn a growing, jittered cooldown that survives a restart, and
+  while it holds even the right password is refused, so the wait cannot be used
+  to confirm a guess. Concurrent key derivations are capped, and unlocking one
+  space no longer blocks the rest of the wallet.
+- A provider credential belongs to the one RPC endpoint it was configured for.
+  The resolver falls through to the official fallbacks when a node stops
+  answering, and node discovery can add more; none of them are sent a secret
+  that was typed next to a different URL.
+- Every RPC connection goes through a dialer that resolves the host itself and
+  refuses loopback, private and special-use addresses, including the IPv6
+  spellings of them — so the answer that was checked is the one that is dialled.
 - Only public identifiers of assets with a non-zero balance leave the machine for
   the price feed — never addresses, balances or space identifiers.
 - A recovery phrase or a private key is full control over the funds: keep them
@@ -96,9 +133,12 @@ make build     # ./bin/walletspace, version stamped from git describe
 make install   # the same into $GOBIN
 ```
 
-Start the UI with `walletspace`. It opens on <http://127.0.0.1:8080> by default
-and offers to create a space on the first run. `walletspace help` lists the
-commands, the `migrate` flags and the environment overrides.
+Start the UI with `walletspace`. It picks a free loopback port, prints the URL
+to open — including the capability token for this run — and offers to create a
+space on the first run. The printed link is the only way in: without the token
+every API call is refused, so open it rather than typing the address by hand.
+`walletspace help` lists the commands, the `migrate` flags and the environment
+overrides.
 
 ## License
 

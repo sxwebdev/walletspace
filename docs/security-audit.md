@@ -5,6 +5,139 @@ Revision: `22267c1`
 Scope: the whole Walletspace service — Go backend, embedded web UI,
 vault/storage, EVM/Tron signing, RPC discovery and Node Doctor.
 
+## Remediation status
+
+Last updated: 2026-08-03. Everything below the table is the audit exactly as it
+was written, including the parts later found to be wrong — the table and the
+per-finding "Fixed" notes are what has happened since. Two further findings,
+BE-1 and BE-2, were raised during remediation and are described after it.
+
+All eleven findings are closed. Two pieces of follow-up work were deliberately
+left undone because neither can be validated without a live network: building
+Tron transaction data locally rather than checking what a node built (SEC-02),
+and re-sending the stored bytes of a broadcast whose answer was lost (SEC-06).
+Both are defence in depth on top of a closed finding, not the fix itself.
+
+**A follow-up review has not been done.** The audit asks for one after P0 and
+P1, together with an adversarial integration suite driven by a fake browser
+origin, a fake discovery service and fake Tron/EVM nodes. Until that exists,
+the fixes below are as reviewed as the code that contained the findings was.
+
+### Defects found reviewing the remediation itself
+
+An internal review of the changes above turned up fourteen defects, several of
+them in the new code rather than the old. All are fixed; the ones that undid a
+finding are worth naming, because they are how a fix can look complete and not
+be.
+
+- **SEC-06 was inert.** Every Tron operation wrapper ended with
+  `return "", err`, throwing away the transaction id `submitWithSigner` had
+  just computed — so the adapter's `txID != "" && errors.Is(…)` branch could
+  never be true, and a lost broadcast still became `failed`. Compounding it,
+  `sendTransfer` classified on `transaction.Hash` rather than on the error, and
+  the UI's `retryIsSafe` guarded against a phrase the server never sends. Three
+  separate places, each of which alone was enough to restore the original bug.
+  The UI check is now an allowlist: the key is dropped only when the backend
+  explicitly asks for a new one.
+- **SEC-08 had an unthrottled twin.** `confirmPasswordLocked` — the step-up on
+  the seed and private-key exports — ran no cooldown, recorded no failure and
+  took no KDF slot, so the export endpoints were an unlimited guessing oracle
+  beside a throttled unlock. It also held the manager's write mutex across the
+  derivation, which is the exact lock hold the finding was about. Both paths now
+  share one counter.
+- **UI-3 cleared nothing.** `wipe()` began by cancelling the pending clipboard
+  clear, so closing the dialog — the common case — left the recovery phrase in
+  the clipboard for good. It now clears immediately instead.
+- **SEC-07 broke status mapping.** `RedactError` returned a bare `errors.New`,
+  cutting the chain, so once `verifyRPCs` wrapped it the sentinels in
+  `writePlatformError` no longer matched. It now redacts only the message and
+  keeps the cause reachable through `Unwrap`.
+- **The capability token was written to the log** and passed in the browser
+  helper's argv, where `/proc/<pid>/cmdline` is world-readable on Linux. The log
+  line is gone and the URL now goes through a 0600 file.
+
+Also fixed: EVM made no rejection-versus-silence distinction, so a flat
+`insufficient funds` was reported as possibly on chain; `parseRecipient`
+rejected valid EIP-55 addresses written without `0x`; `Resolver.Headers`
+swallowed `${ENV}` expansion errors and sent requests unauthenticated instead;
+`lockSpace` grew a mutex per invented space id; and `LoopbackAccess` would have
+403'd its own URL on port 80.
+
+| Finding | Status | Note |
+| --- | --- | --- |
+| SEC-01 | **Fixed** | Capability token on every `/api/` route, random loopback port, `Host` checked against the address actually opened, full-origin comparison |
+| SEC-02 | **Fixed for signing; local construction outstanding** | raw_data is decoded and compared field by field against a local intent before any signature, and the txid is computed from the signed bytes. The transaction is still *assembled* by the node — see below |
+| SEC-03 | **Fixed** | The escaping half was already done before this work began; CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options` and server-side metadata bounds were added |
+| SEC-04 | **Fixed** | The confirmed fee is signed; a network that moves past it forces re-confirmation; absurd node quotes are refused |
+| SEC-05 | **Fixed** | `networks.yaml` schema 2 binds credentials to a single endpoint; the resolver, both adapters and the Doctor resolve them per endpoint. Existing files migrate on start |
+| SEC-06 | **Fixed** | Already correct for EVM before this work. Tron now keeps the locally computed txid, distinguishes a node's rejection from a lost answer, and records the transaction id before it signs. Re-broadcast of the stored bytes is not implemented — see below |
+| SEC-07 | **Fixed** | Single redactor on errors and logs; secret-bearing endpoints are no longer cached |
+| SEC-08 | **Fixed** | Server timeouts, an exponential unlock cooldown that survives restart, a global KDF semaphore, derivations moved off the global lock with per-space serialisation, quotas on spaces/accounts/assets/operations, and KDF bounds tightened at both ends |
+| SEC-09 | **Fixed** | Full grouped address on the confirmation screen; EIP-55 enforced on the recipient |
+| SEC-10 | **Fixed** | Discovery bounded by count, URL length, node count and depth; Doctor uses a bounded worker pool |
+| SEC-11 | **Fixed** | Password step-up on both exports, auto-lock cannot be disabled and is bounded, password strength scored, revealed secrets expire |
+
+Corrections to the audit as written, found while verifying it:
+
+- **SEC-03** described `dashboard.js` interpolating the token symbol without
+  `escapeHTML`. That was already false at the time of writing — every display
+  sink was escaped. The open part was the missing CSP and the absent
+  server-side bounds on the symbol.
+- **SEC-06** described the finding as open across the board. It was already
+  correct for EVM: the hash was computed locally and `broadcast_unknown`
+  existed end to end. Only Tron was affected.
+- **SEC-11** stated that any API call, including background balance polling,
+  refreshes the idle timer. It does not: the balance path reads accounts
+  through `Get`, which never touches `lastUsed`. Only five deliberate actions
+  refresh it, which is the intended behaviour.
+- **"What is already right"** credits the private dialer with blocking loopback
+  and private IPs on every RPC connection. That was true for EVM and false for
+  Tron — see BE-2.
+
+### SEC-02, what remains
+
+The signing barrier is closed: a node cannot get a signature over anything
+other than the operation that was asked for, and 23 substitution cases are
+covered by tests that also assert `SignDigest` is never reached. What is *not*
+done is building `raw_data` locally, which would take the node out of the
+construction path altogether. That work needs live-network validation before it
+can be trusted — an incorrectly assembled reference block or fee limit produces
+transactions that fail to broadcast — so it was deliberately left for a change
+that can be tested against a testnet.
+
+### BE-1 — High — comma smuggling in the Tron node list (fixed)
+
+Not in the original audit. Every Tron endpoint was validated and probed as a
+single URL string, then joined with `,` and re-split into a *list* of nodes. A
+comma is legal in a URL path, so a discovery service returning
+`https://attacker.example/rpc,grpc://127.0.0.1:50051` passed every check and
+then supplied a second, entirely unchecked plaintext gRPC node — bypassing the
+private-IP dialer the audit lists under "What is already right", and reaching
+the same code path that builds the transaction SEC-02 signs.
+
+Fixed by passing a parsed node list instead of a delimited string, and by
+rejecting `,` and `|` in both validation gates.
+
+### BE-2 — Medium — Tron traffic bypasses the guarded dialer (fixed)
+
+Not in the original audit, and it contradicts one of its "already right"
+claims. `Resolver.HTTPClient` — the client that re-resolves DNS at dial time
+and refuses non-public addresses — is passed only to the Tron verification
+probe. The service carrying real traffic is built with node configs whose
+`HTTPClient` and `DialOptions` are nil, so gotron falls back to its own client
+and to `grpc.NewClient`, neither of which filters addresses. EVM does this
+correctly.
+
+Fixed by attaching the transport to the node itself: `config.Node` now carries
+the guarded `HTTPClient` for HTTP nodes and a `grpc.WithContextDialer` built
+from the same dialer for gRPC nodes, and the Tron adapter fills both in for
+every endpoint it verifies.
+
+The dialer itself also had a gap, found while fixing this. `publicIP` relied on
+the `net.IP` predicates, and Go's `To4` decodes only the IPv4-mapped form — so
+`::127.0.0.1`, `64:ff9b::7f00:1` (NAT64), `2002:a9fe:a9fe::` (6to4) and Teredo
+all read as ordinary global unicast. Each is now refused by CIDR.
+
 ## Outcome
 
 As it stands, the service cannot be considered safe for holding or moving real
@@ -240,6 +373,33 @@ in the OS keychain/secret store, or as an env reference.
 the request without `Authorization`/provider headers. The same test is needed for
 the Doctor.
 
+**Fixed.** `networks.yaml` moved to schema 2: `rpc_urls` plus a detached
+`headers` map became a list of endpoints, each carrying its own credentials.
+`Resolver.Headers` now takes the endpoint as an argument and matches it on
+scheme, host, port, path and query — so a fallback, a discovered node, or even
+another path on the same host gets nothing. Both adapters resolve per candidate
+inside their endpoint loop, the Doctor closure resolves per endpoint it probes,
+and `verifyRPCs` probes each endpoint with only its own credentials.
+
+Existing files migrate on start, in memory and then in place. A schema 1 file
+records nothing about which endpoint its headers belonged to, so the migration
+takes the narrowest reading available: the first custom URL, the one the secret
+was typed next to. Everything after it starts clean.
+
+Two details were needed to make the API workable. Credentials are still
+redacted on the way out, so the browser cannot send one back — an absent
+`headers` field therefore means "leave what is stored alone" and an empty object
+means "delete it", and saving a network carries forward per endpoint. And an
+endpoint listed twice is rejected, because "which credentials does this URL get"
+has to have one answer.
+
+Covered by `TestHeadersAreScopedToTheEndpointTheyBelongTo`,
+`TestProviderCredentialsDoNotFollowTheFallback` (a failing paid endpoint, an
+answering fallback, asserting both what was sent and what was not),
+`TestNodeConfigsKeepCredentialsOnTheirOwnNode`,
+`TestNetworksFileMigratesHeadersOntoTheFirstEndpoint` and
+`TestSavingANetworkKeepsCredentialsItWasNotGiven`.
+
 ### SEC-06 — High — an indeterminate Tron broadcast turns into advice to build a new transaction
 
 **Evidence.** `submitWithSigner` already computes the digest locally, but on any
@@ -270,6 +430,56 @@ sending is `broadcast_unknown`, not `failed`. After that:
 **Acceptance criterion.** A fake broadcaster accepts the transaction and cuts the
 answer off. A repeated request does not build or sign a second time; it returns
 the original local txid with status `broadcast_unknown`.
+
+**Fixed.** Four changes, and the classification is the load-bearing one.
+
+`broadcastError` splits a node's refusal from silence. A `*client.BroadcastError`
+exists only because a node answered and turned the transaction down, so nothing
+was accepted and a fresh attempt is safe. Anything else — a timeout, a reset, a
+closed stream — carries `chain.ErrBroadcastUnknown` and travels with the txid
+that SEC-02 already computes from the signed bytes. `DUP_TRANSACTION_ERROR` is
+treated as success: it is what a re-broadcast of the same transaction looks like
+from the node's side.
+
+The Tron adapter stopped discarding that txid, which is what turned a lost
+answer into `failed`. All five signing handlers now go through one path that
+records `broadcast_unknown` with 202 and a warning, and reserves `failed` for
+operations that provably never reached a node.
+
+The transaction id is written down *before* the signature. A Tron txid is
+sha256 of the raw data, which is exactly the digest handed to the signer — so a
+wrapper around the signer can persist it with status `broadcasting` while there
+is still nothing on the wire. If the wallet dies between the signature and the
+node's answer, the record still names the transaction. This works only because
+Tron's digest is its transaction id; the EVM equivalent stays the hash computed
+just before the send.
+
+`rejectIncompleteReplay` now branches on whether a transaction may exist rather
+than on whether an id happens to be recorded, and an unrecognised status is
+treated as in-flight. The UI stops resetting the idempotency key on any error,
+keeps it whenever the transaction may be on chain, and says so instead of
+reporting an ordinary send.
+
+Folded in from the sub-threshold list: `Begin` normalised the idempotency key and
+`Update` did not, so a key padded with `\v`, `\f` or U+00A0 — none of which
+net/textproto strips — was reserved under one name and looked up under another.
+It surfaced only *after* the transaction was signed and broadcast: "operation
+not found", the txid lost, the record stuck at `building`, every retry a
+permanent 409. Both now call `operation.NormalizeKey`, and `Update` no longer
+erases a known txid when passed an empty one.
+
+**Not done: re-broadcasting the stored signed bytes.** The fix above stops a
+second transaction from being built, which is the harm in this finding.
+Re-sending the original bytes would additionally let the transfer complete
+rather than vanish, and is worth doing — but it needs the signed bytes persisted
+per operation and a policy for a Tron transaction that has passed its
+expiration, and neither can be validated without a live network.
+
+Covered by `TestBroadcastErrorSeparatesRejectionFromSilence`,
+`TestReplayOnlyInvitesANewTransactionWhenTheOldOneCannotExist`,
+`TestSendReturnsLocalHashWhenBroadcastResultIsUnknown`,
+`TestKeyNormalizationSurvivesTheRoundTrip` and
+`TestUpdateKeepsAKnownTransactionID`.
 
 ### SEC-07 — Medium — env-resolved RPC secrets are written to the cache and leak into errors
 
@@ -313,6 +523,50 @@ cooldown with jitter, a global KDF semaphore, per-space locks instead of one
 global lock, quotas for spaces/assets/operations, and server timeouts. Unlock
 errors must stay indistinguishable. The rate-limit state must not be bypassable
 by a restart without a visible user action.
+
+**Fixed.** Server timeouts and `MaxHeaderBytes` were set earlier, with SEC-01.
+The rest:
+
+Failed unlocks earn an exponential cooldown, doubling from two seconds to a
+fifteen-minute ceiling after three free attempts, jittered by up to a quarter of
+each wait. The jitter is what stops an attacker from sleeping exactly long
+enough and keeping a steady rate. The counter lives in `unlock.json` beside the
+space, because restarting the wallet is not difficult for anyone who can already
+reach the API. While the cooldown holds, the *correct* password is refused too —
+otherwise the throttle would confirm a guess without the attacker having to
+wait — and `ErrTooManyAttempts` says nothing about the password.
+
+Derivations moved off the manager's mutex. Holding it across a 64 MiB Argon2
+pass meant one unlock froze every other space, the space list and the auto-lock
+sweep; `ChangePassword` did it three times in a row and was the longest lock
+hold in the process. The mutex is now held only for map work, and a per-space
+lock keeps two attempts on one space in order — which is also what stops a
+password change from swapping the container out from under an unlock midway
+through deriving a key for the old one. A semaphore caps concurrent derivations
+at min(NumCPU/2, 4), so a burst cannot put half a gigabyte of Argon2 in flight.
+
+Quotas: 64 spaces, 512 accounts per space, 256 configured assets, 512 operation
+records. The space quota is checked *before* the two derivations in `Create`, so
+a caller at the ceiling cannot spend 128 MiB of Argon2 per request discovering
+it. The operations file previously grew for the life of a space and is read and
+rewritten in full on every operation; it is now pruned oldest-first, and a
+record for a transaction that is not resolved is never dropped to make room —
+if nothing is droppable the new operation is refused, because being unable to
+start a transfer is recoverable and forgetting one in flight is not.
+
+KDF bounds are now enforced at both ends and on the way out as well as in.
+Ceilings came down from 1 GiB × 10 to 256 MiB × 10, so a doctored header cannot
+turn one unlock attempt into a gigabyte allocation. Floors went up from "any
+non-zero" to 32 MiB × 2, and `Seal` re-validates the parameters it inherited
+from the container it opened — that is the path by which a weakened header would
+otherwise have been adopted and written back permanently.
+
+Covered by `TestFailedUnlocksEarnAGrowingCooldown` (including the restart and
+the correct-password case), `TestUnlockDelayGrowsWithJitterAndStopsAtTheCeiling`,
+`TestASlowUnlockDoesNotBlockOtherSpaces`, `TestSpaceAndAccountQuotas`,
+`TestConfiguredAssetsAreCapped`, the three `TestPrune*` cases,
+`TestKDFParametersAreBoundedInBothDirections` and
+`TestAWeakenedHeaderIsNeverOpenedOrResealed`.
 
 ### SEC-09 — Medium — the confirmation screen hides most of the address and the backend does not check EIP-55
 

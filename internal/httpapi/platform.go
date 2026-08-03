@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"github.com/sxwebdev/walletspace/internal/operation"
 	"github.com/sxwebdev/walletspace/internal/price"
 	"github.com/sxwebdev/walletspace/internal/space"
+	"github.com/sxwebdev/walletspace/internal/vault"
 )
 
 type Platform struct {
@@ -50,11 +52,17 @@ func NewPlatform(
 	tron *tronchain.Adapter,
 	nodeDoctor *doctor.Doctor,
 	prices price.Provider,
+	access Access,
 	log *slog.Logger,
 ) (http.Handler, error) {
 	if spaces == nil || settings == nil || networks == nil || operations == nil ||
 		assets == nil || evm == nil || tron == nil || nodeDoctor == nil || prices == nil {
 		return nil, errors.New("all platform services are required")
+	}
+	// Without these the guard would fall open, so refuse to build a handler at
+	// all rather than serve spendable keys behind a boundary that is not there.
+	if access.Token == "" || len(access.Hosts) == 0 {
+		return nil, errors.New("a capability token and at least one allowed host are required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -130,7 +138,7 @@ func NewPlatform(
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/deploy-estimate", p.tronDeployEstimate)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/deploy", p.tronDeploy)
 
-	return (&Server{}).guard(mux), nil
+	return access.guard(mux), nil
 }
 
 func (p *Platform) listSpaces(w http.ResponseWriter, _ *http.Request) {
@@ -238,7 +246,14 @@ func (p *Platform) changePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Platform) revealMnemonic(w http.ResponseWriter, r *http.Request) {
-	value, err := p.spaces.Mnemonic(r.PathValue("space_id"))
+	var request struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	value, err := p.spaces.Mnemonic(r.PathValue("space_id"), request.Password)
 	if err != nil {
 		p.writePlatformError(w, err)
 		return
@@ -368,14 +383,15 @@ func (p *Platform) bindAccountNetwork(w http.ResponseWriter, r *http.Request) {
 
 func (p *Platform) exportPrivateKey(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Family account.Family `json:"family"`
+		Family   account.Family `json:"family"`
+		Password string         `json:"password"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	value, err := p.spaces.ExportPrivateKey(
-		r.PathValue("space_id"), r.PathValue("account_id"), request.Family,
+		r.PathValue("space_id"), r.PathValue("account_id"), request.Family, request.Password,
 	)
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -572,36 +588,40 @@ func (p *Platform) getNetworkSettings(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// endpointDTO is one RPC endpoint as the UI sends it back.
+//
+// A nil Headers map — the field absent from the JSON — means "leave whatever is
+// stored for this endpoint alone", which is what the UI sends for an endpoint
+// whose secret it was never shown. An empty object means "delete it".
+type endpointDTO struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
 func (p *Platform) putNetworkSettings(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Enabled          *bool             `json:"enabled"`
-		RPCURLs          []string          `json:"rpc_urls"`
+		Endpoints        []endpointDTO     `json:"endpoints"`
 		Explorer         *network.Explorer `json:"explorer"`
 		DiscoveryEnabled *bool             `json:"discovery_enabled"`
-		ProviderHeaders  map[string]string `json:"provider_headers"`
-		ClearHeaders     bool              `json:"clear_headers"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	headers := request.ProviderHeaders
-	if request.ClearHeaders {
-		headers = map[string]string{}
-	} else if len(headers) == 0 {
-		headers = nil
-	}
 	override := config.NetworkOverride{
-		Enabled: request.Enabled, RPCURLs: request.RPCURLs, Explorer: request.Explorer,
-		Discovery: request.DiscoveryEnabled, Headers: headers,
+		Enabled: request.Enabled, Explorer: request.Explorer,
+		Discovery: request.DiscoveryEnabled, Endpoints: overrideEndpoints(request.Endpoints),
 	}
-	if len(override.RPCURLs) > 0 {
+	if len(override.Endpoints) > 0 {
 		networkID := r.PathValue("network_id")
+		// Verified with the credentials that will actually be stored, including
+		// the ones being carried forward — otherwise an endpoint that only
+		// answers when authenticated would be rejected on every save after the
+		// first, when the browser no longer has the secret to send back.
 		verificationOverride := override
-		if verificationOverride.Headers == nil {
-			if previous, ok := p.settings.NetworkOverride(networkID); ok {
-				verificationOverride.Headers = previous.Headers
-			}
+		if previous, ok := p.settings.NetworkOverride(networkID); ok {
+			verificationOverride = config.CarryHeadersForward(previous, override)
 		}
 		if err := p.settings.ValidateNetwork(networkID, verificationOverride); err != nil {
 			p.writePlatformError(w, err)
@@ -644,16 +664,16 @@ func (p *Platform) deleteNetworkSettings(w http.ResponseWriter, r *http.Request)
 
 func (p *Platform) testNetworkRPC(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		RPCURLs         []string          `json:"rpc_urls"`
-		ProviderHeaders map[string]string `json:"provider_headers"`
+		Endpoints []endpointDTO `json:"endpoints"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	networkID := r.PathValue("network_id")
-	override := config.NetworkOverride{
-		RPCURLs: request.RPCURLs, Headers: request.ProviderHeaders,
+	override := config.NetworkOverride{Endpoints: overrideEndpoints(request.Endpoints)}
+	if previous, ok := p.settings.NetworkOverride(networkID); ok {
+		override = config.CarryHeadersForward(previous, override)
 	}
 	if err := p.settings.ValidateNetwork(networkID, override); err != nil {
 		p.writePlatformError(w, err)
@@ -671,24 +691,40 @@ func (p *Platform) testNetworkRPC(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"valid": true, "network_id": item.ID})
 }
 
+// overrideEndpoints converts the wire shape into stored endpoints, preserving
+// the nil-versus-empty distinction that decides whether a stored credential
+// survives the save.
+func overrideEndpoints(endpoints []endpointDTO) []config.Endpoint {
+	if len(endpoints) == 0 {
+		return nil
+	}
+	out := make([]config.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		out = append(out, config.Endpoint{
+			URL: strings.TrimSpace(endpoint.URL), Headers: endpoint.Headers,
+		})
+	}
+	return out
+}
+
 func (p *Platform) verifyRPCs(ctx context.Context, item network.Network, override config.NetworkOverride) error {
-	if len(override.RPCURLs) == 0 {
+	if len(override.Endpoints) == 0 {
 		return errors.New("at least one RPC URL is required")
 	}
-	timeout := p.settings.Snapshot().Config.NodeDiscovery.RequestTimeout
-	if timeout < 5*time.Second {
-		timeout = 5 * time.Second
-	}
-	headers := make(http.Header, len(override.Headers))
-	for name, value := range override.Headers {
-		resolved, err := config.ExpandValue(value)
-		if err != nil {
-			return err
+	timeout := max(p.settings.Snapshot().Config.NodeDiscovery.RequestTimeout, 5*time.Second)
+	for _, configured := range override.Endpoints {
+		// Only this endpoint's own credentials are sent to it. Probing every
+		// endpoint with a merged header set would be the same leak the storage
+		// layout was changed to prevent, one request earlier.
+		headers := make(http.Header, len(configured.Headers))
+		for name, value := range configured.Headers {
+			resolved, err := config.ExpandValue(value)
+			if err != nil {
+				return err
+			}
+			headers.Set(name, resolved)
 		}
-		headers.Set(name, resolved)
-	}
-	for _, endpoint := range override.RPCURLs {
-		endpoint, expandErr := config.ExpandValue(endpoint)
+		endpoint, expandErr := config.ExpandValue(configured.URL)
 		if expandErr != nil {
 			return expandErr
 		}
@@ -697,13 +733,17 @@ func (p *Platform) verifyRPCs(ctx context.Context, item network.Network, overrid
 		if item.Family == network.FamilyEVM {
 			err = p.evm.VerifyEndpoint(checkCtx, item, endpoint, headers)
 		} else {
-			err = p.tron.VerifyEndpoint(
-				checkCtx, item, endpoint, headers.Get("TRON-PRO-API-KEY"),
-			)
+			err = p.tron.VerifyEndpoint(checkCtx, item, endpoint, headers)
 		}
 		cancel()
 		if err != nil {
-			return fmt.Errorf("verify RPC %s: %w", endpoint, err)
+			// Both the endpoint and whatever the node said about it are
+			// redacted: the URL was expanded from an ${ENV} reference a moment
+			// ago and may carry the provider key in its path or query, and this
+			// message goes to the browser and into the log.
+			return fmt.Errorf(
+				"verify RPC %s: %w", config.RedactURL(endpoint), config.RedactError(err),
+			)
 		}
 	}
 	return nil
@@ -905,6 +945,25 @@ type transferDTO struct {
 	AssetID   string `json:"asset_id"`
 	To        string `json:"to"`
 	Amount    string `json:"amount"`
+	// The fee the user was shown and confirmed, echoed back from the estimate.
+	// Send signs these rather than whatever the node answers at signing time,
+	// so the transaction that is committed to is the one that was on screen.
+	// Absent on /estimate, required on /transfers for an EVM network.
+	FeeModel             string `json:"fee_model,omitempty"`
+	GasLimit             uint64 `json:"gas_limit,omitempty"`
+	MaxFeePerGas         string `json:"max_fee_per_gas,omitempty"`
+	MaxPriorityFeePerGas string `json:"max_priority_fee_per_gas,omitempty"`
+}
+
+func (d transferDTO) approval() *chain.FeeApproval {
+	if d.FeeModel == "" && d.GasLimit == 0 && d.MaxFeePerGas == "" {
+		return nil
+	}
+
+	return &chain.FeeApproval{
+		FeeModel: d.FeeModel, GasLimit: d.GasLimit,
+		MaxFeePerGas: d.MaxFeePerGas, MaxPriorityFeePerGas: d.MaxPriorityFeePerGas,
+	}
 }
 
 func (p *Platform) estimateTransfer(w http.ResponseWriter, r *http.Request) {
@@ -934,6 +993,9 @@ func (p *Platform) sendTransfer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The hash covers the whole DTO, so the approved fee is part of what the
+	// idempotency key is bound to: a replay that keeps the key but raises the
+	// fee is a different request and is refused as a conflict.
 	requestHash, err := operation.RequestHash(struct {
 		NetworkID string
 		Request   transferDTO
@@ -963,14 +1025,21 @@ func (p *Platform) sendTransfer(w http.ResponseWriter, r *http.Request) {
 	var transaction chain.Transaction
 	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), request.AccountID, networkItem.ID,
 		account.Family(networkItem.Family), func(signer chain.Signer) error {
+			if networkItem.Family == network.FamilyTron {
+				signer = p.recordingTronSigner(r.PathValue("space_id"), idempotencyKey, signer)
+			}
 			var sendErr error
 			transaction, sendErr = p.chainSend(ctx, networkItem, transfer, signer)
 			return sendErr
 		})
 	if err != nil {
-		status := "failed"
-		if transaction.Hash != "" {
-			status = transaction.Status
+		// Classified on the error, not on whether a hash came back. An adapter
+		// that loses the hash on the way out must not turn a lost answer into
+		// `failed` — that is the one status which tells the caller it is safe to
+		// build and sign a replacement.
+		status := operation.StatusFailed
+		if errors.Is(err, chain.ErrBroadcastUnknown) {
+			status = operation.StatusBroadcastUnknown
 		}
 		updated, updateErr := p.operations.Update(
 			r.PathValue("space_id"), idempotencyKey, transaction.Hash, status,
@@ -979,7 +1048,7 @@ func (p *Platform) sendTransfer(w http.ResponseWriter, r *http.Request) {
 			p.writePlatformError(w, updateErr)
 			return
 		}
-		if transaction.Hash != "" && transaction.Status == "broadcast_unknown" {
+		if status == operation.StatusBroadcastUnknown {
 			writeJSON(w, http.StatusAccepted, updated)
 			return
 		}
@@ -1085,6 +1154,7 @@ func (p *Platform) tronStakeChange(w http.ResponseWriter, r *http.Request, unsta
 	var txID string
 	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, item.ID, account.FamilyTron,
 		func(signer chain.Signer) error {
+			signer = p.recordingTronSigner(r.PathValue("space_id"), operationKey, signer)
 			var operationErr error
 			if unstake {
 				txID, operationErr = p.tron.Unstake(ctx, item.ID, address, request.Resource, amount, signer)
@@ -1093,18 +1163,7 @@ func (p *Platform) tronStakeChange(w http.ResponseWriter, r *http.Request, unsta
 			}
 			return operationErr
 		})
-	if err != nil {
-		if _, updateErr := p.operations.Update(r.PathValue("space_id"), operationKey, txID, "failed"); updateErr != nil {
-			p.log.Error("persist failed Tron operation", "error", updateErr)
-		}
-		p.writePlatformError(w, err)
-		return
-	}
-	if _, err := p.operations.Update(r.PathValue("space_id"), operationKey, txID, "pending"); err != nil {
-		p.writePlatformError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"network_id": item.ID, "tx_id": txID, "status": "pending"})
+	p.finishTronOperation(w, r, item.ID, operationKey, txID, err)
 }
 
 type tronDelegationRequest struct {
@@ -1150,6 +1209,7 @@ func (p *Platform) tronDelegation(w http.ResponseWriter, r *http.Request, reclai
 	var txID string
 	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, item.ID, account.FamilyTron,
 		func(signer chain.Signer) error {
+			signer = p.recordingTronSigner(r.PathValue("space_id"), operationKey, signer)
 			var operationErr error
 			if reclaim {
 				txID, operationErr = p.tron.Reclaim(
@@ -1162,18 +1222,7 @@ func (p *Platform) tronDelegation(w http.ResponseWriter, r *http.Request, reclai
 			}
 			return operationErr
 		})
-	if err != nil {
-		if _, updateErr := p.operations.Update(r.PathValue("space_id"), operationKey, txID, "failed"); updateErr != nil {
-			p.log.Error("persist failed Tron operation", "error", updateErr)
-		}
-		p.writePlatformError(w, err)
-		return
-	}
-	if _, err := p.operations.Update(r.PathValue("space_id"), operationKey, txID, "pending"); err != nil {
-		p.writePlatformError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"network_id": item.ID, "tx_id": txID, "status": "pending"})
+	p.finishTronOperation(w, r, item.ID, operationKey, txID, err)
 }
 
 func (p *Platform) tronWithdraw(w http.ResponseWriter, r *http.Request) {
@@ -1200,22 +1249,12 @@ func (p *Platform) tronWithdrawChange(w http.ResponseWriter, r *http.Request, ca
 	var txID string
 	err := p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, item.ID, account.FamilyTron,
 		func(signer chain.Signer) error {
+			signer = p.recordingTronSigner(r.PathValue("space_id"), operationKey, signer)
 			var operationErr error
 			txID, operationErr = p.tron.Withdraw(ctx, item.ID, address, cancelUnstakes, signer)
 			return operationErr
 		})
-	if err != nil {
-		if _, updateErr := p.operations.Update(r.PathValue("space_id"), operationKey, txID, "failed"); updateErr != nil {
-			p.log.Error("persist failed Tron operation", "error", updateErr)
-		}
-		p.writePlatformError(w, err)
-		return
-	}
-	if _, err := p.operations.Update(r.PathValue("space_id"), operationKey, txID, "pending"); err != nil {
-		p.writePlatformError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"network_id": item.ID, "tx_id": txID, "status": "pending"})
+	p.finishTronOperation(w, r, item.ID, operationKey, txID, err)
 }
 
 type tronDeployRequest struct {
@@ -1262,23 +1301,24 @@ func (p *Platform) tronDeploy(w http.ResponseWriter, r *http.Request) {
 	var deployed tronchain.Deployed
 	err := p.spaces.WithSigner(ctx, r.PathValue("space_id"), accountItem.ID, item.ID, account.FamilyTron,
 		func(signer chain.Signer) error {
+			signer = p.recordingTronSigner(r.PathValue("space_id"), operationKey, signer)
 			var deployErr error
 			deployed, deployErr = p.tron.Deploy(ctx, item.ID, address, deployment, signer)
 			return deployErr
 		})
 	if err != nil {
-		if _, updateErr := p.operations.Update(r.PathValue("space_id"), operationKey, deployed.TxID, "failed"); updateErr != nil {
-			p.log.Error("persist failed Tron deploy", "error", updateErr)
-		}
-		p.writePlatformError(w, err)
+		p.finishTronOperation(w, r, item.ID, operationKey, deployed.TxID, err)
 		return
 	}
-	status := "pending"
+	// A deployment waits for its receipt, so unlike the other operations it can
+	// already know the outcome. Confirmed and failed here are both about what
+	// the chain did with a transaction it definitely received.
+	status := operation.StatusPending
 	if deployed.Confirmed {
-		status = "confirmed"
+		status = operation.StatusConfirmed
 	}
 	if deployed.Failure != "" {
-		status = "failed"
+		status = operation.StatusFailed
 	}
 	if _, err := p.operations.Update(r.PathValue("space_id"), operationKey, deployed.TxID, status); err != nil {
 		p.writePlatformError(w, err)
@@ -1288,6 +1328,86 @@ func (p *Platform) tronDeploy(w http.ResponseWriter, r *http.Request) {
 		"network_id": item.ID, "tx_id": deployed.TxID, "address": deployed.Address,
 		"confirmed": deployed.Confirmed, "failure": deployed.Failure,
 		"energy_used": deployed.EnergyUsed, "fee": deployed.Fee.String(),
+	})
+}
+
+// recordingTronSigner writes down which transaction is about to be sent, before
+// it is signed.
+//
+// A Tron transaction id is sha256 of the raw data, and that is exactly the
+// digest handed to the signer — so at this point the identity of what is about
+// to leave the process is already known, and can be made durable first. If the
+// wallet dies between here and the node's answer, the record still names the
+// transaction: the retry can be told to go and look for it instead of being
+// invited to build a second one.
+//
+// This only works because the Tron digest is the transaction id. It is not true
+// of EVM, where the signing hash is not the transaction hash, so the equivalent
+// there is the hash computed just before the send.
+func (p *Platform) recordingTronSigner(spaceID, key string, signer chain.Signer) chain.Signer {
+	return recordingSigner{Signer: signer, record: func(digest []byte) error {
+		if _, err := p.operations.Update(
+			spaceID, key, hex.EncodeToString(digest), operation.StatusBroadcasting,
+		); err != nil {
+			return fmt.Errorf("record the transaction before signing it: %w", err)
+		}
+		return nil
+	}}
+}
+
+type recordingSigner struct {
+	chain.Signer
+	record func(digest []byte) error
+}
+
+func (s recordingSigner) SignDigest(ctx context.Context, digest []byte) ([]byte, error) {
+	if err := s.record(digest); err != nil {
+		return nil, err
+	}
+	return s.Signer.SignDigest(ctx, digest)
+}
+
+// finishTronOperation records the outcome of a signed Tron operation and writes
+// the response.
+//
+// The status is the whole point. Only a provable non-broadcast is `failed`,
+// because that is the one status that tells the caller it is safe to build and
+// sign again. A lost answer keeps the transaction id and reports
+// `broadcast_unknown` with 202: the transaction may be on chain, and the caller
+// has to check it rather than replace it.
+func (p *Platform) finishTronOperation(
+	w http.ResponseWriter, r *http.Request, networkID, key, txID string, err error,
+) {
+	spaceID := r.PathValue("space_id")
+	if err != nil {
+		// Classified on the error alone. The transaction id comes back from the
+		// stored record, which the recording signer wrote before the signature —
+		// so an operation whose id never made it back through the return value
+		// is still reported with the id it was given.
+		status := operation.StatusFailed
+		if errors.Is(err, chain.ErrBroadcastUnknown) {
+			status = operation.StatusBroadcastUnknown
+		}
+		updated, updateErr := p.operations.Update(spaceID, key, txID, status)
+		if updateErr != nil {
+			p.log.Error("persist Tron operation outcome", "error", updateErr)
+		}
+		if status == operation.StatusBroadcastUnknown {
+			writeJSON(w, http.StatusAccepted, map[string]string{
+				"network_id": networkID, "tx_id": updated.TxHash, "status": status,
+				"warning": config.RedactError(err).Error(),
+			})
+			return
+		}
+		p.writePlatformError(w, err)
+		return
+	}
+	if _, err := p.operations.Update(spaceID, key, txID, operation.StatusPending); err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"network_id": networkID, "tx_id": txID, "status": operation.StatusPending,
 	})
 }
 
@@ -1327,14 +1447,31 @@ func (p *Platform) beginChainOperation(
 	return key, true
 }
 
+// rejectIncompleteReplay decides what a repeat of an operation is allowed to
+// do, and the answer turns on whether a transaction may exist on chain.
+//
+// Advising a new idempotency key means "build and sign a second transaction",
+// which is only safe when the first provably never reached a node. Once a
+// transaction has been signed and sent, that advice is how one transfer becomes
+// two — so an in-flight operation is answered with what is known about it
+// instead, and the caller is told to look for that transaction rather than
+// replace it.
 func rejectIncompleteReplay(w http.ResponseWriter, existing operation.Operation) bool {
-	if existing.TxHash != "" {
+	switch {
+	case operation.InFlight(existing.Status):
+		// A transaction may exist. Answer with what is known about it rather
+		// than inviting a second one.
 		return false
-	}
-	if existing.Status == "building" {
+	case existing.Status == operation.StatusBuilding:
 		writeError(w, http.StatusConflict, "operation is still in progress")
-	} else {
-		writeError(w, http.StatusConflict, "previous operation failed before broadcast; retry with a new idempotency key")
+	case existing.Status == operation.StatusFailed:
+		writeError(w, http.StatusConflict,
+			"previous operation failed before broadcast; retry with a new idempotency key")
+	default:
+		// An unrecognised status is treated as in-flight. Being wrong in this
+		// direction costs a confusing answer; being wrong in the other costs a
+		// second transfer.
+		return false
 	}
 	return true
 }
@@ -1478,7 +1615,8 @@ func (p *Platform) decodePlatformTransfer(
 		return transferDTO{}, network.Network{}, chain.TransferRequest{}, false
 	}
 	return request, item, chain.TransferRequest{
-		AccountID: request.AccountID, From: from, To: request.To, Asset: asset, Amount: request.Amount,
+		AccountID: request.AccountID, From: from, To: request.To, Asset: asset,
+		Amount: request.Amount, Approved: request.approval(),
 	}, true
 }
 
@@ -1575,12 +1713,23 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, space.ErrLocked):
 		status = http.StatusLocked
+	case errors.Is(err, space.ErrPasswordRequired), errors.Is(err, vault.ErrInvalidPassword):
+		// A step-up that was not attempted, or attempted with the wrong
+		// password. Both answer the same way so neither confirms the other.
+		status = http.StatusUnauthorized
 	case errors.Is(err, space.ErrDuplicateKey), errors.Is(err, space.ErrFirstSpaceExists),
-		errors.Is(err, operation.ErrConflict):
+		errors.Is(err, operation.ErrConflict), errors.Is(err, chain.ErrFeeChanged):
+		// A stale fee approval is a conflict, not a bad request: nothing the
+		// caller sent was wrong, the network simply moved and the user has to
+		// see the new numbers before anything is signed.
 		status = http.StatusConflict
+	case errors.Is(err, space.ErrTooManyAttempts):
+		status = http.StatusTooManyRequests
+	case errors.Is(err, space.ErrQuotaExceeded), errors.Is(err, asset.ErrQuotaExceeded):
+		status = http.StatusInsufficientStorage
 	case errors.Is(err, config.ErrRevisionConflict):
 		status = http.StatusPreconditionFailed
-	case errors.Is(err, config.ErrInvalidSettings):
+	case errors.Is(err, config.ErrInvalidSettings), errors.Is(err, asset.ErrInvalidMetadata):
 		status = http.StatusBadRequest
 	case errors.Is(err, context.DeadlineExceeded):
 		status = http.StatusGatewayTimeout
@@ -1592,10 +1741,14 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 			!strings.Contains(err.Error(), "required") &&
 			!strings.Contains(err.Error(), "invalid") {
 			status = http.StatusBadGateway
-			p.log.Warn("platform request failed", "error", err)
+			p.log.Warn("platform request failed", "error", config.RedactError(err))
 		}
 	}
-	writeError(w, status, err.Error())
+	// Classification runs on the original error so the sentinels above still
+	// match; only the text that leaves the process is redacted. An error raised
+	// against an RPC endpoint quotes it, and by that point the ${ENV} reference
+	// in the configuration has been expanded into the real credential.
+	writeError(w, status, config.RedactError(err).Error())
 }
 
 func decodeJSON(r *http.Request, target any) error {

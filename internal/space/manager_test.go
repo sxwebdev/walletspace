@@ -16,7 +16,10 @@ import (
 	"github.com/sxwebdev/walletspace/internal/vault"
 )
 
-var fastKDF = vault.Params{Time: 1, MemoryKiB: 8 * 1024, Parallelism: 1}
+// The cheapest parameters the vault will accept. Anything lower is refused, so
+// this is also a check that the floor is not accidentally raised past what a
+// test can afford.
+var fastKDF = vault.Params{Time: 2, MemoryKiB: 32 * 1024, Parallelism: 1}
 
 func newManager(t *testing.T, home string) *space.Manager {
 	t.Helper()
@@ -46,7 +49,7 @@ func TestCreateDefaultIsAtomicAndUnlocked(t *testing.T) {
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	result, err := manager.Create(space.CreateRequest{Password: "password"})
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -61,19 +64,36 @@ func TestCreateDefaultIsAtomicAndUnlocked(t *testing.T) {
 	}
 }
 
-func TestNewPasswordsRequireEightCharacters(t *testing.T) {
+// The vault password is the only thing between a copy of the encrypted backup
+// and the seed inside it, and an offline attacker gets unlimited attempts.
+func TestNewPasswordsAreScoredNotJustMeasured(t *testing.T) {
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	if _, err := manager.Create(space.CreateRequest{Password: "short"}); err == nil {
-		t.Error("Create() accepted a short password")
+	weak := []struct {
+		name     string
+		password string
+	}{
+		{name: "empty", password: ""},
+		{name: "short", password: "short"},
+		{name: "one under the minimum", password: "12345678901"},
+		{name: "top of every wordlist", password: "password123"},
+		{name: "the xkcd example everyone uses", password: "correcthorsebatterystaple"},
+		{name: "one character repeated", password: "aaaaaaaaaaaaaaaa"},
+	}
+	for _, tt := range weak {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := manager.Create(space.CreateRequest{Password: tt.password}); err == nil {
+				t.Errorf("Create() accepted %q", tt.password)
+			}
+		})
 	}
 
-	result, err := manager.Create(space.CreateRequest{Password: "password"})
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if err := manager.ChangePassword(result.Space.ID, "password", "short"); err == nil {
+	if err := manager.ChangePassword(result.Space.ID, "test-vault-password", "short"); err == nil {
 		t.Error("ChangePassword() accepted a short password")
 	}
 }
@@ -83,7 +103,7 @@ func TestLockUnlockAndFamilyExport(t *testing.T) {
 
 	manager := newManager(t, t.TempDir())
 	result, err := manager.Create(space.CreateRequest{
-		Name: "Trading", Password: "old-password",
+		Name: "Trading", Password: "old-vault-password",
 		Mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
 	})
 	if err != nil {
@@ -94,18 +114,18 @@ func TestLockUnlockAndFamilyExport(t *testing.T) {
 		t.Fatalf("Derive(tron) error = %v", err)
 	}
 	accountID := tronAccount.ID
-	tronKey, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyTron)
+	tronKey, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyTron, "old-vault-password")
 	if err != nil {
 		t.Fatalf("ExportPrivateKey(tron) error = %v", err)
 	}
-	if _, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyEVM); !errors.Is(err, space.ErrNetworkBinding) {
+	if _, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyEVM, "old-vault-password"); !errors.Is(err, space.ErrNetworkBinding) {
 		t.Fatalf("ExportPrivateKey(evm) error = %v, want ErrNetworkBinding", err)
 	}
 	evmAccount, err := manager.Derive(result.Space.ID, "ethereum-mainnet", account.FamilyEVM, "EVM")
 	if err != nil {
 		t.Fatalf("Derive(evm) error = %v", err)
 	}
-	evmKey, err := manager.ExportPrivateKey(result.Space.ID, evmAccount.ID, account.FamilyEVM)
+	evmKey, err := manager.ExportPrivateKey(result.Space.ID, evmAccount.ID, account.FamilyEVM, "old-vault-password")
 	if err != nil {
 		t.Fatalf("ExportPrivateKey(evm) error = %v", err)
 	}
@@ -115,13 +135,13 @@ func TestLockUnlockAndFamilyExport(t *testing.T) {
 	if err := manager.Lock(result.Space.ID); err != nil {
 		t.Fatalf("Lock() error = %v", err)
 	}
-	if _, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyTron); !errors.Is(err, space.ErrLocked) {
+	if _, err := manager.ExportPrivateKey(result.Space.ID, accountID, account.FamilyTron, "old-vault-password"); !errors.Is(err, space.ErrLocked) {
 		t.Fatalf("locked ExportPrivateKey() error = %v, want ErrLocked", err)
 	}
 	if err := manager.Unlock(result.Space.ID, "wrong"); !errors.Is(err, vault.ErrInvalidPassword) {
 		t.Fatalf("Unlock(wrong) error = %v", err)
 	}
-	if err := manager.Unlock(result.Space.ID, "old-password"); err != nil {
+	if err := manager.Unlock(result.Space.ID, "old-vault-password"); err != nil {
 		t.Fatalf("Unlock() error = %v", err)
 	}
 }
@@ -130,7 +150,7 @@ func TestDerivationStartsAtZeroPerNetworkAndReusesCompatibleWallet(t *testing.T)
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	created := createWithNileWallet(t, manager, "password")
+	created := createWithNileWallet(t, manager, "test-vault-password")
 	nileZero := created.Accounts[0]
 	nileOne, err := manager.Derive(created.Space.ID, "tron-nile", account.FamilyTron, "Nile 1")
 	if err != nil {
@@ -174,7 +194,7 @@ func TestDerivationUsesLowestFreeIndexAfterOutOfOrderBinding(t *testing.T) {
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	created, err := manager.Create(space.CreateRequest{Password: "password"})
+	created, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -213,7 +233,7 @@ func TestSignerRequiresAnExplicitNetworkBinding(t *testing.T) {
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	created := createWithNileWallet(t, manager, "password")
+	created := createWithNileWallet(t, manager, "test-vault-password")
 	accountID := created.Accounts[0].ID
 	called := 0
 	callback := func(signer chain.Signer) error {
@@ -246,7 +266,7 @@ func TestFailedBindingDoesNotMutateInMemoryState(t *testing.T) {
 
 	home := t.TempDir()
 	manager := newManager(t, home)
-	created := createWithNileWallet(t, manager, "password")
+	created := createWithNileWallet(t, manager, "test-vault-password")
 	accountID := created.Accounts[0].ID
 	spacePath := filepath.Join(home, "spaces", created.Space.ID)
 	if err := os.RemoveAll(spacePath); err != nil {
@@ -275,7 +295,7 @@ func TestImportedKeyPersistsAndDeduplicates(t *testing.T) {
 
 	home := t.TempDir()
 	manager := newManager(t, home)
-	result, err := manager.Create(space.CreateRequest{Password: "password", ImportedOnly: true})
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -306,10 +326,10 @@ func TestImportedKeyPersistsAndDeduplicates(t *testing.T) {
 	if err := manager.Lock(result.Space.ID); err != nil {
 		t.Fatalf("Lock() error = %v", err)
 	}
-	if err := manager.Unlock(result.Space.ID, "password"); err != nil {
+	if err := manager.Unlock(result.Space.ID, "test-vault-password"); err != nil {
 		t.Fatalf("Unlock() after import error = %v", err)
 	}
-	exported, err := manager.ExportPrivateKey(result.Space.ID, imported.Account.ID, account.FamilyEVM)
+	exported, err := manager.ExportPrivateKey(result.Space.ID, imported.Account.ID, account.FamilyEVM, "test-vault-password")
 	if err != nil {
 		t.Fatalf("ExportPrivateKey() error = %v", err)
 	}
@@ -317,7 +337,7 @@ func TestImportedKeyPersistsAndDeduplicates(t *testing.T) {
 		t.Errorf("exported key = %q", exported)
 	}
 	if _, err := manager.ExportPrivateKey(
-		result.Space.ID, imported.Account.ID, account.Family("unknown"),
+		result.Space.ID, imported.Account.ID, account.Family("unknown"), "test-vault-password",
 	); !errors.Is(err, account.ErrUnsupportedFamily) {
 		t.Fatalf("ExportPrivateKey(unknown) error = %v, want ErrUnsupportedFamily", err)
 	}
@@ -327,15 +347,15 @@ func TestChangePasswordPreservesAddresses(t *testing.T) {
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	result := createWithNileWallet(t, manager, "old-password")
+	result := createWithNileWallet(t, manager, "old-vault-password")
 	before := result.Accounts[0].Addresses
-	if err := manager.ChangePassword(result.Space.ID, "old-password", "new-password"); err != nil {
+	if err := manager.ChangePassword(result.Space.ID, "old-vault-password", "new-password"); err != nil {
 		t.Fatalf("ChangePassword() error = %v", err)
 	}
 	if err := manager.Lock(result.Space.ID); err != nil {
 		t.Fatalf("Lock() error = %v", err)
 	}
-	if err := manager.Unlock(result.Space.ID, "old-password"); !errors.Is(err, vault.ErrInvalidPassword) {
+	if err := manager.Unlock(result.Space.ID, "old-vault-password"); !errors.Is(err, vault.ErrInvalidPassword) {
 		t.Fatalf("old password error = %v", err)
 	}
 	if err := manager.Unlock(result.Space.ID, "new-password"); err != nil {
@@ -360,14 +380,12 @@ func TestCreateFirstSpaceIsRaceSafe(t *testing.T) {
 	var wait sync.WaitGroup
 	results := make(chan error, workers)
 	for range workers {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			_, err := manager.Create(space.CreateRequest{
-				Password: "password", ExpectEmpty: true,
+				Password: "test-vault-password", ExpectEmpty: true,
 			})
 			results <- err
-		}()
+		})
 	}
 	wait.Wait()
 	close(results)
@@ -401,7 +419,7 @@ func TestImportLegacyVerifiesEverythingBeforePublishing(t *testing.T) {
 		t.Fatalf("DerivedAddresses() error = %v", err)
 	}
 	_, err = manager.ImportLegacy(space.CreateRequest{
-		Name: "legacy", Password: "password", Mnemonic: mnemonic,
+		Name: "legacy", Password: "test-vault-password", Mnemonic: mnemonic,
 	}, []space.LegacyAccount{
 		{Index: 0, Label: "valid", TronAddress: addresses[account.FamilyTron]},
 		{Index: 1, Label: "invalid", TronAddress: "TInvalidAddress"},
@@ -424,7 +442,7 @@ func TestLegacyWalletRequiresExplicitNetworkAssignment(t *testing.T) {
 		t.Fatalf("DerivedAddresses() error = %v", err)
 	}
 	created, err := manager.ImportLegacy(space.CreateRequest{
-		Name: "legacy", Password: "password", Mnemonic: mnemonic,
+		Name: "legacy", Password: "test-vault-password", Mnemonic: mnemonic,
 	}, []space.LegacyAccount{{
 		Index: 0, Label: "Nile", TronAddress: addresses[account.FamilyTron],
 	}})
@@ -483,7 +501,7 @@ func TestEncryptedBackupCanBeRestoredAndUnlocked(t *testing.T) {
 	if err := restored.Unlock(created.Space.ID, "correct-password"); err != nil {
 		t.Fatalf("Unlock(correct) error = %v", err)
 	}
-	mnemonic, err := restored.Mnemonic(created.Space.ID)
+	mnemonic, err := restored.Mnemonic(created.Space.ID, "correct-password")
 	if err != nil {
 		t.Fatalf("Mnemonic() error = %v", err)
 	}

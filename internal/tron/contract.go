@@ -172,9 +172,14 @@ func (s *Service) Deploy(ctx context.Context, from string, d Deployment, key *ec
 		return Deployed{}, fmt.Errorf("derive contract address: %w", err)
 	}
 
-	txid, err := s.submit(ctx, tx, key)
+	intent, err := deployIntent(from, req)
 	if err != nil {
 		return Deployed{}, err
+	}
+
+	txid, err := s.submit(ctx, intent, tx, key)
+	if err != nil {
+		return Deployed{TxID: txid}, err
 	}
 
 	// A deployment spends energy, or TRX when there is no energy staked.
@@ -209,9 +214,13 @@ func (s *Service) DeployWithSigner(
 	if err != nil {
 		return Deployed{}, fmt.Errorf("derive contract address: %w", err)
 	}
-	txid, err := s.submitWithSigner(ctx, tx, signer)
+	intent, err := deployIntent(from, req)
 	if err != nil {
 		return Deployed{}, err
+	}
+	txid, err := s.submitWithSigner(ctx, intent, tx, signer)
+	if err != nil {
+		return Deployed{TxID: txid}, err
 	}
 	s.invalidate(from)
 	out := Deployed{TxID: txid, Address: contract}
@@ -251,7 +260,8 @@ func deployRequest(from string, d Deployment) (client.DeployContractRequest, err
 	// refused here instead, where it can still be fixed.
 	if d.FeeLimit.LessThanOrEqual(decimal.Zero) {
 		return client.DeployContractRequest{}, fmt.Errorf(
-			"%w: fee limit must be greater than zero — a deployment costs far more energy than a transfer", ErrInvalidRequest)
+			"%w: fee limit must be greater than zero — a deployment costs far more energy than a transfer", ErrInvalidRequest,
+		)
 	}
 
 	feeLimit, err := trxAmount(d.FeeLimit)

@@ -27,7 +27,7 @@ import {
   state,
   update,
 } from "../state/store.js";
-import { escapeHTML, modal, setBusy, shortAddress, toast } from "../components/ui.js";
+import { addressGroups, escapeHTML, modal, setBusy, shortAddress, toast } from "../components/ui.js";
 
 let routeSignal;
 let balanceController;
@@ -167,7 +167,7 @@ function renderShell(root) {
 
 function spaceOptions() {
   return state.spaces
-    .map((item) => `<option value="${item.id}" ${item.id === state.currentSpaceID ? "selected" : ""}>${escapeHTML(item.name)}${item.locked ? " · locked" : ""}</option>`)
+    .map((item) => `<option value="${escapeHTML(item.id)}" ${item.id === state.currentSpaceID ? "selected" : ""}>${escapeHTML(item.name)}${item.locked ? " · locked" : ""}</option>`)
     .join("");
 }
 
@@ -184,7 +184,7 @@ function accountFilterOptions() {
     `<option value="all" ${state.accountFilter === "all" ? "selected" : ""}>Every network</option>`,
     `<option value="unassigned" ${state.accountFilter === "unassigned" ? "selected" : ""}>Needs a network</option>`,
     ...state.networks.map((item) =>
-      `<option value="${item.id}" ${state.accountFilter === item.id ? "selected" : ""}>${escapeHTML(item.name)}${item.enabled ? "" : " · disabled"}</option>`),
+      `<option value="${escapeHTML(item.id)}" ${state.accountFilter === item.id ? "selected" : ""}>${escapeHTML(item.name)}${item.enabled ? "" : " · disabled"}</option>`),
   ].join("");
 }
 
@@ -232,7 +232,7 @@ function accountCards() {
   return accounts.map((account) => {
     const connectable = connectableNetworks(account);
     return `
-      <article class="account-card" data-account="${account.id}">
+      <article class="account-card" data-account="${escapeHTML(account.id)}">
         <div class="account-identity">
           <div class="account-title">
             <strong>${escapeHTML(account.label || `Account ${account.index ?? ""}`)}</strong>
@@ -824,18 +824,69 @@ function showSend(account, network) {
     subtitle: `${network.testnet ? "TESTNET · " : ""}Chain ID ${network.chain_id}`,
     content: `<form class="form-stack" data-form>
       ${network.testnet ? '<div class="notice">This is a testnet. The tokens have no mainnet value.</div>' : ""}
-      <label class="field"><span>Asset</span><select name="asset_id">${assets.map((asset) => `<option value="${asset.id}">${escapeHTML(asset.name || asset.symbol)} · ${escapeHTML(asset.symbol)}</option>`).join("")}</select></label>
+      <label class="field"><span>Asset</span><select name="asset_id">${assets.map((asset) => `<option value="${escapeHTML(asset.id)}">${escapeHTML(asset.name || asset.symbol)} · ${escapeHTML(asset.symbol)}</option>`).join("")}</select></label>
       <label class="field"><span>Recipient</span><input name="to" required spellcheck="false" autocomplete="off"></label>
       <div class="field"><label for="send-amount">Amount</label><div class="input-action"><input id="send-amount" name="amount" required inputmode="decimal" placeholder="0.0"><button class="button" type="button" data-max>MAX</button></div></div>
       <div data-estimate></div>
       <div class="error-text" data-error></div>
-      <button class="button primary" type="submit">Estimate the fee</button>
+      <button class="button primary" type="submit" data-estimate-button>Estimate the fee</button>
+      <button class="button danger" type="button" data-sign hidden disabled>Sign and send</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
       const maxButton = form.querySelector("[data-max]");
-      let confirmedBody;
+      const estimateButton = form.querySelector("[data-estimate-button]");
+      const signButton = form.querySelector("[data-sign]");
+      const errorBox = form.querySelector("[data-error]");
+      let approved;
       let idempotencyKey;
+      let armTimer;
+      // Every in-flight estimate carries the generation it was started in. A
+      // slow node answering after the user has typed something else must not
+      // write that stale answer back into the form or arm the signing button
+      // for it, so any response from an older generation is dropped.
+      let generation = 0;
+
+      const disarm = () => {
+        approved = undefined;
+        idempotencyKey = undefined;
+        clearTimeout(armTimer);
+        signButton.hidden = true;
+        signButton.disabled = true;
+        estimateButton.hidden = false;
+        form.querySelector("[data-estimate]").replaceChildren();
+      };
+
+      const feeRow = (estimate) => {
+        if (!estimate.gas_limit) return "";
+        return `Gas limit: ${escapeHTML(String(estimate.gas_limit))} · Max fee/gas: ${escapeHTML(estimate.max_fee_per_gas)} wei<br>
+            Priority fee: ${escapeHTML(estimate.max_priority_fee_per_gas)} wei · Pricing: ${escapeHTML(estimate.fee_model)}<br>`;
+      };
+
+      const arm = (body, estimate, asset) => {
+        approved = { body, estimate };
+        form.querySelector("[data-estimate]").innerHTML = `
+          <div class="notice">
+            <strong>Check this before signing</strong><br>
+            ${escapeHTML(network.name)} · Chain ${escapeHTML(network.chain_id)}<br>
+            Asset: ${escapeHTML(asset?.symbol || "")}${asset?.contract ? ` · <span class="mono">${addressGroups(asset.contract)}</span>` : ""}<br>
+            From: <span class="mono address-full">${addressGroups(account.addresses[network.family])}</span><br>
+            To: <span class="mono address-full">${addressGroups(body.to)}</span><br>
+            Amount: ${escapeHTML(body.amount)} ${escapeHTML(asset?.symbol || "")}<br>
+            ${feeRow(estimate)}Max fee: ${escapeHTML(estimate.fee)} ${escapeHTML(network.native.symbol)}
+          </div>`;
+        estimateButton.hidden = true;
+        signButton.hidden = false;
+        // Armed a beat late on purpose. The panel appears and the control goes
+        // live in the same tick otherwise, so a held Enter or an impatient
+        // second click signs a transfer that was never actually read.
+        signButton.disabled = true;
+        clearTimeout(armTimer);
+        armTimer = setTimeout(() => {
+          signButton.disabled = false;
+        }, 600);
+      };
+
       const transferBody = (amount = new FormData(form).get("amount")) => {
         const data = new FormData(form);
         return {
@@ -843,75 +894,101 @@ function showSend(account, network) {
           to: data.get("to"), amount,
         };
       };
-      const showEstimate = (body, estimate) => {
-        confirmedBody = body;
-        form.querySelector("[data-estimate]").innerHTML = `
-          <div class="notice">
-            <strong>Check this before signing</strong><br>
-            ${escapeHTML(network.name)} · Chain ${escapeHTML(network.chain_id)}<br>
-            From: <span class="mono">${escapeHTML(shortAddress(account.addresses[network.family]))}</span><br>
-            To: <span class="mono">${escapeHTML(shortAddress(body.to))}</span><br>
-            Amount: ${escapeHTML(body.amount)} · Max fee: ${escapeHTML(estimate.fee)} ${escapeHTML(network.native.symbol)}
-          </div>`;
-        form.querySelector('[type="submit"]').dataset.label = "Sign and send";
-        form.querySelector('[type="submit"]').textContent = "Sign and send";
-      };
+      const selectedAsset = () =>
+        assets.find((item) => item.id === new FormData(form).get("asset_id"));
+
       maxButton.addEventListener("click", async () => {
+        const mine = ++generation;
         const requestBody = transferBody("max");
-        form.querySelector("[data-error]").textContent = "";
+        errorBox.textContent = "";
         if (!String(requestBody.to).trim()) {
-          form.querySelector("[data-error]").textContent = "Enter the recipient first — the fee depends on it";
+          errorBox.textContent = "Enter the recipient first — the fee depends on it";
           return;
         }
+        disarm();
         maxButton.disabled = true;
         maxButton.textContent = "…";
         try {
           const estimate = await estimateTransfer(
             state.currentSpaceID, network.id, requestBody, routeSignal,
           );
+          // Anything the user did while the node was thinking wins. Writing the
+          // spendable balance over an amount they typed in the meantime, and
+          // then arming the signing button for it, is how MAX turns into "send
+          // everything" without anyone asking for it.
+          if (mine !== generation) return;
           form.querySelector('[name="amount"]').value = estimate.amount;
-          idempotencyKey = undefined;
-          showEstimate({ ...requestBody, amount: estimate.amount }, estimate);
+          arm({ ...requestBody, amount: estimate.amount }, estimate, selectedAsset());
         } catch (cause) {
-          form.querySelector("[data-error]").textContent = cause.message;
+          if (mine === generation) errorBox.textContent = cause.message;
         } finally {
           maxButton.disabled = false;
           maxButton.textContent = "MAX";
         }
       });
+
+      // Enter in a text field submits the form, so the submit handler must only
+      // ever price the transfer. Signing lives on its own type="button" control
+      // that implicit submission cannot reach.
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
+        const mine = ++generation;
         const body = transferBody();
-        setBusy(form, true, confirmedBody ? "Signing…" : "Calculating…");
-        form.querySelector("[data-error]").textContent = "";
+        const asset = selectedAsset();
+        disarm();
+        setBusy(form, true, "Calculating…");
+        errorBox.textContent = "";
         try {
-          if (!confirmedBody || JSON.stringify(confirmedBody) !== JSON.stringify(body)) {
-            const estimate = await estimateTransfer(state.currentSpaceID, network.id, body, routeSignal);
-            showEstimate(body, estimate);
-            setBusy(form, false);
-            return;
-          }
-          idempotencyKey ||= crypto.randomUUID();
-          const operation = await sendTransfer(
-            state.currentSpaceID, network.id, body, idempotencyKey, routeSignal,
-          );
-          close();
-          toast(`Transaction sent: ${shortAddress(operation.tx_hash)}`);
-          trackReceipt(state.currentSpaceID, network.id, operation.tx_hash, account.id, body.to);
+          const estimate = await estimateTransfer(state.currentSpaceID, network.id, body, routeSignal);
+          if (mine !== generation) return;
+          arm(body, estimate, asset);
         } catch (cause) {
-          if (cause.status && !String(cause.message).includes("still in progress")) {
-            idempotencyKey = undefined;
-          }
-          form.querySelector("[data-error]").textContent = cause.message;
+          if (mine === generation) errorBox.textContent = cause.message;
         } finally {
           setBusy(form, false);
         }
       });
+
+      signButton.addEventListener("click", async () => {
+        if (!approved) return;
+        const { body, estimate } = approved;
+        signButton.disabled = true;
+        signButton.textContent = "Signing…";
+        errorBox.textContent = "";
+        try {
+          idempotencyKey ||= crypto.randomUUID();
+          // The approved fee travels with the request. The backend signs these
+          // numbers rather than re-asking the node, so what is committed to is
+          // what the panel above showed.
+          const operation = await sendTransfer(
+            state.currentSpaceID, network.id, {
+              ...body,
+              fee_model: estimate.fee_model,
+              gas_limit: estimate.gas_limit,
+              max_fee_per_gas: estimate.max_fee_per_gas,
+              max_priority_fee_per_gas: estimate.max_priority_fee_per_gas,
+            }, idempotencyKey, routeSignal,
+          );
+          close();
+          announceBroadcast(operation, operation.tx_hash, "Transaction sent");
+          trackReceipt(state.currentSpaceID, network.id, operation.tx_hash, account.id, body.to);
+        } catch (cause) {
+          if (retryIsSafe(cause)) idempotencyKey = undefined;
+          // The dialog may already be gone from the screen, so the error goes
+          // to a toast as well: a send that failed must never look like one
+          // that quietly succeeded.
+          errorBox.textContent = cause.message;
+          toast(cause.message, "error");
+          if (cause.status === 409) disarm();
+        } finally {
+          signButton.textContent = "Sign and send";
+          signButton.disabled = !approved;
+        }
+      });
+
       form.addEventListener("input", () => {
-        confirmedBody = null;
-        idempotencyKey = undefined;
-        form.querySelector("[data-estimate]").replaceChildren();
-        form.querySelector('[type="submit"]').textContent = "Estimate the fee";
+        generation++;
+        disarm();
       });
     },
   });
@@ -940,7 +1017,7 @@ async function showResources(account, network) {
     title: "Tron resources",
     subtitle: `${network.name} · ${shortAddress(account.addresses.tron)}`,
     wide: true,
-    content: '<div class="boot" style="min-height:220px">Loading the staking position…</div>',
+    content: '<div class="boot boot-inline">Loading the staking position…</div>',
   });
   try {
     const position = await resources(state.currentSpaceID, network.id, account.id, routeSignal);
@@ -1007,10 +1084,10 @@ async function showResources(account, network) {
           routeSignal,
         );
         dialog.close();
-        toast(`Tron transaction: ${shortAddress(result.tx_id)}`);
+        announceBroadcast(result, result.tx_id, "Tron transaction");
         trackReceipt(state.currentSpaceID, network.id, result.tx_id, account.id, "");
       } catch (cause) {
-        if (cause.status && !String(cause.message).includes("still in progress")) {
+        if (retryIsSafe(cause)) {
           operationKey = undefined;
           operationSignature = undefined;
         }
@@ -1086,13 +1163,15 @@ function showDeploy(account, network) {
             idempotencyKey, routeSignal,
           );
           close();
-          toast(result.failure ? `Deploy failed: ${result.failure}` : `Contract: ${result.address}`,
-            result.failure ? "error" : "");
+          if (inFlightStatuses.has(result.status)) {
+            announceBroadcast(result, result.tx_id, "The deployment");
+          } else {
+            toast(result.failure ? `Deploy failed: ${result.failure}` : `Contract: ${result.address}`,
+              result.failure ? "error" : "");
+          }
           startBalances(true, [account.id]);
         } catch (cause) {
-          if (cause.status && !String(cause.message).includes("still in progress")) {
-            idempotencyKey = undefined;
-          }
+          if (retryIsSafe(cause)) idempotencyKey = undefined;
           form.querySelector("[data-error]").textContent = cause.message;
         } finally {
           setBusy(form, false);
@@ -1100,6 +1179,37 @@ function showDeploy(account, network) {
       });
     },
   });
+}
+
+// A transaction whose broadcast was not confirmed either way. The backend has
+// signed it and sent it, and the node's answer never arrived — so it may be on
+// chain. The one thing that must not happen next is signing a replacement, and
+// the wording says so rather than reading like an ordinary send.
+const inFlightStatuses = new Set(["broadcast_unknown", "broadcasting"]);
+
+// Dropping the idempotency key means the next attempt builds and signs a new
+// transaction, so it is only ever safe once the backend has said the last one
+// provably never reached a node — which it says in exactly one way, by refusing
+// the replay and asking for a new key.
+//
+// This is an allowlist on purpose. Keeping the key is always safe: the backend
+// recognises the retry as the same request and answers with what it already
+// knows. Dropping it on anything the backend did not explicitly clear is how a
+// transfer that may already be on chain gets signed a second time.
+function retryIsSafe(cause) {
+  return Boolean(cause.status) && String(cause.message).includes("new idempotency key");
+}
+
+function announceBroadcast(result, txID, label) {
+  if (inFlightStatuses.has(result?.status)) {
+    toast(
+      `${label} was sent but the node did not confirm it. Check ${shortAddress(txID)} in the ` +
+      "explorer before trying again — sending a second one could move the funds twice.",
+      "error",
+    );
+    return;
+  }
+  toast(`${label}: ${shortAddress(txID)}`);
 }
 
 async function trackReceipt(spaceID, networkID, txID, senderID, recipient) {

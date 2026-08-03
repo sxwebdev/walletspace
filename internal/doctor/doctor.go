@@ -152,7 +152,6 @@ func (d *Doctor) Check(ctx context.Context) {
 	limiter := make(chan struct{}, d.options.Concurrency)
 	group, groupCtx := errgroup.WithContext(ctx)
 	for i, item := range items {
-		i, item := i, item
 		group.Go(func() error {
 			results[i] = d.checkNetwork(groupCtx, item, limiter)
 			return nil
@@ -206,8 +205,12 @@ func (d *Doctor) checkNetwork(
 		}
 	}
 	group, groupCtx := errgroup.WithContext(ctx)
+	// SetLimit blocks in Go rather than spawning: without it every endpoint gets
+	// a goroutine immediately and only then queues on the shared limiter, so a
+	// discovery service answering with thousands of URLs turns one check into
+	// thousands of parked goroutines, once a minute, per network.
+	group.SetLimit(cap(limiter))
 	for i, endpoint := range endpoints {
-		i, endpoint := i, endpoint
 		group.Go(func() error {
 			if !acquire(groupCtx, limiter) {
 				return nil

@@ -11,13 +11,13 @@ func TestSetAutoLockReschedulesBackgroundCleanup(t *testing.T) {
 	t.Parallel()
 
 	manager, err := NewManager(t.TempDir(), time.Hour, vault.Params{
-		Time: 1, MemoryKiB: 8 * 1024, Parallelism: 1,
+		Time: 2, MemoryKiB: 32 * 1024, Parallelism: 1,
 	})
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	t.Cleanup(manager.Close)
-	created, err := manager.Create(CreateRequest{Password: "password"})
+	created, err := manager.Create(CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}

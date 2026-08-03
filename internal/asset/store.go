@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/network"
@@ -95,12 +98,35 @@ func (s *Store) Add(token chain.Asset) error {
 	if token.Kind != "erc20" && token.Kind != "trc20" {
 		return errors.New("only ERC20 and TRC20 assets can be configured")
 	}
+	if !ValidID(token.ID) {
+		return fmt.Errorf("%w: identifier contains unexpected characters", ErrInvalidMetadata)
+	}
+	// The symbol and the name are whatever the contract chose to return, so they
+	// are attacker-controlled text that ends up on screen and in a stored file.
+	// Escaping at the sink is what makes them safe to render; bounding them here
+	// keeps a hostile contract from parking a megabyte of control characters in
+	// the asset file, and makes an obviously bogus token obvious to the user.
+	if err := validateLabel("symbol", token.Symbol); err != nil {
+		return err
+	}
 	if strings.TrimSpace(token.Name) == "" {
 		token.Name = token.Symbol
+	}
+	if err := validateLabel("name", token.Name); err != nil {
+		return err
 	}
 	token.Configured = true
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Every configured asset is one more balance call per account on every
+	// refresh, and the whole file is rewritten on each addition. There was no
+	// ceiling, so a caller that reached the API could make each refresh
+	// arbitrarily expensive — permanently, since the list is reloaded on start.
+	if _, replacing := s.custom[token.ID]; !replacing && len(s.custom) >= maxConfiguredAssets {
+		return fmt.Errorf(
+			"%w: at most %d configured assets", ErrQuotaExceeded, maxConfiguredAssets,
+		)
+	}
 	next := clone(s.custom)
 	next[token.ID] = token
 	if err := s.saveLocked(next); err != nil {
@@ -259,10 +285,78 @@ func ID(networkID, kind, contract string) string {
 	return networkID + ":" + kind + ":" + contract
 }
 
+// maxLabelRunes bounds a token symbol or name. Real ones are a handful of
+// characters; the cap is generous enough for a long project name and far short
+// of anything worth storing.
+const maxLabelRunes = 64
+
+// maxConfiguredAssets bounds the tokens a user can add across all networks.
+// It is far above a real portfolio and far below the point where every balance
+// refresh becomes a burst of contract calls.
+const maxConfiguredAssets = 256
+
+// ErrInvalidMetadata marks metadata a contract returned that this wallet will
+// not store. It is the caller's cue to answer the client rather than blame the
+// node: the request reached the chain and got an answer, the answer is just not
+// something worth putting on screen.
+var ErrInvalidMetadata = errors.New("invalid token metadata")
+
+// ErrQuotaExceeded reports that the configured-asset ceiling has been reached.
+var ErrQuotaExceeded = errors.New("limit reached")
+
+// ValidID reports whether an asset identifier is made only of the characters
+// [ID] can legitimately produce.
+//
+// The identifier embeds the contract address straight from the request body,
+// and it is rendered into an HTML attribute in the send dialog. Today the chain
+// adapters reject anything that is not an address before it gets this far, but
+// that check exists for metadata lookup, not for output safety — constraining
+// the identifier itself means a future family with a laxer address format
+// cannot quietly turn it into a markup injection.
+func ValidID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == ':' || r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+// validateLabel bounds one piece of on-chain metadata: valid UTF-8, short, and
+// free of characters that change how the rest of the string reads.
+//
+// Markup is deliberately *not* rejected. A symbol of "</span><img src=x>" is
+// harmless once it is escaped at the sink, and escaping is what has to hold —
+// a blocklist here would only give a false sense that it does not. What is
+// refused is the class escaping cannot help with: control characters, and bidi
+// overrides, which reorder neighbouring text so a symbol renders as something
+// other than what is stored. Those never appear in a real token and exist in a
+// hostile one precisely to be misread.
+func validateLabel(field, value string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%w: %s is not valid UTF-8", ErrInvalidMetadata, field)
+	}
+	if utf8.RuneCountInString(value) > maxLabelRunes {
+		return fmt.Errorf("%w: %s is longer than %d characters", ErrInvalidMetadata, field, maxLabelRunes)
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+			return fmt.Errorf("%w: %s contains a control character", ErrInvalidMetadata, field)
+		}
+	}
+
+	return nil
+}
+
 func clone(source map[string]chain.Asset) map[string]chain.Asset {
 	out := make(map[string]chain.Asset, len(source))
-	for id, item := range source {
-		out[id] = item
-	}
+	maps.Copy(out, source)
 	return out
 }

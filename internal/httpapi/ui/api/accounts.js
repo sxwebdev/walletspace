@@ -22,8 +22,8 @@ export const renameAccount = (spaceID, accountID, label) =>
     method: "PATCH",
     body: { label },
   }).then((r) => r.data);
-export const exportPrivateKey = (spaceID, accountID, family) =>
+export const exportPrivateKey = (spaceID, accountID, family, password) =>
   request(`/api/spaces/${spaceID}/accounts/${accountID}/private-key`, {
     method: "POST",
-    body: { family },
+    body: { family, password },
   }).then((r) => r.data.private_key);
