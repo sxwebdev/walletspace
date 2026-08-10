@@ -1,5 +1,5 @@
-import { listNetworks } from "../api/networks.js";
-import { listSpaces } from "../api/spaces.js";
+import { listNetworks } from "../services/networks.js";
+import { listSpaces } from "../services/spaces.js";
 import {
   deleteNetwork,
   addAsset,
@@ -11,7 +11,7 @@ import {
   saveSecurity,
   listAssets,
   removeAsset,
-} from "../api/settings.js";
+} from "../services/settings.js";
 import { navigate } from "../router.js";
 import { escapeHTML, setBusy, toast } from "../components/ui.js";
 
