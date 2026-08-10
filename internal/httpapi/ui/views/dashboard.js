@@ -1,10 +1,10 @@
-import { listSpaces, lockSpace } from "../api/spaces.js";
-import { bindAccountNetwork, listAccounts } from "../api/accounts.js";
-import { doctorHealth, listNetworks, streamBalances } from "../api/networks.js";
-import { getSettings, listAssets } from "../api/settings.js";
-import { listPrices } from "../api/prices.js";
-import { estimateTransfer, sendTransfer, transactionStatus } from "../api/transfers.js";
-import { deployContract, estimateDeploy, resources, stakingOperation } from "../api/tron.js";
+import { listSpaces, lockSpace } from "../services/spaces.js";
+import { bindAccountNetwork, listAccounts } from "../services/accounts.js";
+import { doctorHealth, listNetworks, streamBalances } from "../services/networks.js";
+import { getSettings, listAssets } from "../services/settings.js";
+import { listPrices } from "../services/prices.js";
+import { estimateTransfer, sendTransfer, transactionStatus } from "../services/transfers.js";
+import { deployContract, estimateDeploy, resources, stakingOperation } from "../services/tron.js";
 import {
   showDerive as openDerive,
   showExport as openExport,

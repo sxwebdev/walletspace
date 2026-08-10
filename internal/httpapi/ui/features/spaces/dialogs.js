@@ -5,7 +5,7 @@ import {
   renameSpace,
   revealMnemonic,
   unlockSpace,
-} from "../../api/spaces.js";
+} from "../../services/spaces.js";
 import { escapeHTML, modal, secretBlock, setBusy, toast } from "../../components/ui.js";
 
 export function showUnlock(space, onUnlocked) {

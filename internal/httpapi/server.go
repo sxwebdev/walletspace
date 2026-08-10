@@ -185,7 +185,9 @@ func securityHeaders(w http.ResponseWriter) {
 //     That is what stops DNS rebinding, where a page the user visits keeps its
 //     own hostname while the name resolves to 127.0.0.1, making every
 //     header-based check agree that the request is same-origin.
-//   - Origin, when present, must match one of those addresses in full.
+//   - Origin and Fetch Metadata on protected /api/ requests must describe this
+//     same origin. The public UI itself remains navigable from the launcher's
+//     file:// redirect before it has a chance to present the token.
 //   - A capability token is required on every /api/ route, reads included. The
 //     static UI is served without one: it is not secret, and a browser cannot
 //     set a header on a navigation.
@@ -196,22 +198,26 @@ func securityHeaders(w http.ResponseWriter) {
 func (a Access) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		securityHeaders(w)
+		cleanedPath := path.Clean("/" + strings.TrimPrefix(r.URL.Path, "/"))
+		apiRequest := strings.HasPrefix(cleanedPath, "/api/")
 
 		if !a.allowsHost(r.Host) {
 			writeError(w, http.StatusForbidden, "unexpected Host header")
 			return
 		}
 
-		if origin := r.Header.Get("Origin"); origin != "" && !a.allowsOrigin(origin) {
-			writeError(w, http.StatusForbidden, "cross-origin requests are not allowed")
-			return
-		}
+		if apiRequest {
+			if origin := r.Header.Get("Origin"); origin != "" && !a.allowsOrigin(origin) {
+				writeError(w, http.StatusForbidden, "cross-origin requests are not allowed")
+				return
+			}
 
-		switch r.Header.Get("Sec-Fetch-Site") {
-		case "", "same-origin", "none":
-		default:
-			writeError(w, http.StatusForbidden, "cross-site requests are not allowed")
-			return
+			switch r.Header.Get("Sec-Fetch-Site") {
+			case "", "same-origin", "none":
+			default:
+				writeError(w, http.StatusForbidden, "cross-site requests are not allowed")
+				return
+			}
 		}
 
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -238,8 +244,7 @@ func (a Access) guard(next http.Handler) http.Handler {
 		// The prefix is matched on the cleaned path so that "//api/spaces" or
 		// "/api/../api/spaces" cannot slip past the check and then be tidied up
 		// into a real route by the mux.
-		if strings.HasPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, "/")), "/api/") &&
-			!a.authorized(r) {
+		if apiRequest && !a.authorized(r) {
 			writeError(w, http.StatusUnauthorized, "missing or invalid capability token")
 			return
 		}

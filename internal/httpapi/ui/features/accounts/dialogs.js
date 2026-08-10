@@ -3,7 +3,7 @@ import {
   exportPrivateKey,
   importAccount,
   renameAccount,
-} from "../../api/accounts.js";
+} from "../../services/accounts.js";
 import { escapeHTML, modal, secretBlock, setBusy } from "../../components/ui.js";
 
 export function showDerive(spaceID, networks, nextIndex, onCreated) {

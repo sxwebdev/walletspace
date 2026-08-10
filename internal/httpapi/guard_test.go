@@ -108,7 +108,7 @@ func TestGuardRequiresTheCapabilityToken(t *testing.T) {
 			fixture := newPlatformFixture(t)
 			// Reads are guarded too: a balance list names every address in a
 			// space, and the streaming endpoint is a GET.
-			for _, path := range []string{"/api/spaces", "/api/networks", "/api/settings"} {
+			for _, path := range []string{"/api/spaces", "/api/networks", "/api/settings", "/api/client.js"} {
 				request := guardRequest(t, http.MethodGet, path, "")
 				request.Header.Del(httpapi.TokenHeader)
 				if tt.set {
@@ -138,18 +138,50 @@ func TestGuardRequiresTheCapabilityToken(t *testing.T) {
 // The UI itself is not secret, and a browser cannot put a header on a
 // navigation — so the static files stay reachable without a token. They are
 // useless without one: every call the page makes is guarded.
-func TestGuardServesTheUIWithoutAToken(t *testing.T) {
+func TestGuardServesTheUIAndAssetsWithoutAToken(t *testing.T) {
 	t.Parallel()
 
 	fixture := newPlatformFixture(t)
 
-	for _, path := range []string{"/", "/settings"} {
+	for _, path := range []string{"/", "/settings", "/app.js", "/services/client.js"} {
 		request := guardRequest(t, http.MethodGet, path, "")
 		request.Header.Del(httpapi.TokenHeader)
 
 		if response := serve(t, fixture.handler, request); response.Code != http.StatusOK {
 			t.Errorf("GET %s status = %d, want 200", path, response.Code)
 		}
+	}
+}
+
+// The launcher opens a 0600 file:// page which redirects to the loopback UI so
+// the capability token never appears in another process's argv. Browsers mark
+// that top-level navigation as cross-site; the static UI is public and must be
+// allowed to load before its same-origin API requests can present the token.
+func TestGuardAllowsCrossSiteNavigationToTheUI(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPlatformFixture(t)
+	request := guardRequest(t, http.MethodGet, "/", "")
+	request.Header.Del(httpapi.TokenHeader)
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	request.Header.Set("Sec-Fetch-Mode", "navigate")
+
+	response := serve(t, fixture.handler, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", response.Code, response.Body)
+	}
+}
+
+func TestGuardRejectsCrossSiteAPIRead(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPlatformFixture(t)
+	request := guardRequest(t, http.MethodGet, "/api/spaces", "")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+
+	response := serve(t, fixture.handler, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (body: %s)", response.Code, response.Body)
 	}
 }
 

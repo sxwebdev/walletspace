@@ -1,4 +1,4 @@
-import { createSpace } from "../../api/spaces.js";
+import { createSpace } from "../../services/spaces.js";
 import { navigate } from "../../router.js";
 import { update } from "../../state/store.js";
 import { modal, setBusy, toast } from "../../components/ui.js";
