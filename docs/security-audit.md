@@ -2,26 +2,41 @@
 
 Audit date: 2026-07-31
 Revision: `22267c1`
+Last verified: 2026-08-10 against `8709f93`
 Scope: the whole Walletspace service — Go backend, embedded web UI,
 vault/storage, EVM/Tron signing, RPC discovery and Node Doctor.
 
 ## Remediation status
 
-Last updated: 2026-08-03. Everything below the table is the audit exactly as it
-was written, including the parts later found to be wrong — the table and the
-per-finding "Fixed" notes are what has happened since. Two further findings,
-BE-1 and BE-2, were raised during remediation and are described after it.
+Audit written 2026-07-31 against `22267c1`; remediation landed 2026-08-03 in
+`d3b015b`. **Re-verified against the source on 2026-08-10 at `8709f93`** — every
+line of the table below was read against the code that is in the tree today
+rather than carried over from the last update. What that pass added is recorded
+under "Verification pass, 2026-08-10", including three items it opened. Those
+three, and everything else that did not need a live network, were then fixed;
+see "Second remediation, 2026-08-10".
 
-All eleven findings are closed. Two pieces of follow-up work were deliberately
-left undone because neither can be validated without a live network: building
-Tron transaction data locally rather than checking what a node built (SEC-02),
-and re-sending the stored bytes of a broadcast whose answer was lost (SEC-06).
-Both are defence in depth on top of a closed finding, not the fix itself.
+Everything below the status section is the audit exactly as it was written,
+including the parts later found to be wrong — the table and the per-finding
+"Fixed" notes are what has happened since. Findings raised after the audit are
+numbered BE-n and described after it.
 
-**A follow-up review has not been done.** The audit asks for one after P0 and
-P1, together with an adversarial integration suite driven by a fake browser
-origin, a fake discovery service and fake Tron/EVM nodes. Until that exists,
-the fixes below are as reviewed as the code that contained the findings was.
+All eleven original findings are closed and remain closed. What is **not** done
+is listed once, here:
+
+| Open item                                                 | Where      | Why it is still open                                                               |
+| --------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------- |
+| Build Tron `raw_data` locally                             | SEC-02     | Needs testnet validation. Narrowed by BE-3, which bounds the header a node chooses |
+| Re-broadcast the stored signed bytes                      | SEC-06     | Signed bytes are not persisted; needs testnet validation                           |
+| A follow-up review by someone who did not write the fixes | audit-wide | Not started. The adversarial suite it was paired with now exists                   |
+| Settings that weaken the wallet with the token alone      | BE-7       | Needs a decision: a step-up runs into BE-6's problem, restart-only costs a feature  |
+| Deadlines measured on a clock that can move backwards     | BE-8       | Recorded rather than closed; not reachable by the threat model's adversaries       |
+
+**A follow-up review by someone other than the author of the fixes has still not
+been done**, and it is now the only item on the list that needs no network. The
+adversarial integration suite the audit asked for alongside it landed on
+2026-08-10 in `internal/integration`; the 2026-08-10 verification pass was a
+check of the recorded claims against the code, not that review.
 
 ### Defects found reviewing the remediation itself
 
@@ -63,19 +78,24 @@ swallowed `${ENV}` expansion errors and sent requests unauthenticated instead;
 `lockSpace` grew a mutex per invented space id; and `LoopbackAccess` would have
 403'd its own URL on port 80.
 
-| Finding | Status | Note |
-| --- | --- | --- |
-| SEC-01 | **Fixed** | Capability token on every `/api/` route, random loopback port, `Host` checked against the address actually opened, full-origin comparison |
-| SEC-02 | **Fixed for signing; local construction outstanding** | raw_data is decoded and compared field by field against a local intent before any signature, and the txid is computed from the signed bytes. The transaction is still *assembled* by the node — see below |
-| SEC-03 | **Fixed** | The escaping half was already done before this work began; CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options` and server-side metadata bounds were added |
-| SEC-04 | **Fixed** | The confirmed fee is signed; a network that moves past it forces re-confirmation; absurd node quotes are refused |
-| SEC-05 | **Fixed** | `networks.yaml` schema 2 binds credentials to a single endpoint; the resolver, both adapters and the Doctor resolve them per endpoint. Existing files migrate on start |
-| SEC-06 | **Fixed** | Already correct for EVM before this work. Tron now keeps the locally computed txid, distinguishes a node's rejection from a lost answer, and records the transaction id before it signs. Re-broadcast of the stored bytes is not implemented — see below |
-| SEC-07 | **Fixed** | Single redactor on errors and logs; secret-bearing endpoints are no longer cached |
-| SEC-08 | **Fixed** | Server timeouts, an exponential unlock cooldown that survives restart, a global KDF semaphore, derivations moved off the global lock with per-space serialisation, quotas on spaces/accounts/assets/operations, and KDF bounds tightened at both ends |
-| SEC-09 | **Fixed** | Full grouped address on the confirmation screen; EIP-55 enforced on the recipient |
-| SEC-10 | **Fixed** | Discovery bounded by count, URL length, node count and depth; Doctor uses a bounded worker pool |
-| SEC-11 | **Fixed** | Password step-up on both exports, auto-lock cannot be disabled and is bounded, password strength scored, revealed secrets expire |
+The "Verified in" column names where the fix lives. Paths are from the
+repository root and name the function rather than a line: a line number in a
+document is wrong the first time anyone edits the file above it, and this table
+was already pointing at unrelated code by the end of the day it was written.
+
+| Finding | Status                                          | Verified in                                                                                       | Note                                                                                                                                                                                                                                                                                        |
+| ------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SEC-01  | **Closed**                                      | `internal/httpapi/server.go` (`Access.guard`, `LoopbackAccess`), `cmd/walletspace/main.go`                                    | Capability token on every `/api/` route, random loopback port, `Host` checked against the address actually opened, full-origin comparison. `NewPlatform` refuses to build a handler without a token and a host list                                                                         |
+| SEC-02  | **Closed for signing; local construction open** | `internal/tron/intent.go` (`Intent.Verify`, `verifyHeader`, `rejectUnknown`), `internal/tron/service.go` (`submitWithSigner`)                                                | raw_data is decoded and compared field by field against a local intent before any signature, the header is bounded against the local clock (BE-3), and the txid is computed from the signed bytes. The transaction is still _assembled_ by the node — see SEC-02 below                      |
+| SEC-03  | **Closed**                                      | `internal/httpapi/server.go` (`contentSecurityPolicy`, `securityHeaders`), `internal/asset/store.go` (`validateLabel`)                                       | The escaping half was already done before this work began; CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options` and server-side metadata bounds were added                                                                                                                                  |
+| SEC-04  | **Closed**                                      | `internal/chain/evm/adapter.go` (`approvedFees`, `fees.sane`)                                                            | The confirmed fee is signed; a network that moves past it forces re-confirmation; absurd node quotes are refused at both ends                                                                                                                                                               |
+| SEC-05  | **Closed**                                      | `internal/rpcpool/resolver.go` (`Resolver.Headers`), `internal/chain/tron/adapter.go`                                    | `networks.yaml` schema 2 binds credentials to a single endpoint; the resolver, both adapters and the Doctor resolve them per endpoint. Existing files migrate on start                                                                                                                      |
+| SEC-06  | **Closed; re-broadcast open**                   | `internal/operation/status.go`, `internal/httpapi/platform.go` (`finishTronOperation`, `rejectIncompleteReplay`)                                  | Already correct for EVM before this work. Tron now keeps the locally computed txid, distinguishes a node's rejection from a lost answer, and records the transaction id before it signs. Re-broadcast of the stored bytes is not implemented — see below                                    |
+| SEC-07  | **Closed**                                      | `internal/config/home.go` (`RedactURL`, `RedactError`), `internal/rpcpool/resolver.go` (`MarkHealthy`, `cacheableEndpoint`)                                           | Single redactor on errors and logs; secret-bearing endpoints are no longer cached, with a provenance check and a shape check behind it                                                                                                                                                      |
+| SEC-08  | **Closed**                                      | `internal/space/throttle.go`, `internal/space/quota.go`, `internal/vault/vault.go`, `cmd/walletspace/main.go` | Server timeouts, an exponential unlock cooldown that survives restart, a global KDF semaphore, derivations moved off the global lock with per-space serialisation, quotas on spaces/accounts/assets/operations, and KDF bounds tightened at both ends                                       |
+| SEC-09  | **Closed**                                      | `internal/httpapi/ui/components/ui.js` (`addressGroups`), `internal/chain/evm/adapter.go` (`parseRecipient`)                                     | Full grouped address on the confirmation screen; EIP-55 enforced on the recipient                                                                                                                                                                                                           |
+| SEC-10  | **Closed**                                      | `internal/rpcpool/resolver.go` (`extractURLs` and its bounds), `internal/doctor/doctor.go`                                   | Discovery bounded by count, URL length, node count and depth; Doctor holds a limiter slot before it starts a goroutine                                                                                                                                                                      |
+| SEC-11  | **Closed**                                      | `internal/space/manager.go` (`confirmPassword`, `ConfirmSend`), `internal/httpapi/ui/components/ui.js` (`secretBlock`)                                                  | Password step-up on both exports and on the backup (BE-4), a separate confirmation before funds move, auto-lock cannot be disabled and is bounded (1 min – 24 h), a 12-character floor plus a common-password and repeated-character check, revealed secrets expire and clear the clipboard |
 
 Corrections to the audit as written, found while verifying it:
 
@@ -88,27 +108,221 @@ Corrections to the audit as written, found while verifying it:
   existed end to end. Only Tron was affected.
 - **SEC-11** stated that any API call, including background balance polling,
   refreshes the idle timer. It does not: the balance path reads accounts
-  through `Get`, which never touches `lastUsed`. Only five deliberate actions
-  refresh it, which is the intended behaviour.
+  through `Get`, which never touches `lastUsed`. Only deliberate actions refresh
+  it, which is the intended behaviour — five of them at the time, six since the
+  spending confirmation joined them, and the spending *gate* deliberately not
+  among them: it needs nothing but the token, so refreshing there would let a
+  caller hold a space open by polling a check it cannot pass.
 - **"What is already right"** credits the private dialer with blocking loopback
   and private IPs on every RPC connection. That was true for EVM and false for
   Tron — see BE-2.
 
+### Verification pass, 2026-08-10
+
+A re-read of the whole tree at `8709f93` against the claims recorded above. Each
+line of the table was traced to the code that implements it; nothing recorded as
+fixed was found undone. Alongside it:
+
+- `go vet ./...` — clean. `go test ./... -count=1` — every package passes,
+  including the regression tests each fix is named after.
+- `govulncheck ./...` — no reachable vulnerable symbols. One advisory remains in
+  a required module, [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) for
+  the unused `golang.org/x/crypto/openpgp`, with no fixed version. The
+  OpenTelemetry advisory the audit listed is gone: the dependency has moved
+  past the release that fixed it.
+- One change landed after the remediation and is not described anywhere above.
+  `8709f93` narrowed the Origin and Fetch Metadata checks to `/api/` routes,
+  because the launcher's `file://` redirect makes the first navigation
+  cross-site and the guard was refusing to serve the page that then presents the
+  token. Reviewed as part of this pass and found sound: the `Host` check still
+  runs on every request, so DNS rebinding is unaffected; the relaxed paths serve
+  only the static UI, which is not secret and carries no authority; the JSON
+  content-type requirement still applies to every write whatever the path; and
+  the API itself is unchanged. The same commit moved the UI's own modules out of
+  `/api/`, which they had been sharing with the protected namespace — a browser
+  cannot put a header on a module import, so the token check was 401'ing the
+  wallet's own scripts.
+
+Three items the pass opened are recorded as BE-3, BE-4 and BE-5. None of them
+reopens a closed finding.
+
+### Second remediation, 2026-08-10
+
+Everything the verification pass opened, plus the two standing items that needed
+no network, was fixed the same day. What landed:
+
+- **BE-3, BE-4 and BE-5 are closed.** Each is described in its own section
+  below, with the fix.
+- **The adversarial integration suite exists**, in `internal/integration`. It
+  runs the assembled wallet over a real loopback socket against fake nodes, and
+  it is an ordinary test package rather than one behind a build tag, so `make
+  test` and CI run it like everything else. Twelve scenarios: a rebinding page
+  aimed at a listening port; the same page refused on its Origin instead;
+  a local process with no token, and one with a token a byte short; the
+  launcher's cross-site bootstrap loading the UI while the API stays shut to it;
+  the step-up on both exports and on the backup; guessing throttled across
+  unlock and the exports together; spending refused until it is confirmed, and
+  the window dying with the session; the step-up following the config file
+  rather than a default; a node that quotes one fee for the screen and another
+  for the signature; a broadcast accepted and then cut off, followed by a retry
+  that must not sign twice; and a node that says no, where a retry is the right
+  advice.
+- **`govulncheck` runs in CI**, as `make vuln`. It fails on a reachable
+  vulnerability and passes on an advisory nothing calls, which is the only
+  version of the check that will not be trained away.
+- **Spending is a step-up of its own** — the last item of SEC-11's "what to
+  fix", which asked for a separate confirmation of the exact intent before funds
+  move. See "Spending confirmation" below.
+
+One live bug turned up while fixing BE-4: the browser's backup download went out
+on a bare `fetch` that never attached the capability token, so the guard had
+been turning away the wallet's own request since the token shipped. Every call
+now builds its headers through one function.
+
+### Defects found reviewing the second remediation
+
+The first remediation's own review found fourteen defects in the fixes. This
+one was reviewed the same way, and the rate did not improve: ten, three of them
+serious, and four of them in the tests rather than the code. They are recorded
+here because the pattern is the point — a fix is not finished when it is
+written.
+
+- **The spending step-up could be switched off by the caller it defends
+  against.** The worst of them, and its own finding: BE-6 below.
+- **The discovery-URL rule stopped the wallet from starting.** BE-5's fix put
+  the check in `ValidateHomeConfig`, which runs against the file already on
+  disk, so a `config.yaml` naming a private discovery host — legal until that
+  day, and the normal state for anyone who had used a LAN service — made the
+  process exit before opening its port. The UI that would fix the value is
+  served by the process that would not start. It was written thirty lines below
+  the comment explaining why auto-lock is clamped rather than rejected for
+  exactly this reason. Stored values are now repaired on load and refused only
+  on the way in; the URL is dropped and discovery switched off, because an
+  address has no nearest legal value the way a duration does. The same
+  treatment was extended to the discovery timings, where a stored `0s` had the
+  identical effect.
+- **The password prompt destroyed the screen it was asking about.** `modal()`
+  replaced the dialog on screen, so the confirmation asked for a password with
+  the recipient, the amount and the fee no longer visible — while its own text
+  promised the transfer would go ahead "exactly as it was shown". The dialogs
+  underneath went on writing failures into a node no longer in the document, so
+  a cancelled or failed staking or deploy reported nothing at all. Dialogs are
+  a stack now: the prompt opens above, the screen beneath stays readable and
+  inert, and Escape closes only the top one.
+- **Dismissing the prompt mid-derivation opened the window anyway.** The
+  password check takes a noticeable moment, and closing the dialog during it
+  told the user nothing was confirmed while the server went on to open a
+  five-minute window. The browser now aborts the request and reports what the
+  request actually did, and the server reads the request context once — after
+  the password is proven, before the grant is written — so the two answers
+  cannot differ.
+- **A grant outlived the password that bought it.** `ChangePassword` refreshed
+  the session in place rather than replacing it, so a window opened under the
+  old password survived the change.
+- **The gate could answer for a session the auto-lock had already expired.**
+  It read the map without sweeping, and the background sweep runs at most once
+  a minute.
+- **Every 401 was reported as a lost capability token.** A mistyped space
+  password told the user their tab had lost its token and to relaunch the
+  wallet from the printed URL, which also hid the cooldown message after
+  repeated attempts.
+- **A revealed secret was never wiped when its dialog closed.** `secretBlock`
+  listens for a `secret-dismissed` event that nothing in the codebase
+  dispatched, so the comment claiming that closing the dialog does not leave
+  the secret alive had been false since it was written; only the 90-second
+  timer cleared it. Found while reviewing the modal stack, and unrelated to it.
+- **Four tests passed with the thing they tested removed.** The
+  DNS-rebinding test sent an `Origin` header as well, and the guard refuses a
+  foreign origin with the same status — so it passed with the `Host` check
+  deleted outright. The throttle test locked the space first, so "space is
+  locked" satisfied every assertion about the cooldown. Two more asserted only
+  that a call was refused, with no positive control, so a renamed route or a
+  malformed request body would have satisfied them — and one of them was in
+  fact sending the wrong field name. Each now proves the mechanism it names,
+  and the counterfactual was checked by removing the mechanism and watching the
+  test go red.
+- **A double spend could not be distinguished from a re-send.** The fake node
+  answered every nonce query with the same number, so two independently built
+  transfers signed byte-identical bytes and the assertion counting distinct
+  broadcasts collapsed them into one.
+
+### Spending confirmation
+
+Before this, the wallet's own rules did not line up. Revealing the recovery
+phrase asks for the password, exporting a private key asks for the password, and
+downloading the backup now does too — while _spending_ the funds those secrets
+control asked for nothing beyond an unlocked space. So anything that reached the
+API of an unlocked wallet, an injected script or another local process holding
+the token, could not steal the keys but could move everything they protect, one
+transfer at a time. The confirmation screen is in the browser, and a script that
+is already in the browser is not stopped by it.
+
+Sending, staking, delegating, withdrawing and deploying now go through
+`RequireSendConfirmation`. The password opens a window — five minutes by
+default, between one minute and an hour — and every operation inside it goes
+through without asking again. The grant lives on the unlocked session, so
+locking the space by hand or by the idle timer takes it with it, and it is never
+written to disk.
+
+`ConfirmSend` goes through the same `confirmPassword` path as the exports, which
+puts it behind the same cooldown, the same KDF semaphore and the same per-space
+lock. A new password check that skipped those would be the SEC-08 "unthrottled
+twin" defect a second time.
+
+The refusal carries `code: "send_confirmation_required"` rather than only a
+message, and it is raised through the shared error mapper rather than by hand,
+so the code survives wherever the check is made. The UI retries the identical
+request — same idempotency key, same approved fee — once the password is
+accepted, and asks for it in a dialog stacked over the transfer summary rather
+than in place of it: a password given for numbers the user can no longer see is
+not a confirmation of anything. A retry that re-priced or re-keyed would mean
+confirming one transfer and signing another.
+
+The window is bounded at both ends of its life. `ConfirmSend` reads the request
+context after the password is proven and before the grant is written, so a
+browser that has given up — the dialog dismissed mid-derivation — cannot be
+told nothing was confirmed while a window quietly stands open. Whether the
+attempt counted against the cooldown is settled before that, on the password
+alone, or hanging up would be a way to guess for free. Changing the space
+password replaces the session rather than refreshing it, so a grant does not
+outlive the secret that bought it, and both the gate and `ConfirmSend` run the
+idle sweep first, so neither can answer for a session the auto-lock has already
+passed.
+
+The setting is stored as a pointer in the YAML so that a file written before it
+existed reads as "not stated" and takes the default rather than as a deliberate
+no — and it is the one security setting the API will not write at all. See
+BE-6.
+
+Covered by `TestSpendingNeedsItsOwnConfirmation`,
+`TestChangingThePasswordClosesTheSpendingWindow`,
+`TestTheSpendingGateSeesTheIdleDeadline`,
+`TestConfirmingASpendCountsAsUsingTheSpace`,
+`TestAnAbandonedConfirmationOpensNoWindow` and, end to end,
+`TestSpendingNeedsThePasswordAndTheWindowDiesWithTheSession` and
+`TestTheSpendingStepUpFollowsTheConfigFile`.
+
 ### SEC-02, what remains
 
 The signing barrier is closed: a node cannot get a signature over anything
-other than the operation that was asked for, and 23 substitution cases are
-covered by tests that also assert `SignDigest` is never reached. What is *not*
+other than the operation that was asked for, and 17 substitution cases across
+three operation kinds are covered by tests, two of which also assert that
+`SignDigest` is never reached (the count was recorded as 23 before the
+2026-08-10 pass, which is the number of assertions in the file). What is _not_
 done is building `raw_data` locally, which would take the node out of the
 construction path altogether. That work needs live-network validation before it
 can be trusted — an incorrectly assembled reference block or fee limit produces
 transactions that fail to broadcast — so it was deliberately left for a change
 that can be tested against a testnet.
 
+What a node still chooses, and the wallet cannot check without asking that same
+node, is the reference block. Everything else in the header is now bounded — see
+BE-3.
+
 ### BE-1 — High — comma smuggling in the Tron node list (fixed)
 
 Not in the original audit. Every Tron endpoint was validated and probed as a
-single URL string, then joined with `,` and re-split into a *list* of nodes. A
+single URL string, then joined with `,` and re-split into a _list_ of nodes. A
 comma is legal in a URL path, so a discovery service returning
 `https://attacker.example/rpc,grpc://127.0.0.1:50051` passed every check and
 then supplied a second, entirely unchecked plaintext gRPC node — bypassing the
@@ -138,6 +352,229 @@ the `net.IP` predicates, and Go's `To4` decodes only the IPv4-mapped form — so
 `::127.0.0.1`, `64:ff9b::7f00:1` (NAT64), `2002:a9fe:a9fe::` (6to4) and Teredo
 all read as ordinary global unicast. Each is now refused by CIDR.
 
+### BE-3 — Medium — the Tron transaction header is not part of the verified intent (fixed)
+
+Found by the 2026-08-10 pass. `Intent.Verify` in `internal/tron/intent.go`
+checks the contract list, the contract type, the fee limit, the permission id
+and every field inside the contract parameter. It does not look at the four fields of
+`raw_data` that sit _outside_ the contract — `expiration`, `timestamp`,
+`ref_block_bytes` and `ref_block_hash` — and nothing else in the pipeline does
+either: `Expiration` appears in the production tree only in a test fixture. All
+four are chosen by the node and covered by the signature.
+
+The audit asked for exactly this. SEC-02's "what to fix" lists "the
+expiration/reference block" among the fields to check strictly, and the
+remediation stopped at the contract.
+
+**Exploitation.** A Tron node accepts an expiration up to 24 hours past the
+reference block; the default the wallet would expect is a minute. A malicious
+node returns a correct transfer with the expiration set to its maximum, gets it
+signed, and then does not broadcast it — answering with a transport error, which
+is now honestly reported as `broadcast_unknown`. It holds a valid signed
+transfer for a day and fires it at a moment of its choosing: after the account
+is topped up, or after the user has given up and moved the funds. The signature
+is over the operation the user asked for, so nothing downstream objects. The
+mirror image is a denial: an expiration already in the past, or a reference
+block from an unrelated fork, produces a transaction that can never be included
+while looking like an ordinary network failure.
+
+**Fixed.** `Intent.Verify` now checks the header before it looks at the
+contract, in `verifyHeader`, so every operation kind inherits it at once rather
+than each signing path remembering to ask.
+
+An expiration may sit at most ten minutes ahead. A node builds with sixty
+seconds by default, so that is a wide margin on the useful value and two orders
+of magnitude off the protocol's twenty-four hours — which is the whole of the
+attack. The timestamp has to be around now: no further ahead than a two-minute
+clock skew, and no older than the ten-minute ceiling. Expiration must also come
+after the timestamp, and the reference block fields must be the right size,
+which is all that can be said about them without asking the same node to
+describe the head of the chain.
+
+The expiry check is deliberately the lenient one. An expiration that has already
+passed is not an attack — a slow node produces the same thing — and it is
+allowed a skew's grace, because being strict there would mean a wallet on a
+machine whose clock runs a minute fast signs nothing at all while every
+transaction it refuses is perfectly valid on chain.
+
+**And the header was not the whole of it.** Reviewing this fix turned up that
+`raw_data` has two more node-chosen fields nobody looked at: `data`, the memo,
+and `ref_block_num`. The memo is the cheaper attack of the two and the worse
+one — arbitrary bytes of the node's choosing, covered by the signature, billed
+to the user as bandwidth (Tron charges per serialised byte and burns TRX once
+the free allowance is gone, so a hundred kilobytes of someone else's payload is
+paid for out of a one-TRX transfer) and published on chain under the user's
+address for good. `fee_limit`, the only cost bound `Verify` checked, is zero on
+a plain transfer and caps energy rather than bandwidth.
+
+A memo is now refused outright, as `scripts` and `auths` already were: an
+`Intent` has no concept of one, so the honest assertion is that there is none.
+`ref_block_num` is held against the `ref_block_bytes` beside it — two fields
+naming one block can be checked against each other without asking the node to
+describe the chain, which is the strongest thing sayable locally — and zero
+keeps passing, because java-tron writes only the two bytes and requiring
+otherwise would refuse every transaction a real node builds.
+
+The same review also applied `unmarshalParameter`'s reasoning — that a field
+this build cannot name is a field the user signs without anything having read
+it — to the levels above the parameter: the transaction, the contract entry,
+and the `Any` envelope around the parameter. The envelope is a message in its
+own right with room for fields beside the type URL and the payload, and
+reflection stops at the payload's opaque bytes, so it is a door of its own and
+not the check below in disguise.
+
+Covered by `TestVerifyRejectsAHostileTransactionHeader` (twelve cases: a day, an
+hour, expired, no expiration, built last week, built in the future, no
+timestamp, expiring before it was built, both reference-block fields, and the
+two int64 extremes, which have to be refused by the bounds rather than by
+whatever `time.UnixMilli` does when it overflows), by
+`TestVerifyRejectsBytesNoIntentAsksFor` (the memo, a hundred-kilobyte memo, a
+reference height naming another block, a negative one chosen so that only the
+sign check can refuse it, and an unknown field at each of the three levels),
+`TestVerifyAcceptsTheHeaderARealNodeWrites` for the skew a real node produces,
+and `TestALongLivedTransactionNeverReachesTheKey` for the acceptance criterion
+that matters: `SignDigest` is not called.
+
+### BE-4 — Low — the encrypted backup downloads without the password (fixed)
+
+Found by the 2026-08-10 pass. `POST /api/spaces/{id}/backup` returns the whole
+space file, vault container included (`Manager.Backup`). It takes no
+password, and unlike the mnemonic and private-key exports it does not require
+the space to be unlocked — the manager reads the file it already holds.
+
+This is not a break of SEC-01 or SEC-11: the capability token is required, and
+those findings are about what an unauthenticated caller or a brief look at an
+unlocked tab can do. It is the one master-secret-bearing endpoint left without
+the step-up SEC-11 added to its neighbours, and the audit's own SEC-01
+exploitation list names "download an encrypted backup and attack the password
+offline" as one of the outcomes worth preventing. Argon2id at 64 MiB × 3 and a
+12-character floor make that grind expensive rather than impossible.
+
+**Fixed.** `Backup` takes a password and runs it through the same
+`confirmPassword` path the exports use, which also puts the endpoint behind the
+shared unlock cooldown and the KDF semaphore. The dialog asks for it the way the
+recovery phrase does.
+
+Fixing it surfaced a live bug: `downloadBackup` in the UI used a bare `fetch`
+rather than the API client, so it never carried the capability token and the
+guard had been answering the wallet's own download with a 401 ever since the
+token shipped. The client now exposes a `download` helper that builds its
+headers the same way every other call does.
+
+Covered by `TestEncryptedBackupCanBeRestoredAndUnlocked`, extended with the
+no-password and wrong-password cases, and end to end by
+`TestTheBackupNeedsThePasswordEvenWhileUnlocked`.
+
+### BE-5 — Low — the discovery request itself does not use the guarded dialer (fixed)
+
+Found by the 2026-08-10 pass. Every RPC connection goes through
+`Resolver.DialContext`, which re-resolves the host and refuses non-public
+addresses. The discovery request does not: `Resolver.client` in
+`internal/rpcpool/resolver.go` was built with a plain `net.Dialer` and
+`http.ProxyFromEnvironment`. Validation of the discovery URL requires HTTPS, a
+host and no userinfo (`ValidateHomeConfig`) — it did not require the host to
+resolve to a public address.
+
+The endpoints discovery _returns_ are still filtered by `safeDynamicEndpoint`,
+so this does not reach the signing path. What it means is narrower: the setting
+can point the wallet at a loopback or private-network service, and changing it
+needs the capability token, which is the boundary that already governs
+everything else. Recorded because it is the one outbound request the wallet
+makes on a schedule that no address filter applies to, which is not what the
+rest of the networking code leads a reader to expect.
+
+**Fixed.** The discovery client now dials through `Resolver.DialContext`, built
+per dial rather than captured once so that changing the insecure-RPC setting
+takes effect on a client that lives for the whole process. `Proxy` is nil, as it
+already was for RPC: a proxy would be dialled in place of the host, which is the
+same exemption by another route.
+
+Saving a discovery URL that names a loopback, private, link-local or `.local`
+host is refused unless insecure RPC is explicitly allowed — the switch the
+dialer honours for nodes. The check is a literal-and-suffix test rather than a
+lookup, because a validation function has no business making a DNS query; a name
+that resolves privately is still refused, by the dialer, at connect time.
+
+Covered by `TestDiscoveryItselfGoesThroughTheGuardedDialer`, which asserts both
+that a loopback discovery service is never reached and that it is reached once
+private addresses are allowed — so the refusal is the dialer's and not something
+else being broken — and by `TestLocalDiscoveryURLsAreRefused`.
+
+### BE-6 — High — the spending step-up could be switched off with the token alone (fixed)
+
+Found reviewing the second remediation, and it made the step-up worth nothing
+against the caller it was built for. `PATCH /api/settings/security` required
+only the capability token, and the handler pushed the result straight into the
+live manager. The sequence, run end to end against the real server: a transfer
+is refused with 403 `send_confirmation_required`; a PATCH carrying
+`confirm_sends: false` returns 200; the identical transfer returns 202 and the
+node records a broadcast. No password anywhere.
+
+A password could not be demanded here. The setting is global and belongs to no
+space, so there is no password to ask for — and "the password of any unlocked
+space" is no barrier at all, because a caller holding the token can create a
+space of its own and know its password.
+
+**Fixed** by taking the field out of the API's reach. `confirm_sends` is read
+from `config.yaml` at start and is refused in either direction by the settings
+handler, which names the file and the restart in its answer; a PATCH that
+echoes the stored value back is accepted, because the form posts the whole
+block. The field is listed in `restart_required`, and the settings page renders
+it as state rather than as a control. Turning the step-up off is therefore
+something the person at the keyboard does to a file, which is the one thing a
+caller with the token cannot reach.
+
+The same reasoning does not extend to `send_grant_ttl`, which stays editable
+within its one-minute-to-one-hour bounds: the worst a caller can do with it is
+widen a window that still opens only on a real password. That is a smaller
+version of the same shape, and it is recorded rather than closed.
+
+Covered by `TestTheSpendingStepUpCannotBeSwitchedOffThroughTheAPI`.
+
+### BE-7 — Medium — the RPC a wallet trusts can be replaced with the token alone (open)
+
+Found reviewing the second remediation, alongside BE-6, and left open because
+the answer is a design decision rather than a patch.
+
+`PUT /api/settings/networks/{id}`, `DELETE …/override` and
+`PATCH /api/settings/node-discovery` all take nothing but the capability token.
+A caller holding it can drop the user's pinned endpoints, point every network
+at a node it controls, and set `allow_insecure_rpc`. Endpoint verification is
+no obstacle: it probes the endpoint that was just supplied, and the attacker's
+node answers correctly.
+
+The keys stay safe — a Tron transaction is verified against a local intent
+before signing, an EVM fee is bound to the approval, and the guarded dialer
+still applies — so this is not a path to spending. What it reaches is
+everything the wallet *believes*: balances, fees, the numbers on the
+confirmation screen, and whether a broadcast is reported as having happened. A
+user reading a screen fed by an attacker's node is being lied to about their
+own funds, which is worth closing even though nothing can be taken directly.
+
+The obvious fix — a step-up on network settings — runs into BE-6's problem in
+a milder form: these settings are global too. Making them restart-only would
+end the ability to add an RPC endpoint from the UI, which is a real feature. It
+needs a decision about which of the two costs to pay.
+
+Two smaller members of the same family, both recorded and neither closed:
+`auto_lock` can be pushed to twenty-four hours with the token alone, taking a
+decrypted seed from fifteen minutes in memory to a day, and `send_grant_ttl` to
+an hour as described in BE-6.
+
+### BE-8 — Low — every deadline rides a clock that can be moved backwards (open)
+
+Found reviewing the second remediation. `Manager.now` is
+`time.Now().UTC()`, and `.UTC()` strips the monotonic reading, so the auto-lock
+deadline and the spending window are both measured against a wall clock. A
+system clock moved backwards — by an operator, by NTP after a long drift —
+extends both. The unlock cooldown has an explicit guard against exactly this,
+added with SEC-08 and visible in `throttle.go`; sessions and grants have none.
+
+Not a remote attack: moving the machine's clock is not something the threat
+model's adversaries can do. It is recorded because the guard already exists one
+file away, which means the omission is an inconsistency rather than a
+judgement.
+
 ## Outcome
 
 As it stands, the service cannot be considered safe for holding or moving real
@@ -155,11 +592,11 @@ fee confirmation that is not bound to the signature, a leak of provider
 credentials to fallback nodes, and the risk of a repeated Tron operation after
 an indeterminate broadcast.
 
-| Severity |     Count | Admissible for a release with real funds |
-| -------- | --------: | ---------------------------------------- |
-| Critical |         2 | Blocks                                   |
-| High     |         4 | Blocks                                   |
-| Medium   |         5 | Fix before a public release              |
+| Severity | Count | Admissible for a release with real funds |
+| -------- | ----: | ---------------------------------------- |
+| Critical |     2 | Blocks                                   |
+| High     |     4 | Blocks                                   |
+| Medium   |     5 | Fix before a public release              |
 
 ## Threat model
 
@@ -446,7 +883,7 @@ answer into `failed`. All five signing handlers now go through one path that
 records `broadcast_unknown` with 202 and a warning, and reserves `failed` for
 operations that provably never reached a node.
 
-The transaction id is written down *before* the signature. A Tron txid is
+The transaction id is written down _before_ the signature. A Tron txid is
 sha256 of the raw data, which is exactly the digest handed to the signer — so a
 wrapper around the signer can persist it with status `broadcasting` while there
 is still nothing on the wire. If the wallet dies between the signature and the
@@ -463,7 +900,7 @@ reporting an ordinary send.
 Folded in from the sub-threshold list: `Begin` normalised the idempotency key and
 `Update` did not, so a key padded with `\v`, `\f` or U+00A0 — none of which
 net/textproto strips — was reserved under one name and looked up under another.
-It surfaced only *after* the transaction was signed and broadcast: "operation
+It surfaced only _after_ the transaction was signed and broadcast: "operation
 not found", the txid lost, the record stuck at `building`, every retry a
 permanent 409. Both now call `operation.NormalizeKey`, and `Update` no longer
 erases a known txid when passed an empty one.
@@ -532,7 +969,7 @@ fifteen-minute ceiling after three free attempts, jittered by up to a quarter of
 each wait. The jitter is what stops an attacker from sleeping exactly long
 enough and keeping a steady rate. The counter lives in `unlock.json` beside the
 space, because restarting the wallet is not difficult for anyone who can already
-reach the API. While the cooldown holds, the *correct* password is refused too —
+reach the API. While the cooldown holds, the _correct_ password is refused too —
 otherwise the throttle would confirm a guess without the attacker having to
 wait — and `ErrTooManyAttempts` says nothing about the password.
 
@@ -546,7 +983,7 @@ through deriving a key for the old one. A semaphore caps concurrent derivations
 at min(NumCPU/2, 4), so a burst cannot put half a gigabyte of Argon2 in flight.
 
 Quotas: 64 spaces, 512 accounts per space, 256 configured assets, 512 operation
-records. The space quota is checked *before* the two derivations in `Create`, so
+records. The space quota is checked _before_ the two derivations in `Create`, so
 a caller at the ceiling cannot spend 128 MiB of Argon2 per request discovering
 it. The operations file previously grew for the life of a space and is read and
 rewritten in full on every operation; it is now pruned oldest-first, and a
@@ -722,4 +1159,53 @@ Performed:
 No live operations against real networks and no fuzzing of external RPC
 responses were carried out. After P0/P1, another security review is needed,
 together with an adversarial integration suite using a fake browser origin, a
-fake discovery service and fake Tron/EVM RPC.
+fake discovery service and fake Tron/EVM RPC. _The suite exists as of
+2026-08-10, in `internal/integration`; the review does not._
+
+Re-run on 2026-08-10 at `8709f93`: `go vet ./...` clean, the full test suite
+green across every package, `govulncheck ./...` with no reachable vulnerable
+symbols. GO-2026-5158 no longer applies: `go.opentelemetry.io/otel` has moved
+past the release that fixed it. GO-2026-5932 stands, unreachable, with no fixed version: the package
+is unmaintained by upstream policy rather than carrying a specific bug, and
+nothing here imports it.
+
+## Remaining work
+
+Every item on the 2026-08-10 plan that could be done offline is done, and so is
+everything the review of it found except two that are decisions rather than
+patches. What is left:
+
+### Needs a decision
+
+1. **Settings that weaken the wallet with the token alone** — BE-7. The RPC a
+   wallet trusts, the auto-lock, the length of the spending window. Each has
+   the shape BE-6 had, and BE-6's answer — take it out of the API — costs a
+   feature here that it did not cost there.
+2. **Deadlines on a clock that can move backwards** — BE-8. Small, contained,
+   and already solved one file away for the unlock cooldown.
+
+### Needs a testnet
+
+1. **Build `raw_data` locally** — SEC-02's remaining half. Take only the head
+   block from RPC, assemble the contract and the header here, and keep
+   `Intent.Verify` as an assertion over what was built rather than as the only
+   barrier. An incorrectly assembled reference block produces transactions that
+   simply fail to broadcast, and no offline test can tell the difference. BE-3
+   has narrowed what the node still chooses to the reference block itself.
+2. **Persist the signed bytes and re-broadcast them** — SEC-06's remaining half.
+   Store the serialised signed transaction with the operation record, and on a
+   `broadcast_unknown` retry send _those bytes_ to a different endpoint rather
+   than building anything. Needs a policy for a transaction that has passed its
+   expiration, which the BE-3 bounds now make knowable. Note that persisting
+   signed bytes means a file that authorises a transfer to anyone who reads it:
+   `0600` and the data directory lock are the only things guarding it, and that
+   trade is part of what a testnet run should be used to think through.
+
+### Needs a person
+
+1. **A follow-up review by someone who did not write the fixes.** The
+   remediation's own internal review found fourteen defects, five of which
+   partly undid the finding they were meant to close, and the 2026-08-10 pass
+   found three more. That rate is the argument for this step, not the
+   complexity of any single fix. The adversarial suite it was meant to
+   accompany now exists, so the review has something to run.

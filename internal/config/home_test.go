@@ -84,6 +84,246 @@ func TestInvalidHomeSettingsHaveTypedError(t *testing.T) {
 	}
 }
 
+// Discovery is polled on a timer, so a URL aimed at the local machine turns the
+// wallet into a scheduled client of whatever is listening there. The dialer
+// refuses the connection anyway; this is about failing while the person who
+// typed it is still looking at the form.
+func TestLocalDiscoveryURLsAreRefused(t *testing.T) {
+	t.Parallel()
+
+	local := []string{
+		"https://127.0.0.1:9000/",
+		"https://localhost/nodes",
+		"https://[::1]:9000/",
+		"https://192.168.1.10/",
+		"https://169.254.169.254/latest/meta-data",
+		"https://gateway.local/",
+		// Go's To4 decodes only the IPv4-mapped form, so every spelling below
+		// reads as ordinary global unicast to IsLoopback, IsPrivate and
+		// IsGlobalUnicast alike — including the 6to4 wrapping of
+		// 169.254.169.254, the cloud metadata address. They passed here while
+		// the dialer refused them at connect time, because this check kept a
+		// second, shorter opinion of what "public" means instead of sharing the
+		// dialer's.
+		"https://[::127.0.0.1]/nodes",      // IPv4-compatible loopback
+		"https://[::ffff:127.0.0.1]/nodes", // IPv4-mapped loopback
+		"https://[64:ff9b::7f00:1]/nodes",  // NAT64 loopback
+		"https://[2002:7f00:1::]/nodes",    // 6to4 loopback
+		"https://[2002:a9fe:a9fe::]/nodes", // 6to4 link-local
+		"https://[2001::1]/nodes",          // Teredo
+		"https://100.64.1.1/nodes",         // CGNAT
+	}
+	for _, value := range local {
+		current := config.DefaultHomeConfig()
+		current.NodeDiscovery.Enabled = true
+		current.NodeDiscovery.URL = value
+		if err := config.ValidateHomeConfig(current); !errors.Is(err, config.ErrInvalidSettings) {
+			t.Errorf("ValidateHomeConfig(%q) error = %v, want ErrInvalidSettings", value, err)
+		}
+
+		// Unless the user has said, in as many words, that private RPC is what
+		// they want — which is the same switch that lets the dialer through.
+		permissive := current
+		permissive.NodeDiscovery.AllowInsecureRPC = true
+		if err := config.ValidateHomeConfig(permissive); err != nil {
+			t.Errorf("ValidateHomeConfig(%q, insecure allowed) error = %v, want nil", value, err)
+		}
+	}
+
+	public := config.DefaultHomeConfig()
+	public.NodeDiscovery.Enabled = true
+	public.NodeDiscovery.URL = "https://discovery.example/nodes"
+	if err := config.ValidateHomeConfig(public); err != nil {
+		t.Errorf("ValidateHomeConfig(public host) error = %v, want nil", err)
+	}
+}
+
+// writeStoredConfig lays down a config.yaml the way an older wallet would have
+// left it, so the test starts from a file on disk rather than from a struct the
+// validator has already been over.
+func writeStoredConfig(
+	t *testing.T, home string, enabled bool, discoveryURL string, allowInsecure bool,
+) {
+	t.Helper()
+
+	body := fmt.Sprintf(`schema_version: 1
+server:
+  addr: 127.0.0.1:0
+  open_browser: true
+security:
+  auto_lock: 15m0s
+  confirm_sends: true
+  send_grant_ttl: 5m0s
+node_discovery:
+  enabled: %t
+  url: %q
+  refresh_interval: 30m0s
+  request_timeout: 5s
+  allow_insecure_rpc: %t
+ui:
+  last_space_id: ""
+`, enabled, discoveryURL, allowInsecure)
+	if err := storage.AtomicWrite(filepath.Join(home, "config.yaml"), []byte(body)); err != nil {
+		t.Fatalf("AtomicWrite(config.yaml) error = %v", err)
+	}
+}
+
+// A value already on disk must never be the reason the wallet will not start.
+//
+// The discovery URL is edited on the /settings page, which is served by the
+// process that a refused config.yaml stops from ever opening its port — so
+// rejecting the file leaves hand-editing YAML as the only way back in.
+// Auto-lock settled the shape of this first: clamp what is stored on disk, and
+// refuse what someone is trying to save.
+func TestAStoredPrivateDiscoveryURLStillStartsTheWallet(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		enabled       bool
+		url           string
+		allowInsecure bool
+		wantEnabled   bool
+		wantURL       string
+	}{
+		{name: "private URL with discovery off", url: "https://192.168.1.50/nodes"},
+		{name: "private URL with discovery on", enabled: true, url: "https://192.168.1.50/nodes"},
+		{
+			name: "public URL is left alone", enabled: true,
+			url:         "https://discovery.example/nodes",
+			wantEnabled: true, wantURL: "https://discovery.example/nodes",
+		},
+		{
+			// Someone who has said in as many words that private RPC is what
+			// they want keeps it across a restart. The clamp repairs what the
+			// validator would refuse and nothing else, so it must read the same
+			// switch the validator reads rather than the host alone.
+			name: "private URL survives when insecure RPC is allowed", enabled: true,
+			url:           "https://192.168.1.50/nodes",
+			allowInsecure: true,
+			wantEnabled:   true, wantURL: "https://192.168.1.50/nodes",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			writeStoredConfig(t, home, tt.enabled, tt.url, tt.allowInsecure)
+
+			manager, err := config.NewHomeManager(home)
+			if err != nil {
+				t.Fatalf("NewHomeManager() error = %v", err)
+			}
+			// Dropped and switched off, not merely tolerated: the rule exists to
+			// stop a timer polling that host, so honouring the stored value would
+			// answer the startup problem by reopening the one the rule is for.
+			discovery := manager.Snapshot().Config.NodeDiscovery
+			if discovery.Enabled != tt.wantEnabled || discovery.URL != tt.wantURL {
+				t.Errorf(
+					"loaded discovery = {Enabled:%v URL:%q}, want {Enabled:%v URL:%q}",
+					discovery.Enabled, discovery.URL, tt.wantEnabled, tt.wantURL,
+				)
+			}
+			// The rest of the block survives, so the clamp repairs one field
+			// rather than resetting the section around it.
+			if discovery.RefreshInterval != 30*time.Minute ||
+				discovery.RequestTimeout != 5*time.Second {
+				t.Errorf("clamp reset the surrounding discovery settings: %+v", discovery)
+			}
+		})
+	}
+}
+
+// The same lockout, reached through the timings rather than the address. A
+// stored zero is refused by the validator exactly as a private host is, and a
+// hand-edited file can hold one — so it has to be repaired on load too. Unlike
+// an address, a duration has a nearest legal value, so these take the shipped
+// default instead of being dropped.
+func TestStoredDiscoveryTimingsCannotStopTheWallet(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	body := `schema_version: 1
+server:
+  addr: 127.0.0.1:0
+  open_browser: true
+security:
+  auto_lock: 15m0s
+  confirm_sends: true
+  send_grant_ttl: 5m0s
+node_discovery:
+  enabled: true
+  url: "https://discovery.example/nodes"
+  refresh_interval: 0s
+  request_timeout: -1s
+  allow_insecure_rpc: false
+ui:
+  last_space_id: ""
+`
+	if err := storage.AtomicWrite(filepath.Join(home, "config.yaml"), []byte(body)); err != nil {
+		t.Fatalf("AtomicWrite(config.yaml) error = %v", err)
+	}
+
+	manager, err := config.NewHomeManager(home)
+	if err != nil {
+		t.Fatalf("NewHomeManager() error = %v, want the wallet to start", err)
+	}
+	discovery := manager.Snapshot().Config.NodeDiscovery
+	defaults := config.DefaultHomeConfig().NodeDiscovery
+	if discovery.RefreshInterval != defaults.RefreshInterval ||
+		discovery.RequestTimeout != defaults.RequestTimeout {
+		t.Errorf("loaded timings = %s/%s, want the defaults %s/%s",
+			discovery.RefreshInterval, discovery.RequestTimeout,
+			defaults.RefreshInterval, defaults.RequestTimeout)
+	}
+	// Repaired, not reset: the URL beside them is legal and stays.
+	if !discovery.Enabled || discovery.URL != "https://discovery.example/nodes" {
+		t.Errorf("clamp disturbed the rest of the block: %+v", discovery)
+	}
+
+	// And a zero arriving through the API is still refused, so the person
+	// typing it finds out rather than silently getting something else.
+	next := manager.Snapshot().Config
+	next.NodeDiscovery.RequestTimeout = 0
+	if _, err := manager.SaveConfig(next, manager.Snapshot().Revision); !errors.Is(err, config.ErrInvalidSettings) {
+		t.Errorf("SaveConfig(zero timeout) error = %v, want ErrInvalidSettings", err)
+	}
+}
+
+// Clamping on load must not become clamping everywhere. A URL arriving through
+// the settings API is refused outright, so whoever typed it finds out while
+// they are still looking at the form — and finds out what to do about it.
+func TestSavingAPrivateDiscoveryURLIsStillRefused(t *testing.T) {
+	t.Parallel()
+
+	manager, err := config.NewHomeManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewHomeManager() error = %v", err)
+	}
+	snapshot := manager.Snapshot()
+
+	// Refused whether or not discovery is on, for the reason the send
+	// confirmation window is checked whether or not the step-up is on: a value
+	// rejected only once someone enables the feature fails at the least useful
+	// moment, and the form shows the field either way.
+	for _, enabled := range []bool{true, false} {
+		next := snapshot.Config
+		next.NodeDiscovery.Enabled = enabled
+		next.NodeDiscovery.URL = "https://192.168.1.50/nodes"
+		_, err := manager.SaveConfig(next, snapshot.Revision)
+		if !errors.Is(err, config.ErrInvalidSettings) {
+			t.Fatalf("SaveConfig(enabled=%v) error = %v, want ErrInvalidSettings", enabled, err)
+		}
+		if !strings.Contains(err.Error(), "insecure") {
+			t.Errorf("SaveConfig() error = %q, does not name the way out", err)
+		}
+	}
+	if after := manager.Snapshot().Config.NodeDiscovery; after.Enabled || after.URL != "" {
+		t.Errorf("a refused save reached the stored settings: %+v", after)
+	}
+}
+
 func TestNetworkHeadersAreRedacted(t *testing.T) {
 	t.Parallel()
 

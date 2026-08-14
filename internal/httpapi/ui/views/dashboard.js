@@ -19,6 +19,7 @@ import {
   showMnemonic,
   showRenameSpace as openSpaceRename,
   showUnlock as openUnlock,
+  withSendConfirmation,
 } from "../features/spaces/dialogs.js";
 import { navigate } from "../router.js";
 import {
@@ -960,7 +961,7 @@ function showSend(account, network) {
           // The approved fee travels with the request. The backend signs these
           // numbers rather than re-asking the node, so what is committed to is
           // what the panel above showed.
-          const operation = await sendTransfer(
+          const operation = await withSendConfirmation(state.currentSpaceID, () => sendTransfer(
             state.currentSpaceID, network.id, {
               ...body,
               fee_model: estimate.fee_model,
@@ -968,7 +969,7 @@ function showSend(account, network) {
               max_fee_per_gas: estimate.max_fee_per_gas,
               max_priority_fee_per_gas: estimate.max_priority_fee_per_gas,
             }, idempotencyKey, routeSignal,
-          );
+          ));
           close();
           announceBroadcast(operation, operation.tx_hash, "Transaction sent");
           trackReceipt(state.currentSpaceID, network.id, operation.tx_hash, account.id, body.to);
@@ -1077,12 +1078,12 @@ async function showResources(account, network) {
           operationSignature = signature;
           operationKey = crypto.randomUUID();
         }
-        const result = await stakingOperation(
+        const result = await withSendConfirmation(state.currentSpaceID, () => stakingOperation(
           state.currentSpaceID, network.id, account.id, actionName,
           operationBody,
           operationKey,
           routeSignal,
-        );
+        ));
         dialog.close();
         announceBroadcast(result, result.tx_id, "Tron transaction");
         trackReceipt(state.currentSpaceID, network.id, result.tx_id, account.id, "");
@@ -1091,7 +1092,11 @@ async function showResources(account, network) {
           operationKey = undefined;
           operationSignature = undefined;
         }
+        // The toast for the same reason the send dialog has one: staking moves
+        // funds, and a failure that only ever reaches this form is a failure
+        // nobody sees if the form is no longer the screen being looked at.
         form.querySelector("[data-error]").textContent = cause.message;
+        toast(cause.message, "error");
       } finally {
         setBusy(form, false);
       }
@@ -1158,10 +1163,10 @@ function showDeploy(account, network) {
             return;
           }
           idempotencyKey ||= crypto.randomUUID();
-          const result = await deployContract(
+          const result = await withSendConfirmation(state.currentSpaceID, () => deployContract(
             state.currentSpaceID, network.id, account.id, requestBody,
             idempotencyKey, routeSignal,
-          );
+          ));
           close();
           if (inFlightStatuses.has(result.status)) {
             announceBroadcast(result, result.tx_id, "The deployment");
@@ -1172,7 +1177,11 @@ function showDeploy(account, network) {
           startBalances(true, [account.id]);
         } catch (cause) {
           if (retryIsSafe(cause)) idempotencyKey = undefined;
+          // A deployment spends energy whether or not it succeeds, so the
+          // toast goes out too: this must not be the failure the user never
+          // hears about because the dialog was not what they were looking at.
           form.querySelector("[data-error]").textContent = cause.message;
+          toast(cause.message, "error");
         } finally {
           setBusy(form, false);
         }

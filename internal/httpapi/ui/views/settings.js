@@ -96,11 +96,38 @@ function assetRows() {
   </div>`).join("");
 }
 
+// The settings a running process will not pick up, named by the server so the
+// view does not keep a list of its own to fall out of step with it.
+//
+// What follows from being named is the view's business, because it differs by
+// field: the listen address is written here and applied at the next start,
+// while confirm_sends is refused outright — a switch that turns the spending
+// step-up off is exactly the switch the step-up exists to keep away from a
+// caller holding the token — so it is shown rather than offered.
+function restartRequired(field) {
+  return (settings.restart_required || []).includes(field);
+}
+
+function restartNote(field, text) {
+  return restartRequired(field) ? `<small class="hint">${escapeHTML(text)}</small>` : "";
+}
+
+// A setting the API will not write is not rendered as a control. Where it
+// stands and where it changes is all this form can honestly offer; a checkbox
+// whose save always comes back refused is worse than no checkbox at all.
+function restartOnlyField(label, value, hint) {
+  return `<div class="field">
+    <span>${escapeHTML(label)}</span>
+    <p class="static-value"><strong>${escapeHTML(value)}</strong><span class="badge">config.yaml · restart</span></p>
+    <small class="hint">${escapeHTML(hint)}</small>
+  </div>`;
+}
+
 function generalCard() {
   return `<section class="settings-card" id="general">
-    <h2>General</h2><p class="muted">A changed listen address is saved now and takes effect after a restart.</p>
+    <h2>General</h2><p class="muted">Where the UI listens, and what it opens with.</p>
     <form data-general>
-      <label class="field"><span>UI address</span><input name="addr" value="${escapeHTML(settings.server.addr)}" required></label>
+      <label class="field"><span>UI address</span><input name="addr" value="${escapeHTML(settings.server.addr)}" required>${restartNote("server.addr", "Saved now. The listener keeps the address it started on until Walletspace is restarted.")}</label>
       <label><input type="checkbox" name="open_browser" ${settings.server.open_browser ? "checked" : ""}> Open a browser on start</label>
       <label class="field"><span>Default space</span><select name="last_space_id"><option value="">Not set</option>${spaces.map((item) => `<option value="${escapeHTML(item.id)}" ${settings.ui.last_space_id === item.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></label>
       <div class="error-text" data-error></div>
@@ -110,10 +137,20 @@ function generalCard() {
 }
 
 function securityCard() {
+  const confirmLabel = "Ask for the password before sending";
+  // Why the step-up is there at all, in whichever way the field is presented.
+  const stepUp = "An unlocked space is reachable by anything on this machine that can talk to the wallet. This is what a transfer answers to instead.";
+  const confirmField = restartRequired("security.confirm_sends")
+    ? restartOnlyField(confirmLabel, settings.security.confirm_sends ? "On" : "Off",
+      `${stepUp} The API refuses to change it, because a switch that caller can flip is no protection against them. Set security.confirm_sends in config.yaml and restart Walletspace.`)
+    : `<label><input type="checkbox" name="confirm_sends" ${settings.security.confirm_sends ? "checked" : ""}> ${confirmLabel}</label>
+      <small class="hint">${stepUp} Turning it off leaves the confirmation screen as the only thing between an injected script and the balance.</small>`;
   return `<section class="settings-card" id="security">
     <h2>Security</h2><p class="muted">Auto-lock is counted separately for every space.</p>
     <form data-security>
       <label class="field"><span>Auto-lock timeout</span><input name="auto_lock" value="${escapeHTML(settings.security.auto_lock)}" placeholder="15m" required><small class="hint">Go duration: 5m, 15m, 2h. Between 1m and 24h — auto-lock is what takes the decrypted seed back out of memory, so it cannot be switched off.</small></label>
+      ${confirmField}
+      <label class="field"><span>Confirmation lasts</span><input name="send_grant_ttl" value="${escapeHTML(settings.security.send_grant_ttl)}" placeholder="5m" required><small class="hint">Go duration between 1m and 1h. One password covers every transfer inside the window; locking the space ends it early.</small></label>
       <div class="error-text" data-error></div>
       <div class="form-actions"><button class="button primary" type="submit">Save security</button></div>
     </form>
@@ -290,8 +327,18 @@ async function submitSecurity(event) {
   event.preventDefault();
   const form = event.currentTarget;
   await saveForm(form, async () => {
+    const data = new FormData(form);
     settings = await saveSecurity(
-      { auto_lock: new FormData(form).get("auto_lock") },
+      {
+        auto_lock: data.get("auto_lock"),
+        // The whole block is posted, so a field with no control still has to
+        // go back as it stands: the API takes its own value echoed and refuses
+        // any other, and an absent checkbox would otherwise read as "off".
+        confirm_sends: restartRequired("security.confirm_sends")
+          ? settings.security.confirm_sends
+          : data.get("confirm_sends") !== null,
+        send_grant_ttl: data.get("send_grant_ttl"),
+      },
       settings.revision,
     );
     networkRevision = settings.revision;

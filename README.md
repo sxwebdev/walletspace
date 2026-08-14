@@ -26,13 +26,16 @@ and are never sent to an RPC provider.
 
 ## Security
 
-> **Still not recommended for large balances.** All eleven findings from the
-> audit in [docs/security-audit.md](docs/security-audit.md) are closed, plus two
-> raised while fixing them. Two pieces of follow-up work are deliberately left
-> for a live testnet — building Tron transaction data locally, and re-sending
-> the stored bytes of a broadcast whose answer was lost — and are described in
-> that document. No follow-up review has been done yet, which is the main reason
-> for this warning.
+> **Still not recommended for large balances.** Seventeen of the nineteen
+> findings in [docs/security-audit.md](docs/security-audit.md) — the audit and
+> two review passes over the fixes — are closed. What is not is listed in one
+> table at the top of that document: two items wait on a live testnet, two are
+> decisions about how much the API should be allowed to weaken, and the last is
+> a follow-up review by someone other than the author of the fixes. That one is
+> the main reason for this warning: each review of this code so far has found
+> defects in the round before it, including in fixes that looked finished. The
+> adversarial integration suite the audit asked for now exists and runs on every
+> push.
 
 - The API binds to loopback and is guarded by a capability token generated on
   every start. Loopback constrains the network route, not the authority of the
@@ -48,8 +51,11 @@ and are never sent to an RPC provider.
 - A Tron transaction is assembled with help from an RPC node, but the raw data
   is decoded and compared field by field against a locally held intent before
   anything is signed — recipient, amount, contract, calldata, resource, fee
-  limit, permission id, and the number of contracts. The transaction id is
-  computed from the bytes that were signed rather than read back from the node.
+  limit, permission id, and the number of contracts. The header is bounded
+  against the local clock as well, so a node cannot have a correct transfer
+  signed and then keep it valid for a day to broadcast when it suits. The
+  transaction id is computed from the bytes that were signed rather than read
+  back from the node.
 - The EVM fee the user confirms is what gets signed. The sender does not re-ask
   the node at signing time; if the network has moved past the approved ceiling
   the transfer is refused and has to be confirmed again.
@@ -69,8 +75,16 @@ and are never sent to an RPC provider.
   DOM.
 - A space locks itself after a configurable idle period — between one minute and
   a day, and it cannot be switched off. Revealing a recovery phrase or a private
-  key asks for the space password again even while the space is unlocked, and
-  what is revealed hides itself afterwards.
+  key, and downloading the encrypted backup, ask for the space password again
+  even while the space is unlocked, and what is revealed hides itself
+  afterwards.
+- Moving funds asks for the password too. Unlocking a space says who was at the
+  keyboard when it was opened; it is not by itself authority to spend, because
+  anything on the machine that can reach the wallet inherits an open space. One
+  password covers the next five minutes by default, and locking the space ends
+  the window early. Turning it off is a `config.yaml` edit and a restart, not a
+  switch in the UI — a caller that could throw that switch would have no need to
+  answer the prompt.
 - Wrong passwords earn a growing, jittered cooldown that survives a restart, and
   while it holds even the right password is refused, so the wait cannot be used
   to confirm a guess. Concurrent key derivations are capped, and unlocking one
@@ -79,9 +93,11 @@ and are never sent to an RPC provider.
   The resolver falls through to the official fallbacks when a node stops
   answering, and node discovery can add more; none of them are sent a secret
   that was typed next to a different URL.
-- Every RPC connection goes through a dialer that resolves the host itself and
-  refuses loopback, private and special-use addresses, including the IPv6
-  spellings of them — so the answer that was checked is the one that is dialled.
+- Every outbound request — each RPC connection and the node-discovery poll —
+  goes through a dialer that resolves the host itself and refuses loopback,
+  private and special-use addresses, including the IPv6 spellings of them, so
+  the answer that was checked is the one that is dialled. No proxy is consulted,
+  because a proxy would be dialled in place of the host.
 - Only public identifiers of assets with a non-zero balance leave the machine for
   the price feed — never addresses, balances or space identifiers.
 - A recovery phrase or a private key is full control over the funds: keep them

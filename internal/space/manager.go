@@ -112,6 +112,12 @@ type session struct {
 	payload  Payload
 	key      *vault.SessionKey
 	lastUsed time.Time
+	// sendGrant is when the password last entered to authorise spending stops
+	// counting. It lives on the session rather than beside it so that anything
+	// that ends the session takes the grant with it: locking the space by hand,
+	// the idle timer, and a password change, which replaces the session rather
+	// than refreshing it for exactly this reason.
+	sendGrant time.Time
 }
 
 type Manager struct {
@@ -119,6 +125,12 @@ type Manager struct {
 	params   vault.Params
 	autoLock time.Duration
 	now      func() time.Time
+
+	// confirmSends and sendGrantTTL are the spending step-up: whether moving
+	// funds asks for the password, and how long one answer lasts. Guarded by mu
+	// like the maps, because settings change while the wallet runs.
+	confirmSends bool
+	sendGrantTTL time.Duration
 
 	mu       sync.RWMutex
 	files    map[string]File
@@ -151,6 +163,10 @@ func NewManager(home string, autoLock time.Duration, params vault.Params) (*Mana
 		files: make(map[string]File), sessions: make(map[string]*session),
 		stop: make(chan struct{}), done: make(chan struct{}), reset: make(chan struct{}, 1),
 		kdfSlots: newKDFSlots(),
+		// On until told otherwise. A manager built without settings is one in a
+		// test or an early start-up, and the safe reading of "not configured
+		// yet" is the one that asks.
+		confirmSends: true, sendGrantTTL: defaultSendGrantTTL,
 	}
 	if err := m.scan(); err != nil {
 		return nil, err
@@ -617,12 +633,16 @@ func (m *Manager) ChangePassword(id, currentPassword, newPassword string) error 
 		return err
 	}
 	m.files[id] = file
+	// The session is replaced rather than refreshed in place. Swapping the key
+	// and the payload left everything else on it standing, including a spending
+	// grant opened under the password that was just replaced — so changing the
+	// password did not end the window it had bought, and a transfer went through
+	// on the strength of a secret that no longer opens the vault. Unlock is safe
+	// from this only because it allocates a fresh session; this now does the
+	// same on purpose.
 	if active := m.sessions[id]; active != nil && sessionKey != nil {
-		active.key.Clear()
-		clearPayload(&active.payload)
-		active.payload = refreshed
-		active.key = sessionKey
-		active.lastUsed = m.now()
+		m.clearSessionLocked(id)
+		m.sessions[id] = &session{payload: refreshed, key: sessionKey, lastUsed: m.now()}
 	} else {
 		sessionKey.Clear()
 		clearPayload(&refreshed)
@@ -960,7 +980,140 @@ func (m *Manager) Mnemonic(id, password string) (string, error) {
 	return string(payload.Mnemonic), nil
 }
 
-func (m *Manager) Backup(id string) ([]byte, error) {
+// defaultSendGrantTTL is what a manager uses until it is told otherwise. The
+// bounds on a configured value are policy and live with the settings, exactly
+// as the auto-lock range does.
+const defaultSendGrantTTL = 5 * time.Minute
+
+// ErrSendConfirmationRequired reports that spending needs the password again.
+//
+// It is deliberately distinct from ErrPasswordRequired: the caller is not being
+// told that it sent a bad request, it is being told to ask the person at the
+// keyboard and come back. The UI turns exactly this into a prompt.
+var ErrSendConfirmationRequired = errors.New("confirm this transfer with the space password")
+
+// SetSendConfirmation applies the spending step-up settings.
+//
+// It governs the windows opened after it, not the ones already outstanding: a
+// grant is an absolute deadline fixed when the password was entered, so
+// shortening the window leaves a live grant where it is. Turning the step-up
+// off, meanwhile, is not reachable from the API at all — the setting is read
+// from config.yaml at start, because a caller able to switch it off would have
+// no need of the password it asks for.
+func (m *Manager) SetSendConfirmation(enabled bool, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = defaultSendGrantTTL
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.confirmSends = enabled
+	m.sendGrantTTL = ttl
+}
+
+// ConfirmSend checks the password and opens the spending window.
+//
+// It goes through the same step-up as the exports, which means the same
+// throttle, the same KDF semaphore and the same per-space lock — otherwise this
+// would be a new unthrottled place to guess a password, which is precisely the
+// defect the export step-up shipped with.
+//
+// The context is the caller's, and it is consulted once: after the password has
+// been proven and before the window is written. That side of the derivation is
+// deliberate. The dialog can be dismissed while this call is inside a
+// derivation that takes the better part of a second, and the browser then tells
+// the person nothing was confirmed — so the one thing a cancellation has to
+// change is whether the window exists, and the only place that can be decided
+// is here. Consulting it earlier would make something else depend on when the
+// caller hung up: the verdict on the password, and with it the cooldown. A
+// cancelled attempt therefore counts exactly as it would have counted had
+// nobody hung up — a wrong password still costs a failure, a right one still
+// clears the record — because a guess that can be taken back by closing the
+// connection is a guess that is free.
+func (m *Manager) ConfirmSend(ctx context.Context, id, password string) (time.Time, error) {
+	unlockSpace := m.lockSpace(id)
+	defer unlockSpace()
+	if err := m.confirmPassword(id, password); err != nil {
+		return time.Time{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Under the mutex, so nothing can slip between the decision and the write.
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
+	// Only for a space that is open. A grant on a locked space would sit there
+	// waiting to be used by whoever unlocks it next — and "open" has to mean
+	// what it means to the signer, so the idle sweep runs first: the derivation
+	// above happens outside the mutex and takes long enough for a session to
+	// reach its deadline while it runs.
+	m.expireLocked()
+	active := m.sessions[id]
+	if active == nil {
+		return time.Time{}, fmt.Errorf("%w: %s", ErrLocked, id)
+	}
+	now := m.now()
+	// Entering the space password is the strongest evidence of presence this
+	// wallet has, so it counts as use of the session. Without it, someone who
+	// unlocked fourteen minutes ago and typed the password to authorise a
+	// transfer could have the session swept out from under that transfer
+	// seconds later. It makes six actions refresh the idle timer rather than
+	// the five that read the decrypted payload — and the sixth is a password,
+	// which is a stronger claim to be present than any of the other five.
+	active.lastUsed = now
+	active.sendGrant = now.Add(m.sendGrantTTL)
+	return active.sendGrant, nil
+}
+
+// RequireSendConfirmation is the check every signing path makes before it
+// spends anything.
+//
+// Without it the wallet's own rules do not line up: revealing a key asks for
+// the password, and sending the funds that key controls does not — so anything
+// that reaches the API of an unlocked space cannot steal the seed but can move
+// everything it protects, one transfer at a time.
+func (m *Manager) RequireSendConfirmation(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// The idle sweep runs first, as it does in every other method that reads
+	// m.sessions. The background sweep runs at most once a minute, so reading
+	// the map as it stands let the gate answer "authorised" for up to that long
+	// from a session whose auto-lock deadline had already passed: the caller was
+	// waved through and the signing path then refused it with a locked-space
+	// error the UI has no prompt for. Sweeping here turns that into the 423 the
+	// UI does understand, and costs the write lock the sweep needs.
+	//
+	// It deliberately does not touch lastUsed. This is a check, reachable by
+	// anything holding the capability token, and letting it refresh the idle
+	// timer would hand that caller a way to keep a space unlocked indefinitely
+	// by polling the gate it cannot pass.
+	m.expireLocked()
+	if !m.confirmSends {
+		return nil
+	}
+	active := m.sessions[id]
+	if active == nil {
+		return fmt.Errorf("%w: %s", ErrLocked, id)
+	}
+	if active.sendGrant.IsZero() || !m.now().Before(active.sendGrant) {
+		return ErrSendConfirmationRequired
+	}
+	return nil
+}
+
+// Backup hands over the space file, vault container and all, so it asks for the
+// space password again — the same step-up the seed and private-key exports use.
+//
+// What leaves here is every secret in the space in a form that can be worked on
+// at leisure and without a rate limit, which makes it worth more to an attacker
+// than a single exported key. It is also the one export that does not need the
+// space to be unlocked first, so before this it was the cheapest thing for a
+// caller holding the capability token to take.
+func (m *Manager) Backup(id, password string) ([]byte, error) {
+	unlockSpace := m.lockSpace(id)
+	defer unlockSpace()
+	if err := m.confirmPassword(id, password); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	file, ok := m.files[id]
