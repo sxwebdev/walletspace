@@ -510,6 +510,17 @@
   width: min(760px, 100%);
 }
 
+/* A dialog opened on top of another has to leave it legible: the spending
+   confirmation is answered against the transfer summary underneath it, and a
+   second scrim at full strength, blurring what is behind it, would leave
+   nothing to check. It sits at the top of the viewport, where the estimate
+   panel at the foot of the dialog below stays in view. */
+.modal-backdrop + .modal-backdrop {
+  align-items: start;
+  background: rgba(2, 4, 10, 0.4);
+  backdrop-filter: none;
+}
+
 .modal-header {
   display: flex;
   align-items: flex-start;
@@ -643,6 +654,17 @@
   display: grid;
   gap: var(--space-4);
   margin-top: var(--space-5);
+}
+
+/* A setting the API refuses to write, shown as the value it holds beside the
+   badge that says where it does change. It has to read as a statement rather
+   than as a control, because that is what it is. */
+.static-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
 }
 
 .network-overrides {

@@ -16,6 +16,14 @@ security:
   # Go duration, between 1m and 24h. It cannot be disabled: auto-lock is what
   # takes the decrypted seed back out of memory after the user walks away.
   auto_lock: 15m0s
+  # Ask for the space password before funds move. An unlocked space is reachable
+  # by anything on this machine that holds the capability token, so unlocking is
+  # not by itself authority to spend. Off means the confirmation screen in the
+  # browser is the only thing between an injected script and the balance.
+  confirm_sends: true
+  # How long one confirmation covers, between 1m and 1h. Locking the space ends
+  # it early, and so does the auto-lock.
+  send_grant_ttl: 5m0s
 
 node_discovery:
   # Configure the service URL through /settings before enabling discovery.

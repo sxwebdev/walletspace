@@ -32,6 +32,14 @@ jobs:
       - name: Lint
         run: make lint
 
+      # The wallet's dependencies include two chain SDKs and their transitive
+      # cryptography, so "is there an advisory anywhere in the graph" is the
+      # wrong question and always answered yes. govulncheck answers the useful
+      # one — whether this code reaches the vulnerable symbol — and only that
+      # is worth failing a build over.
+      - name: Vulnerabilities
+        run: make vuln
+
       # A broken release configuration is otherwise only noticed while a tag is
       # being published, when the tag is already public. `check` also fails on
       # deprecated options, so this is what keeps the config current.

@@ -6,7 +6,7 @@ BINARY  := walletspace
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS = -ldflags "-s -w -X main.version=$(VERSION)"
 
-.PHONY: start build install test lint fmt clean snapshot release
+.PHONY: start build install test lint vuln fmt clean snapshot release
 
 ## Run from source, with the same version stamp `make build` produces
 start:
@@ -25,6 +25,22 @@ test:
 
 lint:
 	go vet ./...
+
+## Fail on a vulnerability this code can actually reach
+# Reachability, not presence: the module graph of a wallet that speaks two
+# chains always has an advisory somewhere in it, and a check that goes red for
+# a package nothing calls is a check people learn to ignore.
+#
+# Pinned, because this runs on every push and builds a tool from source. At
+# @latest the scanner is chosen by whoever released last: an unrelated pull
+# request goes red with no change of ours, the same commit can answer
+# differently on a re-run, and a wallet's CI executes a third-party binary
+# nobody reviewed. Bump it deliberately, the way the rest of the toolchain is
+# bumped.
+GOVULNCHECK_VERSION ?= v1.6.0
+
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 fmt:
 	go fix ./...

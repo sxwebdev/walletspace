@@ -481,7 +481,14 @@ func TestEncryptedBackupCanBeRestoredAndUnlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	backup, err := source.Backup(created.Space.ID)
+	// The file is the whole vault, so it is a step-up like the exports are.
+	if _, err := source.Backup(created.Space.ID, ""); !errors.Is(err, space.ErrPasswordRequired) {
+		t.Fatalf("Backup(no password) error = %v, want ErrPasswordRequired", err)
+	}
+	if _, err := source.Backup(created.Space.ID, "wrong-password"); !errors.Is(err, vault.ErrInvalidPassword) {
+		t.Fatalf("Backup(wrong password) error = %v, want ErrInvalidPassword", err)
+	}
+	backup, err := source.Backup(created.Space.ID, "correct-password")
 	if err != nil {
 		t.Fatalf("Backup() error = %v", err)
 	}
@@ -507,5 +514,76 @@ func TestEncryptedBackupCanBeRestoredAndUnlocked(t *testing.T) {
 	}
 	if mnemonic != created.Mnemonic {
 		t.Errorf("restored mnemonic = %q, want %q", mnemonic, created.Mnemonic)
+	}
+}
+
+// A password that no longer opens the vault must not still be authorising
+// transfers. The session used to be refreshed in place, so the window a
+// replaced password had bought outlived it.
+func TestChangingThePasswordClosesTheSpendingWindow(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	created, err := manager.Create(space.CreateRequest{Name: "spend", Password: "first-vault-password"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	id := created.Space.ID
+	if _, err := manager.ConfirmSend(t.Context(), id, "first-vault-password"); err != nil {
+		t.Fatalf("ConfirmSend() error = %v", err)
+	}
+	if err := manager.RequireSendConfirmation(id); err != nil {
+		t.Fatalf("RequireSendConfirmation() after confirming = %v, want nil", err)
+	}
+
+	if err := manager.ChangePassword(id, "first-vault-password", "second-vault-password"); err != nil {
+		t.Fatalf("ChangePassword() error = %v", err)
+	}
+	if err := manager.RequireSendConfirmation(id); !errors.Is(err, space.ErrSendConfirmationRequired) {
+		t.Errorf("RequireSendConfirmation() after the password changed = %v, want the window closed", err)
+	}
+
+	// The space itself stays open, and its decrypted payload with it: the
+	// session is replaced, not dropped, so nobody is locked out of a space by
+	// changing its password.
+	summary, _, err := manager.Get(id)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if summary.Locked {
+		t.Fatal("changing the password locked the space")
+	}
+	if _, err := manager.Derive(id, "tron-nile", account.FamilyTron, ""); err != nil {
+		t.Fatalf("Derive() after the password changed = %v", err)
+	}
+	// And the new password buys a window, which the old one no longer can.
+	if _, err := manager.ConfirmSend(t.Context(), id, "first-vault-password"); !errors.Is(err, vault.ErrInvalidPassword) {
+		t.Fatalf("ConfirmSend(replaced password) error = %v, want ErrInvalidPassword", err)
+	}
+	if _, err := manager.ConfirmSend(t.Context(), id, "second-vault-password"); err != nil {
+		t.Fatalf("ConfirmSend(new password) error = %v", err)
+	}
+	if err := manager.RequireSendConfirmation(id); err != nil {
+		t.Errorf("RequireSendConfirmation() after re-confirming = %v, want nil", err)
+	}
+
+	// Changing a locked space's password has no session to replace, and must
+	// not produce one: the key it derives to check the old password is not an
+	// unlocking.
+	if err := manager.Lock(id); err != nil {
+		t.Fatalf("Lock() error = %v", err)
+	}
+	if err := manager.ChangePassword(id, "second-vault-password", "third-vault-password"); err != nil {
+		t.Fatalf("ChangePassword(locked) error = %v", err)
+	}
+	summary, _, err = manager.Get(id)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !summary.Locked {
+		t.Error("changing a locked space's password unlocked it")
+	}
+	if err := manager.RequireSendConfirmation(id); !errors.Is(err, space.ErrLocked) {
+		t.Errorf("RequireSendConfirmation() on the locked space = %v, want ErrLocked", err)
 	}
 }

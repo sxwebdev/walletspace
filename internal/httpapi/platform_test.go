@@ -32,10 +32,13 @@ import (
 type platformFixture struct {
 	handler http.Handler
 	spaces  *space.Manager
-	evm     *evmchain.Adapter
-	tron    *tronchain.Adapter
-	doctor  *doctor.Doctor
-	prices  *priceFake
+	// settings is the same home manager the handler writes through, so a test
+	// can put a value in config.yaml the way a person editing the file would.
+	settings *config.HomeManager
+	evm      *evmchain.Adapter
+	tron     *tronchain.Adapter
+	doctor   *doctor.Doctor
+	prices   *priceFake
 }
 
 // The address the test guard accepts, and the token it demands. Requests built
@@ -135,7 +138,8 @@ func newPlatformFixture(t *testing.T) platformFixture {
 		spaces.Close()
 	})
 	return platformFixture{
-		handler: handler, spaces: spaces, evm: evm, tron: tron, doctor: nodeDoctor, prices: prices,
+		handler: handler, spaces: spaces, settings: settings,
+		evm: evm, tron: tron, doctor: nodeDoctor, prices: prices,
 	}
 }
 
@@ -517,6 +521,212 @@ func TestPlatformRejectsTrailingJSON(t *testing.T) {
 	}
 	if got := len(fixture.spaces.List()); got != 0 {
 		t.Fatalf("spaces = %d, want no mutation", got)
+	}
+}
+
+// securityPayload is the part of the settings response this file asserts on.
+type securityPayload struct {
+	Security struct {
+		AutoLock     string `json:"auto_lock"`
+		ConfirmSends bool   `json:"confirm_sends"`
+		SendGrantTTL string `json:"send_grant_ttl"`
+	} `json:"security"`
+	RestartRequired []string `json:"restart_required"`
+}
+
+// spendingFixture is an unlocked space and the transfer that will be refused
+// until it is confirmed. Nothing on the route past the gate is reachable — the
+// space has no wallets — because nothing past the gate should be needed to
+// refuse.
+func spendingFixture(t *testing.T) (fixture platformFixture, spaceID, transfers string, transfer map[string]any) {
+	t.Helper()
+	fixture = newPlatformFixture(t)
+	created, err := fixture.spaces.Create(space.CreateRequest{Password: "test-vault-password"})
+	if err != nil {
+		t.Fatalf("spaces.Create() error = %v", err)
+	}
+	return fixture, created.Space.ID,
+		"/api/spaces/" + created.Space.ID + "/networks/tron-nile/transfers",
+		map[string]any{
+			"account_id": "acc_none", "asset_id": "tron-nile:native",
+			"to": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "amount": "1",
+		}
+}
+
+// The spending step-up exists to stop anything that merely holds the capability
+// token — a script injected into the page, another local process — from moving
+// funds out of an unlocked space. Switching it off needed nothing but that same
+// token, so refused transfer, PATCH, identical transfer accepted was the entire
+// attack and the control was worth nothing against the caller it was built for.
+func TestTheSpendingStepUpCannotBeSwitchedOffThroughTheAPI(t *testing.T) {
+	t.Parallel()
+
+	fixture, _, transfers, transfer := spendingFixture(t)
+	// The gate is the first thing on the route, so this refusal owes nothing to
+	// the account, the asset or a node being reachable.
+	refused := platformRequest(t, fixture.handler, http.MethodPost, transfers, transfer)
+	if refused.Code != http.StatusForbidden {
+		t.Fatalf("transfer before confirming = %d %s", refused.Code, refused.Body.String())
+	}
+
+	before := decodeBody[securityPayload](
+		t, platformRequest(t, fixture.handler, http.MethodGet, "/api/settings", nil),
+	)
+	if !before.Security.ConfirmSends {
+		t.Fatal("the step-up is off before the test starts")
+	}
+	if !slices.Contains(before.RestartRequired, "security.confirm_sends") {
+		t.Errorf("restart_required = %v, want it to name security.confirm_sends", before.RestartRequired)
+	}
+
+	off := platformRequest(t, fixture.handler, http.MethodPatch, "/api/settings/security", map[string]any{
+		"auto_lock": "15m", "confirm_sends": false, "send_grant_ttl": "5m",
+	})
+	if off.Code != http.StatusForbidden {
+		t.Fatalf("PATCH confirm_sends=false = %d %s", off.Code, off.Body.String())
+	}
+	// Refused with directions, not ignored: a save that reports success and
+	// changes nothing teaches the user that the checkbox does not work.
+	message := decodeBody[map[string]string](t, off)["error"]
+	if !strings.Contains(message, "config.yaml") || !strings.Contains(strings.ToLower(message), "restart") {
+		t.Errorf("refusal = %q, want it to name config.yaml and the restart", message)
+	}
+	if stored := fixture.settings.Snapshot().Config.Security.ConfirmSends; !stored {
+		t.Error("the refused PATCH still reached the file")
+	}
+
+	// The identical transfer that was refused a moment ago is refused still.
+	again := platformRequest(t, fixture.handler, http.MethodPost, transfers, transfer)
+	if again.Code != http.StatusForbidden {
+		t.Fatalf("transfer after the PATCH = %d %s", again.Code, again.Body.String())
+	}
+
+	// The form posts the whole block, so an echo of the stored value is accepted
+	// and the two fields beside it still save.
+	echo := platformRequest(t, fixture.handler, http.MethodPatch, "/api/settings/security", map[string]any{
+		"auto_lock": "20m", "confirm_sends": true, "send_grant_ttl": "10m",
+	})
+	if echo.Code != http.StatusOK {
+		t.Fatalf("PATCH echoing confirm_sends = %d %s", echo.Code, echo.Body.String())
+	}
+	saved := decodeBody[securityPayload](t, echo)
+	if saved.Security.AutoLock != "20m0s" || saved.Security.SendGrantTTL != "10m0s" ||
+		!saved.Security.ConfirmSends {
+		t.Errorf("saved security settings = %+v", saved.Security)
+	}
+	// A client that sends only what it changed is accepted too, and switches
+	// nothing off by leaving the field out.
+	partial := platformRequest(t, fixture.handler, http.MethodPatch, "/api/settings/security", map[string]any{
+		"auto_lock": "25m",
+	})
+	if partial.Code != http.StatusOK || !decodeBody[securityPayload](t, partial).Security.ConfirmSends {
+		t.Fatalf("PATCH without confirm_sends = %d %s", partial.Code, partial.Body.String())
+	}
+
+	// Turning it back on is refused as well, because the file is the authority
+	// in both directions. config.yaml is edited here the way a person would edit
+	// it, and the running process keeps the value it started with — which is
+	// what restart-only means.
+	stored := fixture.settings.Snapshot().Config
+	stored.Security.ConfirmSends = false
+	if _, err := fixture.settings.SaveConfig(stored, ""); err != nil {
+		t.Fatalf("SaveConfig(confirm_sends off) error = %v", err)
+	}
+	on := platformRequest(t, fixture.handler, http.MethodPatch, "/api/settings/security", map[string]any{
+		"auto_lock": "15m", "confirm_sends": true, "send_grant_ttl": "5m",
+	})
+	if on.Code != http.StatusForbidden {
+		t.Fatalf("PATCH confirm_sends=true = %d %s", on.Code, on.Body.String())
+	}
+	final := platformRequest(t, fixture.handler, http.MethodPost, transfers, transfer)
+	if final.Code != http.StatusForbidden {
+		t.Fatalf("transfer after the file changed = %d %s", final.Code, final.Body.String())
+	}
+}
+
+// The gate's refusal is the one error the browser has to act on rather than
+// display: its remedy is to ask the person at the keyboard for the password and
+// repeat the identical request, idempotency key and approved fee included. So
+// it carries a code, and the code has to survive wherever the check is raised
+// from — which means the shared mapper owns it. Assembled at the call site, a
+// check that moved anywhere else fell into the mapper's default branch: 502, a
+// "platform request failed" line in the log, and nothing to prompt on.
+func TestARefusedSpendTellsTheBrowserToAskForThePassword(t *testing.T) {
+	t.Parallel()
+
+	fixture, spaceID, transfers, transfer := spendingFixture(t)
+	refused := platformRequest(t, fixture.handler, http.MethodPost, transfers, transfer)
+	if refused.Code != http.StatusForbidden {
+		t.Fatalf("unconfirmed transfer = %d %s", refused.Code, refused.Body.String())
+	}
+	body := decodeBody[map[string]string](t, refused)
+	if body["code"] != "send_confirmation_required" {
+		t.Errorf("code = %q, want send_confirmation_required so the UI can prompt", body["code"])
+	}
+	if body["error"] == "" {
+		t.Error("the refusal carries no sentence for the person reading it")
+	}
+
+	// Confirmed, the same request passes the gate and fails further along for a
+	// reason that has nothing to do with the step-up: the space has no wallets.
+	if _, err := fixture.spaces.ConfirmSend(t.Context(), spaceID, "test-vault-password"); err != nil {
+		t.Fatalf("spaces.ConfirmSend() error = %v", err)
+	}
+	confirmed := platformRequest(t, fixture.handler, http.MethodPost, transfers, transfer)
+	if confirmed.Code != http.StatusNotFound {
+		t.Fatalf("confirmed transfer = %d %s, want the gate open", confirmed.Code, confirmed.Body.String())
+	}
+
+	// A code is a promise that the UI has a remedy for exactly this refusal, so
+	// it does not go on every error. A locked space is a different problem with
+	// a different answer.
+	if err := fixture.spaces.Lock(spaceID); err != nil {
+		t.Fatalf("spaces.Lock() error = %v", err)
+	}
+	locked := platformRequest(t, fixture.handler, http.MethodPost, transfers, transfer)
+	if locked.Code != http.StatusLocked {
+		t.Fatalf("transfer from a locked space = %d %s", locked.Code, locked.Body.String())
+	}
+	if _, coded := decodeBody[map[string]string](t, locked)["code"]; coded {
+		t.Errorf("a locked space answered with a code: %s", locked.Body.String())
+	}
+}
+
+// The confirmation dialog can be dismissed while the derivation behind it is
+// still running, and the browser then aborts and reports that nothing was
+// confirmed. The handler has to hand the manager the request's own context for
+// that report to be true — anything else and the window opens behind a page
+// that has already said it did not.
+func TestADismissedConfirmationLeavesNoWindowBehind(t *testing.T) {
+	t.Parallel()
+
+	fixture, spaceID, transfers, transfer := spendingFixture(t)
+	dismissed, dismiss := context.WithCancel(t.Context())
+	dismiss()
+	request := httptest.NewRequestWithContext(
+		dismissed, http.MethodPost, "/api/spaces/"+spaceID+"/confirm-send",
+		strings.NewReader(`{"password":"test-vault-password"}`),
+	)
+	request.Host = testHost
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(httpapi.TokenHeader, testToken)
+	response := httptest.NewRecorder()
+	fixture.handler.ServeHTTP(response, request)
+
+	// 499: nobody is listening, and the alternatives all say something false.
+	if response.Code != 499 {
+		t.Fatalf("dismissed confirmation = %d %s, want 499", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "expires_at") {
+		t.Errorf("the abandoned confirmation reported a window: %s", response.Body.String())
+	}
+	// And the transfer it would have authorised is refused exactly as before.
+	refused := platformRequest(t, fixture.handler, http.MethodPost, transfers, transfer)
+	if refused.Code != http.StatusForbidden {
+		t.Fatalf("transfer after a dismissed confirmation = %d %s", refused.Code, refused.Body.String())
+	}
+	if code := decodeBody[map[string]string](t, refused)["code"]; code != "send_confirmation_required" {
+		t.Errorf("code = %q, want send_confirmation_required", code)
 	}
 }
 

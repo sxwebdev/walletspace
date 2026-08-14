@@ -1,17 +1,21 @@
 package tron
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"math"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/sxwebdev/gotron/pkg/tronutils"
 	"github.com/sxwebdev/gotron/schema/pb/api"
 	"github.com/sxwebdev/gotron/schema/pb/core"
 	"github.com/sxwebdev/walletspace/internal/chain"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 )
@@ -32,8 +36,22 @@ func mustAddress(t *testing.T, base58 string) []byte {
 	return raw
 }
 
-// wrap builds the transaction a well-behaved node would return for a contract.
+// wrap builds the transaction a well-behaved node would return for a contract,
+// with the header it would have written just now.
 func wrap(t *testing.T, kind core.Transaction_Contract_ContractType, message proto.Message, feeLimit int64) *core.Transaction {
+	t.Helper()
+	return wrapAt(t, time.Now(), kind, message, feeLimit)
+}
+
+// wrapAt is wrap with the node's clock supplied, for the cases that are about
+// the header rather than the contract.
+func wrapAt(
+	t *testing.T,
+	built time.Time,
+	kind core.Transaction_Contract_ContractType,
+	message proto.Message,
+	feeLimit int64,
+) *core.Transaction {
 	t.Helper()
 	parameter, err := anypb.New(message)
 	if err != nil {
@@ -43,9 +61,11 @@ func wrap(t *testing.T, kind core.Transaction_Contract_ContractType, message pro
 		RawData: &core.TransactionRaw{
 			RefBlockBytes: []byte{0x01, 0x02},
 			RefBlockHash:  []byte{1, 2, 3, 4, 5, 6, 7, 8},
-			Expiration:    1,
-			Timestamp:     1,
-			FeeLimit:      feeLimit,
+			// What a node actually writes: now, and a minute to get the
+			// transaction into a block.
+			Timestamp:  built.UnixMilli(),
+			Expiration: built.Add(time.Minute).UnixMilli(),
+			FeeLimit:   feeLimit,
 			Contract: []*core.Transaction_Contract{
 				{Type: kind, Parameter: parameter},
 			},
@@ -372,14 +392,344 @@ func TestVerifyRejectsAMislabelledParameter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("anypb.New() error = %v", err)
 	}
-	tx := &core.Transaction{RawData: &core.TransactionRaw{
-		Contract: []*core.Transaction_Contract{{
-			Type: core.Transaction_Contract_TransferContract, Parameter: parameter,
-		}},
-	}}
+	// Built through wrap so the header is beyond reproach: the refusal has to
+	// come from the parameter's type URL and nothing else.
+	tx := wrap(t, core.Transaction_Contract_TransferContract, &core.TransferContract{}, 0)
+	tx.RawData.Contract[0].Parameter = parameter
 
 	if err := intent.Verify(tx); !errors.Is(err, ErrIntentMismatch) {
 		t.Fatalf("Verify() error = %v, want ErrIntentMismatch", err)
+	}
+}
+
+// The four raw_data fields outside the contract are the node's to choose and
+// are covered by the signature just as the contract is. The expiration is the
+// one worth taking: a node that sets it a day out, collects a signature over a
+// correct transfer and then reports a lost broadcast keeps a spendable transfer
+// it can send whenever it likes.
+func TestVerifyRejectsAHostileTransactionHeader(t *testing.T) {
+	t.Parallel()
+
+	intent := Intent{
+		Kind: IntentTransferTRX, Owner: ownerAddr, To: recipientAddr, Amount: 1_000_000,
+	}
+	honest := func() *core.TransferContract {
+		return &core.TransferContract{
+			OwnerAddress: mustAddress(t, ownerAddr),
+			ToAddress:    mustAddress(t, recipientAddr),
+			Amount:       1_000_000,
+		}
+	}
+	// Fixed so the bounds are exercised rather than raced against the clock.
+	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name     string
+		tampered func() *core.Transaction
+	}{
+		{
+			name: "valid for a day",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.Expiration = now.Add(24 * time.Hour).UnixMilli()
+				return tx
+			},
+		},
+		{
+			name: "valid for an hour",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.Expiration = now.Add(time.Hour).UnixMilli()
+				return tx
+			},
+		},
+		{
+			// Built recently enough to pass the timestamp bound, so the
+			// expiration is the only thing that can refuse it.
+			name: "already expired",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now.Add(-9*time.Minute), core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.Expiration = now.Add(-8 * time.Minute).UnixMilli()
+				return tx
+			},
+		},
+		{
+			name: "no expiration at all",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.Expiration = 0
+				return tx
+			},
+		},
+		{
+			name: "built last week",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now.Add(-7*24*time.Hour), core.Transaction_Contract_TransferContract, honest(), 0)
+				// Expiration alone would pass; the stale timestamp is the tell.
+				tx.RawData.Expiration = now.Add(time.Minute).UnixMilli()
+				return tx
+			},
+		},
+		{
+			name: "built in the future",
+			tampered: func() *core.Transaction {
+				return wrapAt(t, now.Add(time.Hour), core.Transaction_Contract_TransferContract, honest(), 0)
+			},
+		},
+		{
+			name: "no timestamp at all",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.Timestamp = 0
+				return tx
+			},
+		},
+		{
+			name: "expires before it was built",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.Timestamp = now.Add(30 * time.Second).UnixMilli()
+				tx.RawData.Expiration = now.Add(10 * time.Second).UnixMilli()
+				return tx
+			},
+		},
+		{
+			// The header is int64 milliseconds and the values are the node's,
+			// so the extremes have to be refused by the bounds rather than by
+			// what time.UnixMilli happens to do when it overflows.
+			name: "expiration at the end of time",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.Expiration = math.MaxInt64
+				return tx
+			},
+		},
+		{
+			name: "timestamp at the start of time",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.Timestamp = math.MinInt64
+				return tx
+			},
+		},
+		{
+			name: "reference block height of the wrong size",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.RefBlockBytes = []byte{0x01}
+				return tx
+			},
+		},
+		{
+			name: "no reference block hash",
+			tampered: func() *core.Transaction {
+				tx := wrapAt(t, now, core.Transaction_Contract_TransferContract, honest(), 0)
+				tx.RawData.RefBlockHash = nil
+				return tx
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := intent.verify(tt.tampered(), now); !errors.Is(err, ErrIntentMismatch) {
+				t.Fatalf("verify() error = %v, want ErrIntentMismatch", err)
+			}
+		})
+	}
+}
+
+// raw_data has fields no Intent has an opinion about, and a node picks every
+// one of them. They are covered by the signature and billed by the byte, so a
+// correct contract is not on its own enough to sign: a one-TRX transfer with a
+// hundred kilobytes bolted to its side is still a hundred kilobytes of the
+// node's bandwidth bill, paid out of the user's TRX and published on chain
+// under the user's address for good.
+func TestVerifyRejectsBytesNoIntentAsksFor(t *testing.T) {
+	t.Parallel()
+
+	intent := Intent{
+		Kind: IntentTransferTRX, Owner: ownerAddr, To: recipientAddr, Amount: 1_000_000,
+	}
+	// Correct in every way the contract can be checked, so that each case below
+	// is refused for the field it adds and nothing else.
+	honest := func() *core.Transaction {
+		return wrap(t, core.Transaction_Contract_TransferContract, &core.TransferContract{
+			OwnerAddress: mustAddress(t, ownerAddr),
+			ToAddress:    mustAddress(t, recipientAddr),
+			Amount:       1_000_000,
+		}, 0)
+	}
+	// A field number this build has no name for, carrying bytes of the node's
+	// choosing: what a newer protocol version, or a node speaking its own
+	// dialect, looks like once it has been decoded and kept.
+	unknownField := protowire.AppendTag(nil, 99, protowire.BytesType)
+	unknownField = protowire.AppendBytes(unknownField, []byte("a meaning this build cannot read"))
+
+	tests := []struct {
+		name     string
+		tampered func() *core.Transaction
+	}{
+		{
+			name: "a memo the user never wrote",
+			tampered: func() *core.Transaction {
+				tx := honest()
+				tx.RawData.Data = []byte("attributed to the owner, forever")
+				return tx
+			},
+		},
+		{
+			// The size is the cost. Bandwidth is charged per serialised byte and
+			// paid in burnt TRX once the free daily allowance is gone, and
+			// fee_limit — zero on a plain transfer, and a cap on energy rather
+			// than bandwidth — does nothing about it.
+			name: "a hundred kilobytes of memo billed to the user as bandwidth",
+			tampered: func() *core.Transaction {
+				tx := honest()
+				tx.RawData.Data = bytes.Repeat([]byte{0xff}, 100*1024)
+				return tx
+			},
+		},
+		{
+			name: "a reference block height naming a block other than ref_block_bytes",
+			tampered: func() *core.Transaction {
+				tx := honest()
+				// ref_block_bytes says 0x0102; the low two bytes here say 0x0103.
+				tx.RawData.RefBlockNum = 65_536_259
+				return tx
+			},
+		},
+		{
+			// Chosen so that its low two bytes are exactly the 0x0102 in
+			// ref_block_bytes: the agreement check sees nothing wrong with it,
+			// and the only thing left to refuse it with is that no block has a
+			// negative height. A node that wanted the field to carry something
+			// of its own would pick a value like this one.
+			name: "a negative reference block height that agrees with ref_block_bytes",
+			tampered: func() *core.Transaction {
+				tx := honest()
+				tx.RawData.RefBlockNum = -65_278
+				return tx
+			},
+		},
+		{
+			name: "a field on the transaction this build cannot name",
+			tampered: func() *core.Transaction {
+				tx := honest()
+				tx.RawData.ProtoReflect().SetUnknown(unknownField)
+				return tx
+			},
+		},
+		{
+			name: "a field on the contract this build cannot name",
+			tampered: func() *core.Transaction {
+				tx := honest()
+				tx.RawData.Contract[0].ProtoReflect().SetUnknown(unknownField)
+				return tx
+			},
+		},
+		{
+			// The parameter is wrapped in an Any, and the Any has room for
+			// fields of its own beside the type URL and the payload. Rejecting
+			// unknown fields on what the payload decodes to says nothing about
+			// the envelope around it.
+			name: "a field on the parameter envelope this build cannot name",
+			tampered: func() *core.Transaction {
+				tx := honest()
+				tx.RawData.Contract[0].Parameter.ProtoReflect().SetUnknown(unknownField)
+				return tx
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tx := tt.tampered()
+			if err := intent.Verify(tx); !errors.Is(err, ErrIntentMismatch) {
+				t.Fatalf("Verify() error = %v, want ErrIntentMismatch", err)
+			}
+
+			// And the payload must not reach the key: a signature over it is
+			// what makes the user pay for it.
+			signer := &countingSigner{}
+			_, err := deadNodeService(t).submitWithSigner(
+				t.Context(), intent, &api.TransactionExtention{Transaction: tx}, signer,
+			)
+			if !errors.Is(err, ErrIntentMismatch) {
+				t.Fatalf("submitWithSigner() error = %v, want ErrIntentMismatch", err)
+			}
+			if signer.calls != 0 {
+				t.Errorf("SignDigest was called %d times for bytes nobody asked for", signer.calls)
+			}
+		})
+	}
+}
+
+// The bounds have to leave a real node room to work: it builds against a block
+// that is already a few seconds old, on a clock that is not ours.
+func TestVerifyAcceptsTheHeaderARealNodeWrites(t *testing.T) {
+	t.Parallel()
+
+	intent := Intent{
+		Kind: IntentTransferTRX, Owner: ownerAddr, To: recipientAddr, Amount: 1_000_000,
+	}
+	now := time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
+	contract := &core.TransferContract{
+		OwnerAddress: mustAddress(t, ownerAddr),
+		ToAddress:    mustAddress(t, recipientAddr),
+		Amount:       1_000_000,
+	}
+
+	for _, skew := range []time.Duration{-90 * time.Second, 0, 90 * time.Second} {
+		tx := wrapAt(t, now.Add(skew), core.Transaction_Contract_TransferContract, contract, 0)
+		if err := intent.verify(tx, now); err != nil {
+			t.Errorf("verify() with a node clock %s off = %v, want nil", skew, err)
+		}
+	}
+
+	// java-tron writes the two bytes of the reference block height and leaves
+	// the height itself at zero — the fixtures above, and every real answer. A
+	// node that does fill the height in has to keep passing too, or the check on
+	// it would be a rule about this build's habits rather than about the block:
+	// the height and the bytes come from one number, so they agree.
+	filled := wrapAt(t, now, core.Transaction_Contract_TransferContract, contract, 0)
+	filled.RawData.RefBlockNum = 65_536_258 // low two bytes are the 0x0102 above
+	if err := intent.verify(filled, now); err != nil {
+		t.Errorf("verify() with the reference block height written out = %v, want nil", err)
+	}
+}
+
+// The header check belongs on the signing path, not only in a unit test: it is
+// the last thing between a node's answer and the private key.
+func TestALongLivedTransactionNeverReachesTheKey(t *testing.T) {
+	t.Parallel()
+
+	intent := Intent{
+		Kind: IntentTransferTRX, Owner: ownerAddr, To: recipientAddr, Amount: 1_000_000,
+	}
+	tx := wrap(t, core.Transaction_Contract_TransferContract, &core.TransferContract{
+		OwnerAddress: mustAddress(t, ownerAddr),
+		ToAddress:    mustAddress(t, recipientAddr),
+		Amount:       1_000_000,
+	}, 0)
+	tx.RawData.Expiration = time.Now().Add(24 * time.Hour).UnixMilli()
+
+	// A service with a reachable client rather than a zero value, so that a
+	// regression here fails on the assertion below instead of panicking its way
+	// through the rest of the package.
+	signer := &countingSigner{}
+	_, err := deadNodeService(t).submitWithSigner(
+		t.Context(), intent, &api.TransactionExtention{Transaction: tx}, signer,
+	)
+	if !errors.Is(err, ErrIntentMismatch) {
+		t.Fatalf("submitWithSigner() error = %v, want ErrIntentMismatch", err)
+	}
+	if signer.calls != 0 {
+		t.Errorf("SignDigest was called %d times for a transaction valid for a day", signer.calls)
 	}
 }
 

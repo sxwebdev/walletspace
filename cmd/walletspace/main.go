@@ -159,6 +159,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer spaces.Close()
+	spaces.SetSendConfirmation(
+		snapshot.Config.Security.ConfirmSends, snapshot.Config.Security.SendGrantTTL,
+	)
 	registry, err := network.Builtin()
 	if err != nil {
 		return err

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/sxwebdev/walletspace/internal/config"
+	"github.com/sxwebdev/walletspace/internal/hostpolicy"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/storage"
 )
@@ -72,26 +73,37 @@ type cacheFile struct {
 }
 
 func New(settings Settings) *Resolver {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	return &Resolver{
+	resolver := &Resolver{
 		settings: settings,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				DialContext:           dialer.DialContext,
-				TLSHandshakeTimeout:   5 * time.Second,
-				ResponseHeaderTimeout: 5 * time.Second,
-			},
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return errors.New("redirects are disabled for RPC discovery")
-			},
-		},
 		lookupIP: func(ctx context.Context, host string) ([]net.IP, error) {
 			return net.DefaultResolver.LookupIP(ctx, "ip", host)
 		},
 		cache: loadCache(settings.Home()),
 	}
+	resolver.client = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			// No proxy, and the same dialer every RPC connection goes through.
+			// Discovery is the one request this process makes on a timer to an
+			// address the user typed once and then forgot about, and it was the
+			// only one exempt from the address check — a proxy would have been
+			// dialled in place of the host, which is the same exemption by
+			// another route.
+			Proxy: nil,
+			// Built per dial, not captured once: whether a private address is
+			// allowed is a setting, and a setting can change while this client
+			// lives for the whole process.
+			DialContext: func(ctx context.Context, networkName, address string) (net.Conn, error) {
+				return resolver.DialContext(network.Network{})(ctx, networkName, address)
+			},
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Second,
+		},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("redirects are disabled for RPC discovery")
+		},
+	}
+	return resolver
 }
 
 func (r *Resolver) Endpoints(ctx context.Context, item network.Network) ([]string, error) {
@@ -374,7 +386,7 @@ func (r *Resolver) safeDynamicEndpoint(ctx context.Context, endpoint string, all
 		return errors.New("RPC transport is not allowed")
 	}
 	host := strings.ToLower(parsed.Hostname())
-	if host == "localhost" || strings.HasSuffix(host, ".local") {
+	if hostpolicy.LocalName(host) {
 		return errors.New("local RPC host is not allowed")
 	}
 	ips, err := r.lookupIP(ctx, host)
@@ -389,55 +401,13 @@ func (r *Resolver) safeDynamicEndpoint(ctx context.Context, endpoint string, all
 	return nil
 }
 
-func publicIP(ip net.IP) bool {
-	if ip == nil || !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() ||
-		ip.IsUnspecified() {
-		return false
-	}
-	for _, network := range unsafeSpecialNetworks {
-		if network.Contains(ip) {
-			return false
-		}
-	}
-	return true
-}
-
-// unsafeSpecialNetworks covers what the net.IP predicates do not.
+// publicIP is the shared address policy under the name the dialer knows it by.
 //
-// The IPv6 entries matter more than they look. Go's To4 converts only the
-// IPv4-mapped form, so ::127.0.0.1 — the deprecated IPv4-compatible spelling of
-// loopback — is not seen as loopback by IsLoopback and passes IsGlobalUnicast.
-// NAT64 and 6to4 are the same trick with an extra step: both embed an arbitrary
-// IPv4 address, including a private one, in something that looks like an
-// ordinary global address.
-var unsafeSpecialNetworks = mustCIDRs(
-	"100.64.0.0/10",   // shared address space, often routes into carrier infrastructure
-	"192.0.0.0/24",    // IETF protocol assignments
-	"192.0.2.0/24",    // documentation
-	"198.18.0.0/15",   // benchmarking
-	"198.51.100.0/24", // documentation
-	"203.0.113.0/24",  // documentation
-	"::/96",           // IPv4-compatible IPv6, deprecated and not decoded by To4
-	"64:ff9b::/96",    // NAT64
-	"64:ff9b:1::/48",  // local-use NAT64
-	"100::/64",        // discard-only
-	"2001::/23",       // IETF protocol assignments, including Teredo
-	"2001:db8::/32",   // documentation
-	"2002::/16",       // 6to4
-)
-
-func mustCIDRs(values ...string) []*net.IPNet {
-	out := make([]*net.IPNet, 0, len(values))
-	for _, value := range values {
-		_, network, err := net.ParseCIDR(value)
-		if err != nil {
-			panic(err)
-		}
-		out = append(out, network)
-	}
-	return out
-}
+// The rule itself lives in hostpolicy because the settings validator enforces
+// the same one when a URL is saved, and while it had a copy the copy was the
+// weaker of the two — it accepted the IPv6 spellings this side has always
+// refused, so a value the dialer would never connect to still saved cleanly.
+func publicIP(ip net.IP) bool { return hostpolicy.PublicIP(ip) }
 
 // extractURLs pulls candidate endpoints out of whatever shape the discovery
 // service answered with.

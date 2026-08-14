@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
+	"github.com/sxwebdev/walletspace/internal/hostpolicy"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/storage"
 )
@@ -28,7 +29,30 @@ const HomeSchemaVersion = 1
 const (
 	MinAutoLock = time.Minute
 	MaxAutoLock = 24 * time.Hour
+
+	// How long one spending confirmation lasts.
+	//
+	// The window is time in which anything holding the capability token — an
+	// injected script, another local process — can move funds without knowing
+	// the password, so it is short by default and cannot be made long. The
+	// floor is there because a window shorter than reading a confirmation
+	// screen is a password prompt per transfer under another name.
+	DefaultSendGrantTTL = 5 * time.Minute
+	MinSendGrantTTL     = time.Minute
+	MaxSendGrantTTL     = time.Hour
 )
+
+// ClampSendGrantTTL brings a configured spending window inside the allowed range.
+func ClampSendGrantTTL(value time.Duration) time.Duration {
+	switch {
+	case value < MinSendGrantTTL:
+		return MinSendGrantTTL
+	case value > MaxSendGrantTTL:
+		return MaxSendGrantTTL
+	default:
+		return value
+	}
+}
 
 // ClampAutoLock brings a stored value inside the allowed range.
 func ClampAutoLock(value time.Duration) time.Duration {
@@ -49,10 +73,21 @@ type ServerSettings struct {
 
 type SecuritySettings struct {
 	AutoLock time.Duration `json:"auto_lock" yaml:"-"`
+	// ConfirmSends asks for the space password before funds move, and
+	// SendGrantTTL is how long one answer covers. Unlocking a space proves who
+	// was there when it was unlocked; this is what a transfer is answerable to
+	// instead.
+	ConfirmSends bool          `json:"confirm_sends" yaml:"-"`
+	SendGrantTTL time.Duration `json:"send_grant_ttl" yaml:"-"`
 }
 
 type rawSecuritySettings struct {
 	AutoLock string `yaml:"auto_lock"`
+	// A pointer so that a file written before this setting existed is read as
+	// "not stated" and takes the default, rather than as an explicit false.
+	// Turning the step-up off has to be something someone did on purpose.
+	ConfirmSends *bool  `yaml:"confirm_sends"`
+	SendGrantTTL string `yaml:"send_grant_ttl"`
 }
 
 type DiscoverySettings struct {
@@ -209,8 +244,14 @@ func DefaultHomeConfig() HomeConfig {
 		// well-known port is one of the two things a DNS-rebinding page needs
 		// in advance — it cannot read the response that would tell it the port,
 		// so it has to know where to aim beforehand.
-		Server:   ServerSettings{Addr: "127.0.0.1:0", OpenBrowser: true},
-		Security: SecuritySettings{AutoLock: 15 * time.Minute},
+		Server: ServerSettings{Addr: "127.0.0.1:0", OpenBrowser: true},
+		Security: SecuritySettings{
+			AutoLock: 15 * time.Minute,
+			// On by default. Everything else that hands over lasting control of
+			// the funds — the recovery phrase, a private key, the backup — asks
+			// for the password, and spending them is the same decision.
+			ConfirmSends: true, SendGrantTTL: DefaultSendGrantTTL,
+		},
 		NodeDiscovery: DiscoverySettings{
 			Enabled: false, URL: "",
 			RefreshInterval: 30 * time.Minute, RequestTimeout: 5 * time.Second,
@@ -405,26 +446,113 @@ func ValidateHomeConfig(config HomeConfig) error {
 			ErrInvalidSettings, MinAutoLock, MaxAutoLock,
 		)
 	}
+	// Checked whether or not the step-up is on. A value that is only rejected
+	// once someone switches it back on would fail at the least useful moment,
+	// and the form shows the field either way.
+	if config.Security.SendGrantTTL < MinSendGrantTTL || config.Security.SendGrantTTL > MaxSendGrantTTL {
+		return fmt.Errorf(
+			"%w: the send confirmation must last between %s and %s",
+			ErrInvalidSettings, MinSendGrantTTL, MaxSendGrantTTL,
+		)
+	}
 	if config.NodeDiscovery.RefreshInterval <= 0 || config.NodeDiscovery.RequestTimeout <= 0 {
 		return fmt.Errorf("%w: node discovery durations must be positive", ErrInvalidSettings)
 	}
-	if config.NodeDiscovery.URL == "" {
-		if config.NodeDiscovery.Enabled {
+	return validateDiscoveryURL(config.NodeDiscovery)
+}
+
+// validateDiscoveryURL states the rule for a node-discovery URL once.
+//
+// The rule has two consequences — refused when someone saves it, dropped when
+// it is read off disk — and they have to be two readings of one predicate. Two
+// copies would eventually disagree about the same string, and the disagreement
+// would be a URL that saves cleanly and then disables discovery on the next
+// start, or one that cannot be saved and cannot be cleared either.
+func validateDiscoveryURL(settings DiscoverySettings) error {
+	if settings.URL == "" {
+		if settings.Enabled {
 			return fmt.Errorf("%w: node discovery URL is required when enabled", ErrInvalidSettings)
 		}
 		return nil
 	}
-	discoveryURL, err := url.Parse(config.NodeDiscovery.URL)
-	if err != nil || discoveryURL.Scheme != "https" || discoveryURL.Host == "" || discoveryURL.User != nil {
+	discoveryURL, err := url.Parse(settings.URL)
+	if err != nil || discoveryURL.Scheme != "https" || discoveryURL.Host == "" ||
+		discoveryURL.User != nil {
 		return fmt.Errorf("%w: node discovery URL must be a valid HTTPS URL", ErrInvalidSettings)
 	}
+	// The same policy the dialer applies to the connection this URL becomes,
+	// out of the same package, so the form cannot accept an address the dialer
+	// will then refuse — which is what happened while this side kept its own
+	// shorter copy of the rule. It is only the cheap half: no validator does
+	// DNS, so a name that resolves privately is still settled at connect time.
+	//
+	// Checked whether or not discovery is enabled, for the same reason the send
+	// confirmation window is checked whether or not the step-up is on. A value
+	// refused only once someone switches the feature on fails at the least
+	// useful moment, and the form shows the field either way.
+	if !settings.AllowInsecureRPC && !hostpolicy.PublicHost(discoveryURL.Hostname()) {
+		return fmt.Errorf(
+			"%w: node discovery URL must point at a public host — "+
+				"enable insecure RPC first if this is deliberate",
+			ErrInvalidSettings,
+		)
+	}
 	return nil
+}
+
+// clampDiscovery drops a stored discovery URL that could not be saved through
+// the API, and switches discovery off along with it.
+//
+// Clamped rather than rejected, for the reason auto-lock is: this URL is edited
+// on the /settings page, which is served by the process that a refused
+// config.yaml stops from ever opening its port. Rejecting the file locks the
+// user out of the only UI that can repair it, and hand-editing YAML is not a
+// recovery path.
+//
+// Dropping is what "clamp" has to mean for an address. A duration has a nearest
+// legal value; a host does not, and any substitute would be a host the user
+// never named. The two alternatives both fail: keeping the string and only
+// switching discovery off leaves a value the rule still refuses on the next
+// start, since it is checked whether or not discovery is on, and clearing the
+// URL while leaving Enabled true fails on "URL is required when enabled". Doing
+// both is what makes the result something the validator accepts, and clearing
+// the URL is also what keeps the promise the rule was added for: nothing is
+// left aimed at the host, so the refresh timer cannot go on quietly polling an
+// address the wallet has decided it will not connect to.
+//
+// The file is not rewritten, so nothing is destroyed behind the user's back.
+// The stored line is simply not honoured, and /settings shows the empty field
+// it will accept a new value into.
+// The timings are clamped for the same reason and by the same rule that
+// rejects them: a stored zero — or a negative, which a hand-edited file can
+// hold — is refused by ValidateHomeConfig, and refusing it on load is the
+// lockout this function exists to prevent. There is a nearest legal value here,
+// unlike for the address, so they take the shipped default rather than being
+// dropped.
+func clampDiscovery(settings DiscoverySettings) DiscoverySettings {
+	defaults := DefaultHomeConfig().NodeDiscovery
+	if settings.RefreshInterval <= 0 {
+		settings.RefreshInterval = defaults.RefreshInterval
+	}
+	if settings.RequestTimeout <= 0 {
+		settings.RequestTimeout = defaults.RequestTimeout
+	}
+	if validateDiscoveryURL(settings) == nil {
+		return settings
+	}
+	settings.Enabled = false
+	settings.URL = ""
+	return settings
 }
 
 func marshalConfig(config HomeConfig) ([]byte, error) {
 	raw := rawHomeConfig{
 		SchemaVersion: config.SchemaVersion, Server: config.Server, UI: config.UI,
-		Security: rawSecuritySettings{AutoLock: config.Security.AutoLock.String()},
+		Security: rawSecuritySettings{
+			AutoLock:     config.Security.AutoLock.String(),
+			ConfirmSends: &config.Security.ConfirmSends,
+			SendGrantTTL: config.Security.SendGrantTTL.String(),
+		},
 		NodeDiscovery: rawDiscoverySettings{
 			Enabled: config.NodeDiscovery.Enabled, URL: config.NodeDiscovery.URL,
 			RefreshInterval:  config.NodeDiscovery.RefreshInterval.String(),
@@ -461,14 +589,40 @@ func unmarshalConfig(data []byte) (HomeConfig, error) {
 	if err != nil {
 		return HomeConfig{}, fmt.Errorf("parse request_timeout: %w", err)
 	}
+	// Absent means "written before the setting existed", which takes the
+	// default rather than reading as an explicit off.
+	confirmSends := true
+	if raw.Security.ConfirmSends != nil {
+		confirmSends = *raw.Security.ConfirmSends
+	}
+	grantTTL := DefaultSendGrantTTL
+	if raw.Security.SendGrantTTL != "" {
+		parsed, parseErr := time.ParseDuration(raw.Security.SendGrantTTL)
+		if parseErr != nil {
+			return HomeConfig{}, fmt.Errorf("parse send_grant_ttl: %w", parseErr)
+		}
+		grantTTL = parsed
+	}
 	return HomeConfig{
 		SchemaVersion: raw.SchemaVersion, Server: raw.Server, UI: raw.UI,
-		Security: SecuritySettings{AutoLock: autoLock},
-		NodeDiscovery: DiscoverySettings{
+		Security: SecuritySettings{
+			AutoLock: autoLock, ConfirmSends: confirmSends,
+			// Clamped for the same reason auto-lock is: a file that names an
+			// hour and a half must not keep the wallet from starting, and must
+			// not be honoured either.
+			SendGrantTTL: ClampSendGrantTTL(grantTTL),
+		},
+		// Clamped on the way in, like auto-lock and the send window above, so
+		// that a URL already on disk can never be the reason the wallet refuses
+		// to start. A URL arriving through the API still goes to
+		// ValidateHomeConfig and is still refused there; only what is already
+		// stored is repaired, because only a stored value has nobody left to
+		// tell.
+		NodeDiscovery: clampDiscovery(DiscoverySettings{
 			Enabled: raw.NodeDiscovery.Enabled, URL: raw.NodeDiscovery.URL,
 			RefreshInterval: refresh, RequestTimeout: timeout,
 			AllowInsecureRPC: raw.NodeDiscovery.AllowInsecureRPC,
-		},
+		}),
 	}, nil
 }
 

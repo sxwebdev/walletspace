@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +30,59 @@ func (s settingsStub) Snapshot() config.SettingsSnapshot { return s.snapshot }
 func (s settingsStub) Home() string                      { return s.home }
 func (s settingsStub) NetworkOverride(string) (config.NetworkOverride, bool) {
 	return s.override, s.has
+}
+
+// The endpoints discovery hands back are filtered. The request that fetches
+// them was not: it went out on a plain dialer, so the one outbound call this
+// process makes on a timer was also the only one that could reach the machine
+// it runs on.
+func TestDiscoveryItselfGoesThroughTheGuardedDialer(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"nodes":[{"url":"https://public.example"}]}`))
+	}))
+	t.Cleanup(service.Close)
+
+	discovery := config.DiscoverySettings{
+		Enabled: true, URL: service.URL, RequestTimeout: 5 * time.Second,
+	}
+	item := network.Network{ID: "ethereum-mainnet", Family: network.FamilyEVM, ChainID: "1"}
+
+	resolver := New(settingsStub{})
+	resolver.lookupIP = func(_ context.Context, host string) ([]net.IP, error) {
+		if host == "public.example" {
+			return []net.IP{net.ParseIP("8.8.8.8")}, nil
+		}
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	if _, err := resolver.discover(t.Context(), discovery, item); err == nil {
+		t.Error("discover() against loopback error = nil, want a refused dial")
+	}
+	if got := hits.Load(); got != 0 {
+		t.Errorf("the discovery service was reached %d times, want 0", got)
+	}
+
+	// With private RPC explicitly allowed — the same switch the dialer honours
+	// for nodes — the request goes through, which is what proves the refusal
+	// above came from the dialer and not from something else being broken.
+	permissive := settingsStub{}
+	permissive.snapshot.Config.NodeDiscovery.AllowInsecureRPC = true
+	allowed := New(permissive)
+	allowed.lookupIP = resolver.lookupIP
+	discovery.AllowInsecureRPC = true
+	endpoints, err := allowed.discover(t.Context(), discovery, item)
+	if err != nil {
+		t.Fatalf("discover() with private addresses allowed error = %v", err)
+	}
+	if len(endpoints) != 1 || endpoints[0] != "https://public.example" {
+		t.Errorf("discover() = %v, want the one advertised endpoint", endpoints)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("the discovery service was reached %d times, want 1", got)
+	}
 }
 
 func TestSafeDynamicEndpointRejectsSSRF(t *testing.T) {

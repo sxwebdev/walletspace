@@ -11,7 +11,6 @@ import (
 	"github.com/sxwebdev/gotron/schema/pb/api"
 	"github.com/sxwebdev/gotron/schema/pb/core"
 	"github.com/sxwebdev/walletspace/internal/chain"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // deadNodeService talks to a port nothing is listening on, so every broadcast
@@ -41,18 +40,14 @@ func trxTransferTx(t *testing.T) (Intent, *api.TransactionExtention) {
 	intent := Intent{
 		Kind: IntentTransferTRX, Owner: ownerAddr, To: recipientAddr, Amount: 1_000_000,
 	}
-	parameter, err := anypb.New(&core.TransferContract{
+	// Through wrap, so the transaction carries the header a node would have
+	// written. These tests are about what happens after the signature; a
+	// fixture that cannot get past the intent check would test nothing.
+	tx := wrap(t, core.Transaction_Contract_TransferContract, &core.TransferContract{
 		OwnerAddress: mustAddress(t, ownerAddr), ToAddress: mustAddress(t, recipientAddr),
 		Amount: 1_000_000,
-	})
-	if err != nil {
-		t.Fatalf("anypb.New() error = %v", err)
-	}
-	return intent, &api.TransactionExtention{Transaction: &core.Transaction{
-		RawData: &core.TransactionRaw{Contract: []*core.Transaction_Contract{{
-			Type: core.Transaction_Contract_TransferContract, Parameter: parameter,
-		}}},
-	}}
+	}, 0)
+	return intent, &api.TransactionExtention{Transaction: tx}
 }
 
 // The transaction id is computed from the bytes that were signed, so it is

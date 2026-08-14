@@ -1,4 +1,4 @@
-import { closeModal } from "./components/ui.js";
+import { closeModals } from "./components/ui.js";
 
 let cleanup = () => {};
 let generation = 0;
@@ -12,7 +12,7 @@ export async function navigate(path, { replace = false } = {}) {
 
 export async function renderRoute() {
   const currentGeneration = ++generation;
-  closeModal();
+  closeModals();
   cleanup();
   cleanup = () => {};
   const controller = new AbortController();

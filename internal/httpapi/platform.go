@@ -98,6 +98,7 @@ func NewPlatform(
 	mux.HandleFunc("POST /api/spaces/{space_id}/change-password", p.changePassword)
 	mux.HandleFunc("POST /api/spaces/{space_id}/mnemonic", p.revealMnemonic)
 	mux.HandleFunc("POST /api/spaces/{space_id}/backup", p.backupSpace)
+	mux.HandleFunc("POST /api/spaces/{space_id}/confirm-send", p.confirmSend)
 
 	mux.HandleFunc("GET /api/spaces/{space_id}/accounts", p.listAccounts)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/derive", p.deriveAccount)
@@ -263,7 +264,14 @@ func (p *Platform) revealMnemonic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Platform) backupSpace(w http.ResponseWriter, r *http.Request) {
-	data, err := p.spaces.Backup(r.PathValue("space_id"))
+	var request struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	data, err := p.spaces.Backup(r.PathValue("space_id"), request.Password)
 	if err != nil {
 		p.writePlatformError(w, err)
 		return
@@ -274,6 +282,59 @@ func (p *Platform) backupSpace(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
+
+// confirmSend opens the window in which this space may spend.
+//
+// Unlocking proves who was at the keyboard when the space was opened. It says
+// nothing about who is asking now — a script injected into the page and any
+// local process holding the capability token both inherit an unlocked space.
+// This is the one thing neither of them can produce.
+func (p *Platform) confirmSend(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The request's own context, so a dialog the person dismisses while the
+	// derivation is still running does not leave a window open behind a browser
+	// that has already reported nothing was confirmed.
+	expires, err := p.spaces.ConfirmSend(r.Context(), r.PathValue("space_id"), request.Password)
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	secretHeaders(w)
+	writeJSON(w, http.StatusOK, map[string]string{"expires_at": expires.Format(time.RFC3339)})
+}
+
+// requireSendConfirmation gates everything that moves funds.
+//
+// Every refusal goes through the shared mapper, including the one this gate
+// exists to raise. Building that answer by hand here meant the status and the
+// code lived at the call site: moving the check anywhere else — into a helper,
+// down into an adapter — produced the mapper's default branch instead, which is
+// 502 with a "platform request failed" line in the log and no code for the UI
+// to act on.
+func (p *Platform) requireSendConfirmation(w http.ResponseWriter, r *http.Request) bool {
+	if err := p.spaces.RequireSendConfirmation(r.PathValue("space_id")); err != nil {
+		p.writePlatformError(w, err)
+		return false
+	}
+	return true
+}
+
+// codeSendConfirmationRequired is the contract between the gate above and the
+// prompt in the UI. Matching on the message text would be a string comparison
+// that breaks the moment the wording improves.
+const codeSendConfirmationRequired = "send_confirmation_required"
+
+// statusClientClosedRequest is 499, which the standard library has no name for
+// because it is not in the RFC. It says what happened when a caller goes away
+// mid-request, and the alternatives all say something false: 200 that the work
+// was done, 504 that a node was slow, 502 that the wallet broke.
+const statusClientClosedRequest = 499
 
 func (p *Platform) listAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts, err := p.spaces.Accounts(r.PathValue("space_id"))
@@ -442,7 +503,9 @@ type settingsDTO struct {
 	SchemaVersion int                   `json:"schema_version"`
 	Server        config.ServerSettings `json:"server"`
 	Security      struct {
-		AutoLock string `json:"auto_lock"`
+		AutoLock     string `json:"auto_lock"`
+		ConfirmSends bool   `json:"confirm_sends"`
+		SendGrantTTL string `json:"send_grant_ttl"`
 	} `json:"security"`
 	NodeDiscovery struct {
 		Enabled          bool   `json:"enabled"`
@@ -461,6 +524,8 @@ func settingsResponse(snapshot config.SettingsSnapshot) settingsDTO {
 	response.SchemaVersion = snapshot.Config.SchemaVersion
 	response.Server = snapshot.Config.Server
 	response.Security.AutoLock = snapshot.Config.Security.AutoLock.String()
+	response.Security.ConfirmSends = snapshot.Config.Security.ConfirmSends
+	response.Security.SendGrantTTL = snapshot.Config.Security.SendGrantTTL.String()
 	response.NodeDiscovery.Enabled = snapshot.Config.NodeDiscovery.Enabled
 	response.NodeDiscovery.URL = snapshot.Config.NodeDiscovery.URL
 	response.NodeDiscovery.RefreshInterval = snapshot.Config.NodeDiscovery.RefreshInterval.String()
@@ -468,7 +533,12 @@ func settingsResponse(snapshot config.SettingsSnapshot) settingsDTO {
 	response.NodeDiscovery.AllowInsecureRPC = snapshot.Config.NodeDiscovery.AllowInsecureRPC
 	response.UI = snapshot.Config.UI
 	response.Revision = snapshot.Revision
-	response.RestartRequired = []string{"server.addr"}
+	// The fields the API will not change while the process runs, named so the
+	// form can present them as read-only instead of offering a control whose
+	// save is always refused. They are here for different reasons: a listen
+	// address cannot move under a running listener, while confirm_sends must not
+	// be movable by the caller the spending step-up exists to stop.
+	response.RestartRequired = []string{"server.addr", "security.confirm_sends"}
 	return response
 }
 
@@ -495,11 +565,38 @@ func (p *Platform) patchGeneral(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Platform) patchSecurity(w http.ResponseWriter, r *http.Request) {
-	var request struct {
-		AutoLock string `json:"auto_lock"`
-	}
+	snapshot := p.settings.Snapshot()
+	// Defaulted from what is stored, so a client that sends only the field it
+	// changed does not silently switch the spending step-up off.
+	request := struct {
+		AutoLock     string `json:"auto_lock"`
+		ConfirmSends *bool  `json:"confirm_sends"`
+		SendGrantTTL string `json:"send_grant_ttl"`
+	}{AutoLock: snapshot.Config.Security.AutoLock.String()}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// confirm_sends is restart-only, and refused here in both directions.
+	//
+	// The step-up exists to stop anything that merely holds the capability
+	// token — a script injected into the page, another local process — from
+	// spending an unlocked space. A switch that same caller can flip with one
+	// PATCH is not a control: refused transfer, PATCH, identical transfer
+	// accepted, funds gone. Asking for a password would not close it, since the
+	// setting is global and belongs to no space, and a caller with the token can
+	// create a space whose password it chose. So config.yaml is the only way to
+	// change it, on the same footing as an address that cannot move under a
+	// running listener — and one field above, auto-lock cannot be switched off
+	// at all.
+	//
+	// A PATCH that echoes the stored value back is accepted rather than refused:
+	// the settings form posts the whole security block, so treating the field's
+	// presence as the offence would break every save of the two beside it.
+	if request.ConfirmSends != nil && *request.ConfirmSends != snapshot.Config.Security.ConfirmSends {
+		writeError(w, http.StatusForbidden,
+			"confirm_sends cannot be changed through the API: edit security.confirm_sends "+
+				"in config.yaml and restart Walletspace")
 		return
 	}
 	duration, err := time.ParseDuration(request.AutoLock)
@@ -507,9 +604,20 @@ func (p *Platform) patchSecurity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid auto_lock duration")
 		return
 	}
-	snapshot := p.settings.Snapshot()
+	grantTTL := snapshot.Config.Security.SendGrantTTL
+	if request.SendGrantTTL != "" {
+		grantTTL, err = time.ParseDuration(request.SendGrantTTL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid send_grant_ttl duration")
+			return
+		}
+	}
+	// ConfirmSends is not assigned from the request: it can only have arrived
+	// equal to what is stored, and carrying the stored value forward is what
+	// keeps the file the single authority on it.
 	next := snapshot.Config
 	next.Security.AutoLock = duration
+	next.Security.SendGrantTTL = grantTTL
 	saved, err := p.settings.SaveConfig(next, revisionHeader(r))
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -519,6 +627,7 @@ func (p *Platform) patchSecurity(w http.ResponseWriter, r *http.Request) {
 		p.writePlatformError(w, err)
 		return
 	}
+	p.spaces.SetSendConfirmation(saved.Config.Security.ConfirmSends, saved.Config.Security.SendGrantTTL)
 	w.Header().Set("ETag", `"`+saved.Revision+`"`)
 	writeJSON(w, http.StatusOK, settingsResponse(saved))
 }
@@ -989,6 +1098,9 @@ func (p *Platform) estimateTransfer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Platform) sendTransfer(w http.ResponseWriter, r *http.Request) {
+	if !p.requireSendConfirmation(w, r) {
+		return
+	}
 	request, networkItem, transfer, ok := p.decodePlatformTransfer(w, r)
 	if !ok {
 		return
@@ -1131,6 +1243,9 @@ func (p *Platform) tronUnstake(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Platform) tronStakeChange(w http.ResponseWriter, r *http.Request, unstake bool) {
+	if !p.requireSendConfirmation(w, r) {
+		return
+	}
 	var request tronStakeRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1182,6 +1297,9 @@ func (p *Platform) tronReclaim(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Platform) tronDelegation(w http.ResponseWriter, r *http.Request, reclaim bool) {
+	if !p.requireSendConfirmation(w, r) {
+		return
+	}
 	var request tronDelegationRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1234,6 +1352,9 @@ func (p *Platform) tronCancelUnstakes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Platform) tronWithdrawChange(w http.ResponseWriter, r *http.Request, cancelUnstakes bool) {
+	if !p.requireSendConfirmation(w, r) {
+		return
+	}
 	item, accountItem, address, ok := p.tronAccount(w, r)
 	if !ok {
 		return
@@ -1288,6 +1409,9 @@ func (p *Platform) tronDeployEstimate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Platform) tronDeploy(w http.ResponseWriter, r *http.Request) {
+	if !p.requireSendConfirmation(w, r) {
+		return
+	}
 	request, deployment, item, accountItem, address, ok := p.decodeTronDeployment(w, r)
 	if !ok {
 		return
@@ -1717,6 +1841,12 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 		// A step-up that was not attempted, or attempted with the wrong
 		// password. Both answer the same way so neither confirms the other.
 		status = http.StatusUnauthorized
+	case errors.Is(err, space.ErrSendConfirmationRequired):
+		// Forbidden rather than unauthorized: nothing is wrong with what the
+		// caller sent or with the token it holds, and telling a tab it has lost
+		// its token would send the user to reopen a wallet that is working. The
+		// space is being asked for its password before it will spend.
+		status = http.StatusForbidden
 	case errors.Is(err, space.ErrDuplicateKey), errors.Is(err, space.ErrFirstSpaceExists),
 		errors.Is(err, operation.ErrConflict), errors.Is(err, chain.ErrFeeChanged):
 		// A stale fee approval is a conflict, not a bad request: nothing the
@@ -1733,6 +1863,13 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, context.DeadlineExceeded):
 		status = http.StatusGatewayTimeout
+	case errors.Is(err, context.Canceled):
+		// The caller hung up — a dismissed dialog, a closed tab, a navigation
+		// away from a page mid-stream. Nothing failed and there is most likely
+		// nobody left to read the answer, so it must not go through the default
+		// branch, which would call every abandoned request a bad gateway and
+		// write a warning about it in the log.
+		status = statusClientClosedRequest
 	default:
 		if !errors.Is(err, account.ErrInvalidMnemonic) &&
 			!errors.Is(err, account.ErrInvalidPrivateKey) &&
@@ -1748,7 +1885,28 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 	// match; only the text that leaves the process is redacted. An error raised
 	// against an RPC endpoint quotes it, and by that point the ${ENV} reference
 	// in the configuration has been expanded into the real credential.
-	writeError(w, status, config.RedactError(err).Error())
+	message := config.RedactError(err).Error()
+	if code := platformErrorCode(err); code != "" {
+		writeJSON(w, status, map[string]string{"error": message, "code": code})
+		return
+	}
+	writeError(w, status, message)
+}
+
+// platformErrorCode labels the refusals the browser has to act on rather than
+// merely display.
+//
+// Exactly one error has a code, and that is the point: a code is a promise that
+// the UI has a remedy for this particular refusal — here, ask the person at the
+// keyboard for the space password and repeat the identical request, idempotency
+// key and approved fee included. Handing one to every error would turn a
+// contract into decoration, and leaving it at the call site is what let the
+// contract depend on where the check happened to be raised from.
+func platformErrorCode(err error) string {
+	if errors.Is(err, space.ErrSendConfirmationRequired) {
+		return codeSendConfirmationRequired
+	}
+	return ""
 }
 
 func decodeJSON(r *http.Request, target any) error {
