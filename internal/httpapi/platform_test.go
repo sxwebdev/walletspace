@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/sxwebdev/walletspace/internal/asset"
+	"github.com/sxwebdev/walletspace/internal/chain"
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
 	tronchain "github.com/sxwebdev/walletspace/internal/chain/tron"
 	"github.com/sxwebdev/walletspace/internal/config"
@@ -39,6 +41,7 @@ type platformFixture struct {
 	tron     *tronchain.Adapter
 	doctor   *doctor.Doctor
 	prices   *priceFake
+	assets   *asset.Store
 }
 
 // The address the test guard accepts, and the token it demands. Requests built
@@ -123,8 +126,9 @@ func newPlatformFixture(t *testing.T) platformFixture {
 		t.Fatalf("doctor.New() error = %v", err)
 	}
 	prices := &priceFake{}
+	assets := mustAssetStore(t, home)
 	handler, err := httpapi.NewPlatform(
-		spaces, settings, registry, operation.New(home), mustAssetStore(t, home), evm, tron, nodeDoctor,
+		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor,
 		prices, testAccess(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
@@ -139,7 +143,7 @@ func newPlatformFixture(t *testing.T) platformFixture {
 	})
 	return platformFixture{
 		handler: handler, spaces: spaces, settings: settings,
-		evm: evm, tron: tron, doctor: nodeDoctor, prices: prices,
+		evm: evm, tron: tron, doctor: nodeDoctor, prices: prices, assets: assets,
 	}
 }
 
@@ -500,6 +504,100 @@ func TestPlatformPricesOnlyRequestsMainnetAssets(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("Tron native quote missing: %+v", payload.Quotes)
+	}
+}
+
+func TestPlatformPricesRobinhoodWETH(t *testing.T) {
+	t.Parallel()
+
+	const wethContract = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+	for _, tt := range []struct {
+		name           string
+		networkID      string
+		contract       string
+		includeNative  bool
+		wantIdentifier string
+	}{
+		{
+			name: "built-in WETH without native ETH", networkID: "robinhood-mainnet",
+			wantIdentifier: "coingecko:ethereum",
+		},
+		{
+			name: "WETH and native ETH share a quote", networkID: "robinhood-mainnet",
+			includeNative: true, wantIdentifier: "coingecko:ethereum",
+		},
+		{
+			name: "configured lowercase contract", networkID: "robinhood-mainnet",
+			contract: strings.ToLower(wethContract), wantIdentifier: "coingecko:ethereum",
+		},
+		{
+			name: "configured uppercase contract", networkID: "robinhood-mainnet",
+			contract: strings.ToUpper(wethContract), wantIdentifier: "coingecko:ethereum",
+		},
+		{
+			name: "another token named WETH", networkID: "robinhood-mainnet",
+			contract: "0x1111111111111111111111111111111111111111",
+		},
+		{
+			name: "same contract on another network", networkID: "ethereum-mainnet",
+			contract: wethContract, wantIdentifier: "ethereum:" + strings.ToLower(wethContract),
+		},
+		{
+			name: "testnet excluded", networkID: "robinhood-testnet", contract: wethContract,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newPlatformFixture(t)
+			assetID := asset.ID(tt.networkID, "erc20", wethContract)
+			if tt.contract != "" {
+				assetID = asset.ID(tt.networkID, "erc20", tt.contract)
+				if err := fixture.assets.Add(chain.Asset{
+					ID: assetID, NetworkID: tt.networkID, Kind: "erc20",
+					Name: "Wrapped Ether", Symbol: "WETH", Decimals: 18, Contract: tt.contract,
+				}); err != nil {
+					t.Fatalf("add configured token: %v", err)
+				}
+			}
+			assetIDs := []string{assetID}
+			if tt.includeNative {
+				assetIDs = append(assetIDs, "robinhood-mainnet:native", "ethereum-mainnet:native")
+			}
+			query := url.Values{"asset_id": assetIDs}
+			response := platformRequest(t, fixture.handler, http.MethodGet, "/api/prices?"+query.Encode(), nil)
+			if response.Code != http.StatusOK {
+				t.Fatalf("GET /api/prices = %d %s", response.Code, response.Body.String())
+			}
+			payload := decodeBody[struct {
+				Quotes []struct {
+					AssetID string `json:"asset_id"`
+					price.Quote
+				} `json:"quotes"`
+			}](t, response)
+			if tt.wantIdentifier == "" {
+				if len(payload.Quotes) != 0 || fixture.prices.Calls() != 0 {
+					t.Fatalf("unpriced asset: quotes = %+v, provider calls = %d", payload.Quotes, fixture.prices.Calls())
+				}
+				return
+			}
+			if got := fixture.prices.Requested(); !slices.Equal(got, []string{tt.wantIdentifier}) {
+				t.Errorf("requested price identifiers = %v, want only %q", got, tt.wantIdentifier)
+			}
+			if len(payload.Quotes) != len(assetIDs) {
+				t.Fatalf("quotes = %+v, want one for each of %v", payload.Quotes, assetIDs)
+			}
+			slices.Sort(assetIDs)
+			for i, quote := range payload.Quotes {
+				if quote.AssetID != assetIDs[i] {
+					t.Errorf("quote asset ID = %q, want %q", quote.AssetID, assetIDs[i])
+				}
+				if !quote.Current.Equal(decimal.NewFromInt(2)) ||
+					!quote.Previous.Equal(decimal.NewFromInt(1)) || !quote.HasPrevious ||
+					!quote.Timestamp.Equal(time.Unix(100, 0)) {
+					t.Errorf("quote for %s = %+v, want current and 24h prices with their timestamp", quote.AssetID, quote.Quote)
+				}
+			}
+		})
 	}
 }
 

@@ -933,6 +933,13 @@ func priceIdentifier(item network.Network, itemAsset chain.Asset) string {
 	if itemAsset.Kind == "native" {
 		return item.NativePrice
 	}
+	// Price Robinhood's canonical WETH through ETH even when contract pricing
+	// is unavailable for this network. Match the contract, never the symbol.
+	// https://docs.robinhood.com/chain/contracts/
+	if item.ID == "robinhood-mainnet" && itemAsset.Kind == "erc20" &&
+		strings.EqualFold(itemAsset.Contract, "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73") {
+		return "coingecko:ethereum"
+	}
 	if item.PriceChain == "" || itemAsset.Contract == "" {
 		return ""
 	}
