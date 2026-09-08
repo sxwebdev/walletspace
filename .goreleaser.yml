@@ -58,14 +58,21 @@ homebrew_casks:
 
     # The release binaries carry no Developer ID signature, and Homebrew attaches
     # the quarantine flag to every download, which Gatekeeper then refuses to
-    # execute. Trusting this tap is where that is agreed to. `xattr -dr` exits 0
-    # when the attribute is absent, so this is a no-op for a signed build.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/walletspace"]
+    # execute. Trusting this tap is where that is agreed to. GoReleaser's cask
+    # hooks still emit Homebrew's deprecated imperative flight DSL, so keep the
+    # declarative step in its supported custom block instead. The inner template
+    # expression escapes Homebrew's {{staged_path}} placeholder from GoReleaser.
+    custom_block: |
+      define_singleton_method(:walletspace_postflight_steps) do
+        postflight_steps do
+          on_macos do
+            run "/usr/bin/xattr",
+                args: ["-d", "-r", "com.apple.quarantine", "{{ "{{staged_path}}" }}/walletspace"]
           end
+        end
+      end
+
+      walletspace_postflight_steps
 
     # No zap stanza on purpose. ~/.walletspace holds the encrypted vaults, and a
     # recovery phrase that only exists there is the sole way back to the funds —
