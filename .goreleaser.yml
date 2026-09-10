@@ -32,12 +32,49 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
+  use: git
   sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Performance
+      regexp: '^.*?perf(\(.+\))??!?:.+$'
+      order: 2
+    - title: Refactoring
+      regexp: '^.*?refactor(\(.+\))??!?:.+$'
+      order: 3
+    - title: Documentation
+      regexp: '^.*?docs(\(.+\))??!?:.+$'
+      order: 4
+    - title: Tests
+      regexp: '^.*?test(\(.+\))??!?:.+$'
+      order: 5
+    - title: Dependencies
+      regexp: '(^.*?(build|chore)\(deps\)!?:.+$|^.*?[Bb]ump .+$)'
+      order: 6
+    - title: Build & CI
+      regexp: '^.*?(build|ci)(\(.+\))??!?:.+$'
+      order: 7
+    # Catch-all: a new commit convention must not silently hide release notes.
+    - title: Other changes
+      order: 999
   filters:
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      # GoReleaser writes this generated cask update after publishing a release;
+      # it belongs to the previous release and must not leak into the next one.
+      - '^chore\(cask\)!?:'
+
+release:
+  # A rerun should repair generated notes instead of preserving or duplicating
+  # an incomplete release body.
+  mode: replace
+  footer: |
+
+    **Full changelog**: https://github.com/sxwebdev/walletspace/compare/{{ .PreviousTag }}...{{ .Tag }}
 
 # A cask rather than a formula: GoReleaser deprecated `brews` in v2.16 and
 # Homebrew treats pre-built binaries as cask material. The cask is committed to
