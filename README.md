@@ -108,8 +108,8 @@ and are never sent to an RPC provider.
 ### Homebrew (macOS)
 
 ```sh
+brew trust --tap https://github.com/sxwebdev/walletspace
 brew tap sxwebdev/walletspace https://github.com/sxwebdev/walletspace
-brew trust --tap sxwebdev/walletspace
 brew install --cask walletspace
 ```
 
