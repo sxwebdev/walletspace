@@ -70,8 +70,13 @@ release:
 	@# in the build, and nothing that only exists in this clone.
 	@git diff-index --quiet HEAD -- || \
 		{ echo "the working tree is dirty; commit or stash before releasing"; exit 1; }
-	@git fetch --quiet origin master
-	@git merge-base --is-ancestor HEAD FETCH_HEAD || \
-		{ echo "HEAD is not on origin/master, which is the only branch CI gates"; exit 1; }
+	@git fetch --quiet --tags origin master
+	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse FETCH_HEAD)" || \
+		{ echo "HEAD is not the latest origin/master; pull before releasing"; exit 1; }
+	@previous_tag="$$(git tag --list 'v[0-9]*' --sort=-version:refname | head -n 1)"; \
+		if [ -n "$$previous_tag" ] && ! git merge-base --is-ancestor "$$previous_tag^{commit}" HEAD; then \
+			echo "previous release $$previous_tag is not an ancestor of HEAD; do not rewrite published history"; \
+			exit 1; \
+		fi
 	git tag -a $(TAG) -m "Release $(TAG)"
 	git push origin $(TAG)

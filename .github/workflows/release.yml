@@ -29,6 +29,36 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # GoReleaser normally looks for the nearest reachable tag. If published
+      # history was rewritten, that can silently skip several versions and put
+      # every commit since an old tag into the changelog. Select the previous
+      # version explicitly and require it to be an ancestor instead.
+      - name: Verify release history
+        shell: bash
+        env:
+          CURRENT_TAG: ${{ github.ref_name }}
+        run: |
+          if ! previous_tag="$(
+            git tag --list 'v[0-9]*' --sort=-version:refname |
+              awk -v current="$CURRENT_TAG" '
+                found { print; exit }
+                $0 == current { found = 1 }
+                END { if (!found) exit 1 }
+              '
+          )"; then
+            echo "Current tag $CURRENT_TAG was not fetched" >&2
+            exit 1
+          fi
+
+          if [[ -n "$previous_tag" ]]; then
+            if ! git merge-base --is-ancestor "$previous_tag^{commit}" "$CURRENT_TAG^{commit}"; then
+              echo "Previous release $previous_tag is not an ancestor of $CURRENT_TAG." >&2
+              echo "The branch was rewritten after $previous_tag; refusing to publish an incorrect changelog." >&2
+              exit 1
+            fi
+            echo "GORELEASER_PREVIOUS_TAG=$previous_tag" >> "$GITHUB_ENV"
+          fi
+
       # Before publishing, not after: a tag that fails its tests should not reach
       # the release page or the tap.
       - name: Test
