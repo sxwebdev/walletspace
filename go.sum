@@ -194,8 +194,8 @@ github.com/supranational/blst v0.3.17 h1:OyduggShfN3CWEDdrqChEUZyt1iIsVAFApTKSzq
 github.com/supranational/blst v0.3.17/go.mod h1:jZJtfjgudtNl4en1tzwPIV3KjUnQUvG3/j+w+fVonLw=
 github.com/sxwebdev/go-bip39 v0.0.0-20251104152753-5b0ef6e9b27c h1:dyhne2CSmro21Uynsxf3SyEmfxO/cEZJ6g6lD70q5sk=
 github.com/sxwebdev/go-bip39 v0.0.0-20251104152753-5b0ef6e9b27c/go.mod h1:mzyJiXj6CzlM2vzRxTVQcgzCcN4OWL/3OoTuI8Bc7OM=
-github.com/sxwebdev/gotron v0.0.0-20260821110106-6c1d36bdc398 h1:weS2eIiFspZ19srqshyGkoNOal+v7TNrSz51afMQ/O0=
-github.com/sxwebdev/gotron v0.0.0-20260821110106-6c1d36bdc398/go.mod h1:h2q+rGmg1tBuoWAVSJhu4lVaNtFq9OCtYBspOe6o5ew=
+github.com/sxwebdev/gotron v0.0.0-20260918144841-ef239fc363fa h1:OcpGgjGGjHy4sRZqQCR1rLObA7TS8KSaccPg7WnYh+g=
+github.com/sxwebdev/gotron v0.0.0-20260918144841-ef239fc363fa/go.mod h1:h2q+rGmg1tBuoWAVSJhu4lVaNtFq9OCtYBspOe6o5ew=
 github.com/sxwebdev/xconfig v0.5.1 h1:xJGzo4xD6BXpYBa9OAkrel2tpJwoRCqKLVjFDjKXqPo=
 github.com/sxwebdev/xconfig v0.5.1/go.mod h1:f9CetNuIAmoJ++jPGF/y5qhbMYz/AdHDfNDrm34Y6yA=
 github.com/sxwebdev/xconfig/decoders/xconfigyaml v0.0.0-20260806004645-1c9608de0270 h1:IWZpSI4jR93cAE1npuapvlVy5rysJpFcGE0uDGyqDm8=

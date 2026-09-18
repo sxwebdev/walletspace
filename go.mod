@@ -9,7 +9,7 @@ require (
 	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/shopspring/decimal v1.4.0
 	github.com/sxwebdev/go-bip39 v0.0.0-20251104152753-5b0ef6e9b27c
-	github.com/sxwebdev/gotron v0.0.0-20260821110106-6c1d36bdc398
+	github.com/sxwebdev/gotron v0.0.0-20260918144841-ef239fc363fa
 	github.com/sxwebdev/xconfig v0.5.1
 	github.com/sxwebdev/xconfig/decoders/xconfigyaml v0.0.0-20260806004645-1c9608de0270
 	github.com/sxwebdev/xutils v0.0.0-20260625155121-842ebff2b685
