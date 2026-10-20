@@ -14,8 +14,8 @@ func TestBuiltinRegistry(t *testing.T) {
 		t.Fatalf("Builtin() error = %v", err)
 	}
 	items := registry.List()
-	if len(items) != 17 {
-		t.Fatalf("len(List()) = %d, want 17", len(items))
+	if len(items) != 18 {
+		t.Fatalf("len(List()) = %d, want 18", len(items))
 	}
 	seenChainIDs := make(map[string]string)
 	for _, item := range items {

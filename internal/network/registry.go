@@ -172,6 +172,7 @@ func builtinNetworks() []Network {
 		evm("arbitrum-mainnet", "Arbitrum One", "Mainnet", "42161", "ETH", "https://arbitrum-one-rpc.publicnode.com", "https://arbiscan.io", false),
 		evm("arbitrum-sepolia", "Arbitrum Sepolia", "Sepolia", "421614", "ETH", "https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia.arbiscan.io", true),
 		evm("base-mainnet", "Base", "Mainnet", "8453", "ETH", "https://mainnet.base.org", "https://basescan.org", false),
+		evm("kaia-mainnet", "Kaia Mainnet", "Mainnet", "8217", "KAIA", "https://public-en.node.kaia.io", "https://kaiascan.io", false),
 		evm("robinhood-mainnet", "Robinhood Chain", "Mainnet", "4663", "ETH", "https://rpc.mainnet.chain.robinhood.com", "https://explorer.chain.robinhood.com", false),
 		evm("robinhood-testnet", "Robinhood Chain Testnet", "Testnet", "46630", "ETH", "https://rpc.testnet.chain.robinhood.com", "https://explorer.testnet.chain.robinhood.com", true),
 		evm("avalanche-mainnet", "Avalanche C-Chain", "Mainnet", "43114", "AVAX", "https://api.avax.network/ext/bc/C/rpc", "https://snowtrace.io", false),
@@ -186,6 +187,7 @@ var priceChains = map[string]string{
 	"optimism-mainnet":  "optimism",
 	"arbitrum-mainnet":  "arbitrum",
 	"base-mainnet":      "base",
+	"kaia-mainnet":      "klaytn",
 	"avalanche-mainnet": "avax",
 }
 
@@ -196,6 +198,7 @@ var nativePrices = map[string]string{
 	"optimism-mainnet":  "coingecko:ethereum",
 	"arbitrum-mainnet":  "coingecko:ethereum",
 	"base-mainnet":      "coingecko:ethereum",
+	"kaia-mainnet":      "coingecko:kaia",
 	"robinhood-mainnet": "coingecko:ethereum",
 	"avalanche-mainnet": "coingecko:avalanche-2",
 }

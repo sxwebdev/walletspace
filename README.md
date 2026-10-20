@@ -14,8 +14,8 @@ and are never sent to an RPC provider.
   and a compatible key is not duplicated.
 - Import of a secp256k1 private key, marked `Imported` in the UI; export of a
   private key or a recovery phrase only from an unlocked space.
-- 17 networks at once: Tron, Ethereum, BSC, Polygon PoS, OP, Arbitrum, Robinhood
-  Chain and Avalanche C-Chain, each with its testnet, plus Base mainnet.
+- 18 networks at once: Tron, Ethereum, BSC, Polygon PoS, OP, Arbitrum, Robinhood
+  Chain and Avalanche C-Chain, each with its testnet, plus Base and Kaia mainnets.
 - Native, ERC20 and TRC20 balances and transfers; Tron resources, staking,
   delegation and contract deployment.
 - Progressive background balance loading, a mainnet USD total and a 24h price
