@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
@@ -282,41 +283,46 @@ func TestBalanceLimitIsGlobalAcrossRequests(t *testing.T) {
 func TestBalanceFetchesAreDeduplicatedByAddress(t *testing.T) {
 	t.Parallel()
 
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var calls atomic.Int64
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		var calls atomic.Int64
 
-	s := newTestService(func(ctx context.Context, addr string) (Balance, error) {
-		if calls.Add(1) == 1 {
-			close(started)
+		s := newTestService(func(ctx context.Context, addr string) (Balance, error) {
+			if calls.Add(1) == 1 {
+				close(started)
+			}
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return Balance{}, ctx.Err()
+			}
+			return Balance{TRX: decimal.NewFromInt(1)}, nil
+		})
+
+		var wg sync.WaitGroup
+		request := func() {
+			balances, errs := s.Balances(t.Context(), []string{"TSame"}, true)
+			if len(errs) != 0 {
+				t.Errorf("Balances() errors = %v", errs)
+			}
+			if len(balances) != 1 || !balances["TSame"].TRX.Equal(decimal.NewFromInt(1)) {
+				t.Errorf("Balances() = %v, want TSame with 1 TRX", balances)
+			}
 		}
-		select {
-		case <-release:
-		case <-ctx.Done():
-			return Balance{}, ctx.Err()
+		wg.Go(request)
+		<-started
+		wg.Go(request)
+
+		// Both requests must reach the shared fetch before it completes.
+		synctest.Wait()
+		close(release)
+		wg.Wait()
+
+		if got := calls.Load(); got != 1 {
+			t.Errorf("fetch calls = %d, want one shared fetch", got)
 		}
-		return Balance{TRX: decimal.NewFromInt(1)}, nil
 	})
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		s.Balances(t.Context(), []string{"TSame"}, true)
-	}()
-	<-started
-	go func() {
-		defer wg.Done()
-		s.Balances(t.Context(), []string{"TSame"}, true)
-	}()
-
-	time.Sleep(5 * time.Millisecond)
-	close(release)
-	wg.Wait()
-
-	if got := calls.Load(); got != 1 {
-		t.Errorf("fetch calls = %d, want one shared fetch", got)
-	}
 }
 
 func TestTransactionConfirmedRejectsMalformedID(t *testing.T) {
