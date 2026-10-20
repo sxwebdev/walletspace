@@ -11,25 +11,25 @@ cask "walletspace" do
 
   walletspace_postflight_steps
 
-  version "0.2.6"
+  version "0.2.7"
 
   on_macos do
     on_arm do
-      sha256 "ca5e41d235bea726610fa8841c578ab623145c9703b2ff4e516a0174a852d091"
+      sha256 "58a66b95ef3a032390fadf2d05d52e49b6e9afc164e71b0274d317bbaa409f7d"
       url "https://github.com/sxwebdev/walletspace/releases/download/v#{version}/walletspace_#{version}_darwin_arm64.tar.gz"
     end
     on_intel do
-      sha256 "0cdd625551be41ca21897cc494b7d59ad74a5ca6aaf33b34ac32f92a24406b64"
+      sha256 "11f285427937591bbe2f5eb8df01fd9428ec3436959470911d2e1e549658e083"
       url "https://github.com/sxwebdev/walletspace/releases/download/v#{version}/walletspace_#{version}_darwin_amd64.tar.gz"
     end
   end
   on_linux do
     on_arm do
-      sha256 "cf34c21a3d019f9b920beee488c8d299f07528b8818f9a2d1c090d602a62c9ac"
+      sha256 "788241fec08640a7b3d163441076dab9be8ceb5da26413bcfc25a20547960442"
       url "https://github.com/sxwebdev/walletspace/releases/download/v#{version}/walletspace_#{version}_linux_arm64.tar.gz"
     end
     on_intel do
-      sha256 "619b29b58fb37b2f62351e15f8646d7484f00ecf344a7baa76ccfcb74b35939b"
+      sha256 "bac5a083221f8367ee44b17deb0e3c6cb4a85c426e3b126fcc9da4c3b2a56120"
       url "https://github.com/sxwebdev/walletspace/releases/download/v#{version}/walletspace_#{version}_linux_amd64.tar.gz"
     end
   end
