@@ -199,6 +199,7 @@ var builtinTokens = map[string][]builtinToken{
 		trc20("Tether USD", "USDT", "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf", 6),
 	},
 	"bsc-mainnet": {
+		erc20("Wrapped BNB", "WBNB", "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", 18),
 		erc20("Tether USD", "USDT", "0x55d398326f99059ff775485246999027b3197955", 18),
 		erc20("USD Coin", "USDC", "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", 18),
 		erc20("Binance Bitcoin", "BTCB", "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c", 18),

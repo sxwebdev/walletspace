@@ -85,7 +85,7 @@ func TestBuiltinMainnetAssets(t *testing.T) {
 	expectedCounts := map[string]int{
 		"tron-mainnet":      2,
 		"tron-nile":         2,
-		"bsc-mainnet":       14,
+		"bsc-mainnet":       15,
 		"ethereum-mainnet":  11,
 		"polygon-mainnet":   8,
 		"optimism-mainnet":  4,
