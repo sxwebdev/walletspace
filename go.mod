@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/decred/dcrd/hdkeychain/v3 v3.1.3
-	github.com/ethereum/go-ethereum v1.17.8
+	github.com/ethereum/go-ethereum v1.17.9
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/shopspring/decimal v1.6.0
@@ -22,7 +22,7 @@ require (
 
 require (
 	github.com/Microsoft/go-winio v0.6.4 // indirect
-	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20261016111638-805c8e298e0e // indirect
+	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20261021020551-a26a53d59718 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.26.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
