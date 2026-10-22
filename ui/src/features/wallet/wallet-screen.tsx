@@ -15,7 +15,7 @@ import {
   KeyRoundIcon,
   PencilIcon,
   PlusIcon,
-  Trash2Icon,
+  UnlinkIcon,
 } from "lucide-react"
 import { Navigate, useNavigate } from "react-router"
 
@@ -47,7 +47,7 @@ import { useAccountRoute } from "@/features/wallet/use-account-route"
 import {
   ConnectNetworkDialog,
   connectableNetworks,
-  DeleteWalletDialog,
+  DisconnectNetworkDialog,
   ExportKeyDialog,
   RenameWalletDialog,
 } from "@/features/wallet/wallet-dialogs"
@@ -103,7 +103,7 @@ export function WalletScreen() {
   const { space, enabledNetworks, networkById } = useSession()
   const navigate = useNavigate()
   const [dialog, setDialog] = React.useState<
-    "rename" | "connect" | "export" | "delete" | null
+    "rename" | "connect" | "export" | "disconnect" | null
   >(null)
   const rows = useWalletAssets(account, network)
   const { balancesLoading, upsertAccount, refreshBalances } = useWallet()
@@ -246,13 +246,17 @@ export function WalletScreen() {
                     <KeyRoundIcon />
                     Export private key
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={() => setDialog("delete")}
-                  >
-                    <Trash2Icon />
-                    Delete wallet
-                  </DropdownMenuItem>
+                  {/* The last network stays: deleting the wallet is a
+                      wallet-level action, on its own screen. */}
+                  {network && ids.length > 1 && (
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => setDialog("disconnect")}
+                    >
+                      <UnlinkIcon />
+                      Disconnect {network.name}
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -428,12 +432,14 @@ export function WalletScreen() {
         open={dialog === "export"}
         onOpenChange={(o) => setDialog(o ? "export" : null)}
       />
-      <DeleteWalletDialog
-        account={account}
-        open={dialog === "delete"}
-        onOpenChange={(o) => setDialog(o ? "delete" : null)}
-        onExport={() => setDialog("export")}
-      />
+      {network && (
+        <DisconnectNetworkDialog
+          account={account}
+          network={network}
+          open={dialog === "disconnect"}
+          onOpenChange={(o) => setDialog(o ? "disconnect" : null)}
+        />
+      )}
     </Screen>
   )
 }

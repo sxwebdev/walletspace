@@ -364,6 +364,76 @@ function ExportKeyBody({ account }: { account: Account }) {
   )
 }
 
+export function DisconnectNetworkDialog({
+  account,
+  network,
+  open,
+  onOpenChange,
+}: DialogProps & { network: Network }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        {open && <DisconnectNetworkBody account={account} network={network} />}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DisconnectNetworkBody({
+  account,
+  network,
+}: {
+  account: Account
+  network: Network
+}) {
+  const { space } = useSession()
+  const { upsertAccount } = useWallet()
+  const navigate = useNavigate()
+  const disconnect = useMutation({
+    mutationFn: () =>
+      accountsApi.unbindNetwork(space!.id, account.id, network.id),
+    onSuccess: (updated) => {
+      upsertAccount(updated)
+      toast.add({
+        type: "success",
+        title: `${network.name} disconnected`,
+      })
+      navigate(`/wallet/${account.id}`, { replace: true })
+    },
+  })
+  return (
+    <form
+      className="flex flex-col gap-5"
+      onSubmit={(e) => {
+        e.preventDefault()
+        disconnect.mutate()
+      }}
+    >
+      <DialogHeader>
+        <DialogTitle>Disconnect {network.name}?</DialogTitle>
+        <DialogDescription>
+          {accountTitle(account)} stops showing balances and sending on{" "}
+          {network.name}. The key, its funds on chain and its other networks
+          stay; the network can be connected again at any time.
+        </DialogDescription>
+      </DialogHeader>
+      <FormError
+        message={disconnect.isError ? errorMessage(disconnect.error) : null}
+      />
+      <DialogFooter>
+        <Button
+          type="submit"
+          variant="destructive"
+          disabled={disconnect.isPending}
+        >
+          {disconnect.isPending && <Spinner data-icon="inline-start" />}
+          Disconnect
+        </Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
 export function DeleteWalletDialog({
   account,
   open,

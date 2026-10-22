@@ -110,6 +110,7 @@ func NewPlatform(
 	mux.HandleFunc("PATCH /api/spaces/{space_id}/accounts/{account_id}", p.renameAccount)
 	mux.HandleFunc("DELETE /api/spaces/{space_id}/accounts/{account_id}", p.deleteAccount)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/{account_id}/networks", p.bindAccountNetwork)
+	mux.HandleFunc("DELETE /api/spaces/{space_id}/accounts/{account_id}/networks/{network_id}", p.unbindAccountNetwork)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/{account_id}/private-key", p.exportPrivateKey)
 
 	mux.HandleFunc("GET /api/networks", p.listNetworks)
@@ -492,6 +493,19 @@ func (p *Platform) bindAccountNetwork(w http.ResponseWriter, r *http.Request) {
 	updated, err := p.spaces.BindNetwork(
 		r.PathValue("space_id"), r.PathValue("account_id"),
 		item.ID, account.Family(item.Family),
+	)
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// unbindAccountNetwork takes a network off a wallet. A disabled network can be
+// taken off too, so it is not looked up among the enabled ones.
+func (p *Platform) unbindAccountNetwork(w http.ResponseWriter, r *http.Request) {
+	updated, err := p.spaces.UnbindNetwork(
+		r.PathValue("space_id"), r.PathValue("account_id"), r.PathValue("network_id"),
 	)
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -2056,6 +2070,7 @@ func (p *Platform) writeCodedPlatformError(w http.ResponseWriter, err error, cod
 		// space is being asked for its password before it will spend.
 		status = http.StatusForbidden
 	case errors.Is(err, space.ErrDuplicateKey), errors.Is(err, space.ErrFirstSpaceExists),
+		errors.Is(err, space.ErrLastNetwork),
 		errors.Is(err, operation.ErrConflict), errors.Is(err, chain.ErrFeeChanged),
 		errors.Is(err, chain.ErrStateChanged):
 		// A stale fee approval is a conflict, not a bad request: nothing the

@@ -47,6 +47,9 @@ var (
 	// ErrPasswordRequired marks a step-up that was not attempted at all, as
 	// opposed to one that was attempted with the wrong password.
 	ErrPasswordRequired = errors.New("space password is required")
+	// ErrLastNetwork refuses to leave a wallet with no network: an empty
+	// binding list is what a record from before bindings looks like.
+	ErrLastNetwork = errors.New("the wallet's last network cannot be disconnected; delete the wallet instead")
 )
 
 type KeyEntry struct {
@@ -1221,6 +1224,39 @@ func (m *Manager) BindNetwork(
 			return account.Account{}, ErrNetworkBinding
 		}
 		item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
+		item.UpdatedAt = m.now()
+		file.UpdatedAt = item.UpdatedAt
+		if err := m.saveLocked(file); err != nil {
+			return account.Account{}, err
+		}
+		m.files[id] = file
+		return cloneAccount(*item), nil
+	}
+	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
+}
+
+// UnbindNetwork takes a network off a wallet. The key, its addresses and its
+// other networks stay, and the network can be connected again later.
+func (m *Manager) UnbindNetwork(id, accountID, networkID string) (account.Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	file, ok := m.files[id]
+	if !ok {
+		return account.Account{}, fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	file.Accounts = cloneAccounts(file.Accounts)
+	for i := range file.Accounts {
+		item := &file.Accounts[i]
+		if item.ID != accountID {
+			continue
+		}
+		if !item.BoundTo(networkID) {
+			return account.Account{}, ErrNetworkBinding
+		}
+		if len(item.NetworkIDs) == 1 {
+			return account.Account{}, ErrLastNetwork
+		}
+		item.NetworkIDs = slices.DeleteFunc(item.NetworkIDs, func(id string) bool { return id == networkID })
 		item.UpdatedAt = m.now()
 		file.UpdatedAt = item.UpdatedAt
 		if err := m.saveLocked(file); err != nil {

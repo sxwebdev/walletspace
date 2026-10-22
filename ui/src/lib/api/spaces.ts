@@ -93,6 +93,11 @@ export const accountsApi = {
       `${base(spaceId)}/accounts/${encodeURIComponent(accountId)}/networks`,
       { method: "POST", body: { network_id } }
     ),
+  unbindNetwork: (spaceId: string, accountId: string, networkId: string) =>
+    request<Account>(
+      `${base(spaceId)}/accounts/${encodeURIComponent(accountId)}/networks/${encodeURIComponent(networkId)}`,
+      { method: "DELETE", body: {} }
+    ),
   exportPrivateKey: (
     spaceId: string,
     accountId: string,

@@ -588,6 +588,63 @@ func TestChangingThePasswordClosesTheSpendingWindow(t *testing.T) {
 	}
 }
 
+func TestUnbindNetworkKeepsTheWalletOnItsOtherNetworks(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	manager := newManager(t, home)
+	created := createWithNileWallet(t, manager, "test-vault-password")
+	wallet := created.Accounts[0]
+	if _, err := manager.BindNetwork(
+		created.Space.ID, wallet.ID, "tron-mainnet", account.FamilyTron,
+	); err != nil {
+		t.Fatalf("BindNetwork() error = %v", err)
+	}
+
+	updated, err := manager.UnbindNetwork(created.Space.ID, wallet.ID, "tron-mainnet")
+	if err != nil {
+		t.Fatalf("UnbindNetwork() error = %v", err)
+	}
+	if updated.BoundTo("tron-mainnet") || !updated.BoundTo("tron-nile") ||
+		updated.Addresses[account.FamilyTron] != wallet.Addresses[account.FamilyTron] {
+		t.Fatalf("unbound wallet = %+v", updated)
+	}
+	// The record on disk lost the network too, not only the one in memory.
+	_, persisted, err := newManager(t, home).Get(created.Space.ID)
+	if err != nil || len(persisted) != 1 || persisted[0].BoundTo("tron-mainnet") {
+		t.Fatalf("persisted accounts = %+v, err = %v", persisted, err)
+	}
+	// Nothing signs for a network the wallet was taken off.
+	if err := manager.WithSigner(
+		t.Context(), created.Space.ID, wallet.ID, "tron-mainnet", account.FamilyTron,
+		func(chain.Signer) error { return nil },
+	); !errors.Is(err, space.ErrNetworkBinding) {
+		t.Fatalf("WithSigner(unbound) error = %v, want ErrNetworkBinding", err)
+	}
+
+	for _, tt := range []struct {
+		name      string
+		accountID string
+		networkID string
+		want      error
+	}{
+		{"network already off", wallet.ID, "tron-mainnet", space.ErrNetworkBinding},
+		{"last network", wallet.ID, "tron-nile", space.ErrLastNetwork},
+		{"unknown wallet", "acc_missing", "tron-nile", space.ErrAccountNotFound},
+	} {
+		if _, err := manager.UnbindNetwork(created.Space.ID, tt.accountID, tt.networkID); !errors.Is(err, tt.want) {
+			t.Errorf("%s: UnbindNetwork() error = %v, want %v", tt.name, err, tt.want)
+		}
+	}
+	accounts, err := manager.Accounts(created.Space.ID)
+	if err != nil {
+		t.Fatalf("Accounts() error = %v", err)
+	}
+	if !accounts[0].BoundTo("tron-nile") {
+		t.Fatalf("refused unbinding changed the wallet: %+v", accounts[0])
+	}
+}
+
 func TestDeleteDerivedAccountCanBeDerivedAgain(t *testing.T) {
 	t.Parallel()
 
