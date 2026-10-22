@@ -67,8 +67,10 @@ func TestVerifyImportedKey(t *testing.T) {
 	edItem := account.Account{Kind: account.KindImported, Fingerprint: fingerprint, Addresses: addresses}
 	secpItem := account.Account{
 		Kind: account.KindImported, Fingerprint: "f49c63af9f6e657abc52a941bb7e812c",
-		// The secp256k1 check has never looked at addresses; it still does not.
-		Addresses: map[account.Family]string{account.FamilyEVM: "anything"},
+		Addresses: map[account.Family]string{
+			account.FamilyEVM:  "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+			account.FamilyTron: "TE2H9hWjzYdwzDFRJfx9BFhr4MmjH1CHaz",
+		},
 	}
 	withAddresses := func(item account.Account, addresses map[account.Family]string) account.Account {
 		item.Addresses = addresses
@@ -99,6 +101,19 @@ func TestVerifyImportedKey(t *testing.T) {
 		{"secp256k1 key under ed25519", secpItem, KeyEntry{Curve: "ed25519", PrivateKey: scalar}, "fingerprint"},
 		{"ed25519 seed under secp256k1", edItem, KeyEntry{Curve: "secp256k1", PrivateKey: seed}, "fingerprint"},
 		{"secp256k1 other key", withFingerprint(secpItem, "00"), KeyEntry{Curve: "secp256k1", PrivateKey: scalar}, "fingerprint"},
+		{"secp256k1 no address", withAddresses(secpItem, nil), KeyEntry{Curve: "secp256k1", PrivateKey: scalar}, "address"},
+		{"secp256k1 evm only", withAddresses(secpItem, map[account.Family]string{
+			account.FamilyEVM: "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+		}), KeyEntry{Curve: "secp256k1", PrivateKey: scalar}, "address"},
+		{"secp256k1 wrong address", withAddresses(secpItem, map[account.Family]string{
+			account.FamilyEVM:  "0x3E50D2D5F93be1ED37B4Ecc2B4f2bb47f93b6D35",
+			account.FamilyTron: "TE2H9hWjzYdwzDFRJfx9BFhr4MmjH1CHaz",
+		}), KeyEntry{Curve: "secp256k1", PrivateKey: scalar}, "address"},
+		{"secp256k1 with a solana address", withAddresses(secpItem, map[account.Family]string{
+			account.FamilyEVM:    "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+			account.FamilyTron:   "TE2H9hWjzYdwzDFRJfx9BFhr4MmjH1CHaz",
+			account.FamilySolana: "4zvwRjXUKGfvwnParsHAS3HuSVzV5cA4McphgmoCtajS",
+		}), KeyEntry{Curve: "secp256k1", PrivateKey: scalar}, "address"},
 		{"secp256k1 out of range", secpItem, KeyEntry{Curve: "secp256k1", PrivateKey: bytes.Repeat([]byte{0xff}, 32)}, "invalid"},
 	}
 	for _, tt := range tests {

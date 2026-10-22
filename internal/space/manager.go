@@ -1630,9 +1630,11 @@ func parseImportedKey(
 }
 
 // verifyImportedKey checks an imported account against its vault entry on
-// unlock. A secp256k1 entry is checked exactly as it always was, by
-// fingerprint. An ed25519 entry also has to produce the account's one Solana
-// address and nothing else, because that address is where funds are received.
+// unlock: the key has to match the account's fingerprint and produce exactly
+// the account's addresses, because those addresses are where funds are
+// received. A secp256k1 key has its Tron and EVM addresses and nothing else,
+// as every import has stored since the first release; an ed25519 key has its
+// one Solana address.
 func verifyImportedKey(item account.Account, entry KeyEntry) error {
 	curve, err := entryCurve(entry)
 	if err != nil {
@@ -1644,10 +1646,14 @@ func verifyImportedKey(item account.Account, entry KeyEntry) error {
 		if err != nil {
 			return errors.New("imported account key is invalid")
 		}
+		defer key.D.SetInt64(0)
 		fingerprint, err := account.Fingerprint(key)
-		key.D.SetInt64(0)
 		if err != nil || fingerprint != item.Fingerprint {
 			return errors.New("imported account fingerprint does not match vault")
+		}
+		addresses, err := account.ImportedAddresses(key)
+		if err != nil || !maps.Equal(addresses, item.Addresses) {
+			return errors.New("imported account address does not match vault")
 		}
 		return nil
 	case account.CurveEd25519:
