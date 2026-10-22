@@ -2,11 +2,15 @@ package integration
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/sxwebdev/walletspace/internal/httpapi"
 )
+
+// moduleScript finds the bundle the built UI's index.html loads.
+var moduleScript = regexp.MustCompile(`<script type="module"[^>]*\ssrc="(/[^"]+)"`)
 
 // The audit's acceptance criterion for SEC-01, run against a listening socket
 // rather than a handler: a page served from the attacker's domain, whose name
@@ -150,10 +154,13 @@ func TestTheLauncherBootstrapWorksAndOpensNothingElse(t *testing.T) {
 	}
 
 	// The module the page loads next is static and public too, or the browser
-	// could not fetch it: a module import carries no headers.
-	script := wallet.raw(http.MethodGet, "/services/client.js", nil)
-	if script.status != http.StatusOK {
-		t.Errorf("GET /services/client.js = %d, want 200", script.status)
+	// could not fetch it: a module import carries no headers. A build without
+	// the frontend serves a placeholder page that loads no script at all.
+	if match := moduleScript.FindStringSubmatch(page.text()); match != nil {
+		script := wallet.raw(http.MethodGet, match[1], nil)
+		if script.status != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", match[1], script.status)
+		}
 	}
 
 	// And that is the end of what being cross-site buys.

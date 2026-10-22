@@ -158,11 +158,19 @@ supported: the data directory lock is implemented for unix alone.
 go install github.com/sxwebdev/walletspace/cmd/walletspace@latest
 ```
 
+The UI is a separate frontend build that is not committed, so a binary from
+`go install` serves a page saying the UI is missing. Use a release archive, the
+cask, or a build from source for the full wallet.
+
 ### From source
 
+Needs Go, Node.js 22.12+ and pnpm: the React UI in [ui/](ui) is built first
+and embedded into the binary.
+
 ```sh
-make build     # ./bin/walletspace, version stamped from git describe
+make build     # ./bin/walletspace with the UI, version stamped from git describe
 make install   # the same into $GOBIN
+make ui        # only the frontend, into internal/httpapi/ui/dist
 ```
 
 Start the UI with `walletspace`. It picks a free loopback port, prints the URL

@@ -449,7 +449,7 @@ func TestPlatformSettingsUseETagAndServeClientRoute(t *testing.T) {
 		t.Fatalf("PATCH discovery = %d %s", updated.Code, updated.Body.String())
 	}
 	page := platformRequest(t, fixture.handler, http.MethodGet, "/settings", nil)
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="app"`) {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="root"`) {
 		t.Fatalf("GET /settings = %d %s", page.Code, page.Body.String())
 	}
 }

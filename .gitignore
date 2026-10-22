@@ -11,3 +11,9 @@ config.yaml
 /dist/
 
 /go.work*
+
+# Frontend: dependencies and the Vite build embedded by internal/httpapi.
+/ui/node_modules/
+/internal/httpapi/ui/dist/
+
+/.claude

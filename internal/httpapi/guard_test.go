@@ -143,7 +143,9 @@ func TestGuardServesTheUIAndAssetsWithoutAToken(t *testing.T) {
 
 	fixture := newPlatformFixture(t)
 
-	for _, path := range []string{"/", "/settings", "/app.js", "/services/client.js"} {
+	// Client-side routes as well as the shell: a reload on any screen has to
+	// reach the page before it can present the token.
+	for _, path := range []string{"/", "/settings", "/settings/networks", "/wallet/acc_1/tron-mainnet/send"} {
 		request := guardRequest(t, http.MethodGet, path, "")
 		request.Header.Del(httpapi.TokenHeader)
 

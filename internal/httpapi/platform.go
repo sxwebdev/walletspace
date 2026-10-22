@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -80,22 +79,13 @@ func NewPlatform(
 	for _, option := range options {
 		option(p)
 	}
-	ui, err := fs.Sub(uiFS, "ui")
+	ui, err := uiFiles()
 	if err != nil {
 		return nil, err
 	}
 	mux := http.NewServeMux()
-	fileServer := http.FileServerFS(ui)
-	mux.Handle("GET /", fileServer)
-	mux.HandleFunc("GET /settings", func(w http.ResponseWriter, r *http.Request) {
-		data, err := fs.ReadFile(ui, "index.html")
-		if err != nil {
-			http.Error(w, "UI unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(data)
-	})
+	// Every path the API does not claim belongs to the UI's client-side router.
+	mux.Handle("GET /", spaHandler(ui))
 
 	mux.HandleFunc("GET /api/spaces", p.listSpaces)
 	mux.HandleFunc("POST /api/spaces", p.createSpace)
