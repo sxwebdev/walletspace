@@ -38,6 +38,7 @@ type platformFixture struct {
 	// settings is the same home manager the handler writes through, so a test
 	// can put a value in config.yaml the way a person editing the file would.
 	settings *config.HomeManager
+	chains   *chain.Adapters
 	evm      *evmchain.Adapter
 	tron     *tronchain.Adapter
 	doctor   *doctor.Doctor
@@ -118,6 +119,12 @@ func newPlatformFixture(t *testing.T, options ...httpapi.PlatformOption) platfor
 	if err != nil {
 		t.Fatalf("tron.New() error = %v", err)
 	}
+	chains, err := chain.NewAdapters(map[network.Family]chain.Adapter{
+		network.FamilyEVM: evm, network.FamilyTron: tron,
+	})
+	if err != nil {
+		t.Fatalf("chain.NewAdapters() error = %v", err)
+	}
 	nodeDoctor, err := doctor.New(
 		t.Context(), registry, rpcpool.New(settings),
 		func(context.Context, network.Network, string) error { return nil },
@@ -129,7 +136,7 @@ func newPlatformFixture(t *testing.T, options ...httpapi.PlatformOption) platfor
 	prices := &priceFake{}
 	assets := mustAssetStore(t, home)
 	handler, err := httpapi.NewPlatform(
-		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor,
+		spaces, settings, registry, operation.New(home), assets, chains, evm, tron, nodeDoctor,
 		prices, testAccess(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)), options...,
 	)
@@ -144,7 +151,7 @@ func newPlatformFixture(t *testing.T, options ...httpapi.PlatformOption) platfor
 	})
 	return platformFixture{
 		handler: handler, spaces: spaces, settings: settings,
-		evm: evm, tron: tron, doctor: nodeDoctor, prices: prices, assets: assets,
+		chains: chains, evm: evm, tron: tron, doctor: nodeDoctor, prices: prices, assets: assets,
 	}
 }
 

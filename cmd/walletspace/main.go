@@ -25,7 +25,9 @@ import (
 	"time"
 
 	"github.com/sxwebdev/walletspace/internal/asset"
+	"github.com/sxwebdev/walletspace/internal/chain"
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
+	solanachain "github.com/sxwebdev/walletspace/internal/chain/solana"
 	tronchain "github.com/sxwebdev/walletspace/internal/chain/tron"
 	"github.com/sxwebdev/walletspace/internal/config"
 	"github.com/sxwebdev/walletspace/internal/doctor"
@@ -177,29 +179,20 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer tron.Close()
+	solana, err := solanachain.New(registry, resolver)
+	if err != nil {
+		return err
+	}
+	chains, err := familyAdapters(evm, tron, solana)
+	if err != nil {
+		return err
+	}
 	assets, err := asset.New(home)
 	if err != nil {
 		return err
 	}
 	nodeDoctor, err := doctor.New(
-		ctx, registry, resolver,
-		func(checkCtx context.Context, item network.Network, endpoint string) error {
-			// Per endpoint, not per network: the Doctor probes the official
-			// fallbacks and whatever discovery suggested alongside the user's own
-			// nodes, and a provider credential belongs to exactly one of them.
-			headers, headerErr := resolver.Headers(item, endpoint)
-			if headerErr != nil {
-				return headerErr
-			}
-			if item.Family == network.FamilyEVM {
-				return evmchain.VerifyEndpoint(
-					checkCtx, item, endpoint, headers, resolver.HTTPClient(item),
-				)
-			}
-			return tronchain.ProbeEndpoint(
-				checkCtx, item, endpoint, headers, resolver.HTTPClient(item),
-			)
-		},
+		ctx, registry, resolver, doctorVerifier(chains, resolver),
 		doctor.Options{Networks: func() []network.Network {
 			items := registry.List()
 			for i := range items {
@@ -244,7 +237,7 @@ func run(log *slog.Logger) error {
 	}
 
 	handler, err := httpapi.NewPlatform(
-		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor,
+		spaces, settings, registry, operation.New(home), assets, chains, evm, tron, nodeDoctor,
 		price.New(price.Options{}), access, log,
 	)
 	if err != nil {
@@ -299,6 +292,51 @@ type legacyFile struct {
 		Address string `json:"address"`
 		Label   string `json:"label"`
 	} `json:"wallets"`
+}
+
+// The adapters find the guarded HTTP client by asserting this interface at run
+// time; these lines make it a compile-time fact. Were the resolver ever to stop
+// providing it, every probe would quietly fall back to http.DefaultClient.
+var (
+	_ evmchain.HTTPClientProvider  = (*rpcpool.Resolver)(nil)
+	_ tronchain.HTTPClientProvider = (*rpcpool.Resolver)(nil)
+	// The Solana adapter has no unguarded fallback at all, and without the
+	// header provider a keyed endpoint would be called without its key.
+	_ solanachain.HTTPClientProvider = (*rpcpool.Resolver)(nil)
+	_ solanachain.HeaderProvider     = (*rpcpool.Resolver)(nil)
+)
+
+// familyAdapters is the family-keyed adapter set the wallet runs with. It is
+// separate from run so a test can prove every built-in network has one.
+func familyAdapters(evm, tron, solana chain.Adapter) (*chain.Adapters, error) {
+	return chain.NewAdapters(map[network.Family]chain.Adapter{
+		network.FamilyEVM: evm, network.FamilyTron: tron, network.FamilySolana: solana,
+	})
+}
+
+// endpointHeaders resolves the credentials that belong to one endpoint.
+type endpointHeaders interface {
+	Headers(item network.Network, endpoint string) (http.Header, error)
+}
+
+// doctorVerifier probes one endpoint with the adapter of the network's family.
+// A family without an adapter is reported as a failed probe, never probed as
+// another family.
+func doctorVerifier(chains *chain.Adapters, credentials endpointHeaders) doctor.VerifyFunc {
+	return func(ctx context.Context, item network.Network, endpoint string) error {
+		adapter, err := chains.For(item.Family)
+		if err != nil {
+			return err
+		}
+		// Per endpoint, not per network: the Doctor probes the official
+		// fallbacks and whatever discovery suggested alongside the user's own
+		// nodes, and a provider credential belongs to exactly one of them.
+		headers, err := credentials.Headers(item, endpoint)
+		if err != nil {
+			return err
+		}
+		return adapter.ProbeEndpoint(ctx, item, endpoint, headers)
+	}
 }
 
 func runMigration(log *slog.Logger, args []string) error {

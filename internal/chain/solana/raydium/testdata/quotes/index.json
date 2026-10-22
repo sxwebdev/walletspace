@@ -1,0 +1,111 @@
+{
+ "source": "GET https://transaction-v1.raydium.io/compute/swap-base-in?inputMint=&outputMint=&amount=&slippageBps=&txVersion=LEGACY, response bodies saved byte for byte",
+ "captured": "2026-10-22 (11:29-11:40 UTC)",
+ "files": {
+  "noroute.json": {
+   "error": "ROUTE_NOT_FOUND"
+  },
+  "ray_usdc.json": {
+   "inputMint": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+   "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "amount": "5000000",
+   "slippageBps": 50,
+   "pools": [
+    "2AXXcN6oN9bBT5owwmTH53C7QHUXvhLeu718Kqt8rvY2",
+    "8sLbNZoA1cfnvMJLPfp98ZLAnFSYCFApfJKMbiXNLwxj"
+   ]
+  },
+  "sol_ray.json": {
+   "inputMint": "So11111111111111111111111111111111111111112",
+   "outputMint": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+   "amount": "100000000",
+   "slippageBps": 50,
+   "pools": [
+    "2AXXcN6oN9bBT5owwmTH53C7QHUXvhLeu718Kqt8rvY2"
+   ]
+  },
+  "sol_usdc_2hop.json": {
+   "inputMint": "So11111111111111111111111111111111111111112",
+   "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "amount": "1000000000",
+   "slippageBps": 50,
+   "pools": [
+    "3nMFwZXwY1s1M5s8vYAHqd4wGs4iSxXE4LRoUMMYqEgF",
+    "BZtgQEyS6eXUXicYPHecYQ7PybqodXQMvkjUbP4R8mUU"
+   ]
+  },
+  "sol_usdc_huge.json": {
+   "inputMint": "So11111111111111111111111111111111111111112",
+   "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "amount": "100000000000000000",
+   "slippageBps": 50,
+   "pools": [
+    "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2"
+   ]
+  },
+  "sol_usdc_small.json": {
+   "inputMint": "So11111111111111111111111111111111111111112",
+   "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "amount": "10000000",
+   "slippageBps": 50,
+   "pools": [
+    "2QdhepnKRTLjjSqPL1PtKNwqrUkoLee5Gqs8bvZhRdMv"
+   ]
+  },
+  "sol_useless.json": {
+   "inputMint": "So11111111111111111111111111111111111111112",
+   "outputMint": "Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8Mbonk",
+   "amount": "100000000",
+   "slippageBps": 50,
+   "pools": [
+    "Q2sPHPdUWFMg7M7wwrQKLrn619cAucfRsmhVJffodSp"
+   ]
+  },
+  "usdc_dood.json": {
+   "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "outputMint": "DvjbEsdca43oQcw2h3HW1CT7N3x5vRcr3QrvTUHnXvgV",
+   "amount": "5000000",
+   "slippageBps": 50,
+   "pools": [
+    "5KXE8RMF7iW9Ptn665AHfzsMFjYb4LV2Ta8eZEtsTwWC"
+   ]
+  },
+  "usdc_sol.json": {
+   "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "outputMint": "So11111111111111111111111111111111111111112",
+   "amount": "25000000",
+   "slippageBps": 50,
+   "pools": [
+    "CYbD9RaToYMtWKA7QZyoLahnHdWq553Vm62Lh6qWtuxq"
+   ]
+  },
+  "usdc_usdt.json": {
+   "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "outputMint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "amount": "1000000000",
+   "slippageBps": 30,
+   "pools": [
+    "BZtgQEyS6eXUXicYPHecYQ7PybqodXQMvkjUbP4R8mUU"
+   ]
+  },
+  "usdt_sol.json": {
+   "inputMint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "outputMint": "So11111111111111111111111111111111111111112",
+   "amount": "50000000",
+   "slippageBps": 100,
+   "pools": [
+    "3nMFwZXwY1s1M5s8vYAHqd4wGs4iSxXE4LRoUMMYqEgF"
+   ]
+  },
+  "useless_usdt.json": {
+   "inputMint": "Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8Mbonk",
+   "outputMint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "amount": "100000000",
+   "slippageBps": 50,
+   "pools": [
+    "Q2sPHPdUWFMg7M7wwrQKLrn619cAucfRsmhVJffodSp",
+    "3nMFwZXwY1s1M5s8vYAHqd4wGs4iSxXE4LRoUMMYqEgF"
+   ]
+  }
+ }
+}

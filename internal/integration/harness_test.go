@@ -28,7 +28,9 @@ import (
 	"time"
 
 	"github.com/sxwebdev/walletspace/internal/asset"
+	"github.com/sxwebdev/walletspace/internal/chain"
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
+	solanachain "github.com/sxwebdev/walletspace/internal/chain/solana"
 	tronchain "github.com/sxwebdev/walletspace/internal/chain/tron"
 	"github.com/sxwebdev/walletspace/internal/config"
 	"github.com/sxwebdev/walletspace/internal/doctor"
@@ -117,6 +119,16 @@ func startWithConfig(t *testing.T, configYAML string) *wallet {
 	if err != nil {
 		t.Fatalf("tron.New() error = %v", err)
 	}
+	solana, err := solanachain.New(registry, resolver)
+	if err != nil {
+		t.Fatalf("solana.New() error = %v", err)
+	}
+	chains, err := chain.NewAdapters(map[network.Family]chain.Adapter{
+		network.FamilyEVM: evm, network.FamilyTron: tron, network.FamilySolana: solana,
+	})
+	if err != nil {
+		t.Fatalf("chain.NewAdapters() error = %v", err)
+	}
 	nodeDoctor, err := doctor.New(
 		t.Context(), registry, resolver,
 		func(context.Context, network.Network, string) error { return nil },
@@ -142,7 +154,7 @@ func startWithConfig(t *testing.T, configYAML string) *wallet {
 	}
 	handler, err := httpapi.NewPlatform(
 		spaces, settings, registry, operation.New(home), mustAssets(t, home),
-		evm, tron, nodeDoctor, stubPrices{}, access, logger,
+		chains, evm, tron, nodeDoctor, stubPrices{}, access, logger,
 	)
 	if err != nil {
 		t.Fatalf("httpapi.NewPlatform() error = %v", err)

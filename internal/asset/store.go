@@ -14,6 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/decred/base58"
 	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/storage"
@@ -95,8 +96,11 @@ func (s *Store) Add(token chain.Asset) error {
 	if token.ID == "" || token.NetworkID == "" || token.Contract == "" || token.Symbol == "" {
 		return errors.New("token metadata is incomplete")
 	}
-	if token.Kind != "erc20" && token.Kind != "trc20" {
-		return errors.New("only ERC20 and TRC20 assets can be configured")
+	if token.Kind != "erc20" && token.Kind != "trc20" && token.Kind != "spl" {
+		return errors.New("only ERC20, TRC20 and SPL assets can be configured")
+	}
+	if token.Kind == "spl" && !validMint(token.Contract) {
+		return fmt.Errorf("%w: SPL mint is not a base58 32-byte address", ErrInvalidMetadata)
 	}
 	if !ValidID(token.ID) {
 		return fmt.Errorf("%w: identifier contains unexpected characters", ErrInvalidMetadata)
@@ -198,6 +202,18 @@ func trc20(name, symbol, contract string, decimals uint8) builtinToken {
 	return builtinToken{kind: "trc20", name: name, symbol: symbol, contract: contract, decimals: decimals}
 }
 
+func spl(name, symbol, mint string, decimals uint8) builtinToken {
+	return builtinToken{kind: "spl", name: name, symbol: symbol, contract: mint, decimals: decimals}
+}
+
+// validMint reports whether a mint is a 32-byte key in base58. The decoder
+// refuses any character outside the alphabet, whitespace included, and a key
+// has exactly one base58 spelling, so the mint can be stored and compared
+// exactly as written — base58 is case-sensitive.
+func validMint(mint string) bool {
+	return len(base58.Decode(mint)) == 32
+}
+
 var builtinTokens = map[string][]builtinToken{
 	"tron-mainnet": {
 		trc20("Tether USD", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", 6),
@@ -263,6 +279,14 @@ var builtinTokens = map[string][]builtinToken{
 	"robinhood-mainnet": {
 		erc20("Robinhood Wrapped ETH", "WETH", "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", 18),
 	},
+	// Classic SPL token program mints only; Token-2022 is not supported.
+	"solana-mainnet": {
+		spl("USD Coin", "USDC", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 6),
+		spl("Tether USD", "USDT", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", 6),
+	},
+	"solana-devnet": {
+		spl("USD Coin", "USDC", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", 6),
+	},
 }
 
 func nativeAssetName(symbol string) string {
@@ -277,6 +301,8 @@ func nativeAssetName(symbol string) string {
 		return "Avalanche"
 	case "TRX":
 		return "TRON"
+	case "SOL":
+		return "Solana"
 	default:
 		return symbol
 	}

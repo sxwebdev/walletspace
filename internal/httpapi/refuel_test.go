@@ -181,7 +181,7 @@ func TestRefuelIsBoundToTransferAndCannotPayTwiceAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := httpapi.NewPlatform(fixture.spaces, fixture.settings, registry, operation.New(fixture.settings.Home()), fixture.assets, fixture.evm, fixture.tron, fixture.doctor, fixture.prices, testAccess(), slog.New(slog.NewTextHandler(io.Discard, nil)), httpapi.WithRefuelProvider(provider))
+	restarted, err := httpapi.NewPlatform(fixture.spaces, fixture.settings, registry, operation.New(fixture.settings.Home()), fixture.assets, fixture.chains, fixture.evm, fixture.tron, fixture.doctor, fixture.prices, testAccess(), slog.New(slog.NewTextHandler(io.Discard, nil)), httpapi.WithRefuelProvider(provider))
 	if err != nil {
 		t.Fatal(err)
 	}

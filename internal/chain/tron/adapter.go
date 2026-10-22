@@ -100,6 +100,8 @@ const (
 	SwapStepSwap    = legacy.SwapStepSwap
 )
 
+var _ chain.Adapter = (*Adapter)(nil)
+
 type Adapter struct {
 	ctx       context.Context
 	registry  *network.Registry
@@ -292,6 +294,21 @@ func (a *Adapter) VerifyEndpoint(
 	return VerifyEndpoint(ctx, item, endpoint, headers, client)
 }
 
+// ProbeEndpoint is the Node Doctor's check: the package-level ProbeEndpoint
+// over the adapter's guarded HTTP client.
+func (a *Adapter) ProbeEndpoint(
+	ctx context.Context,
+	item network.Network,
+	endpoint string,
+	headers http.Header,
+) error {
+	var client *http.Client
+	if provider, ok := a.endpoints.(HTTPClientProvider); ok {
+		client = provider.HTTPClient(item)
+	}
+	return ProbeEndpoint(ctx, item, endpoint, headers, client)
+}
+
 func (a *Adapter) Health(ctx context.Context, networkID string) error {
 	a.mu.Lock()
 	service := a.services[networkID]
@@ -479,8 +496,14 @@ func (a *Adapter) Send(
 	ctx context.Context,
 	networkID string,
 	req chain.TransferRequest,
-	signer chain.Signer,
+	key chain.Key,
 ) (chain.Transaction, error) {
+	// Tron signs transaction digests. A key of another kind is refused before
+	// anything is built; a nil one goes on to the service's own check.
+	signer, ok := key.(chain.DigestSigner)
+	if key != nil && !ok {
+		return chain.Transaction{}, fmt.Errorf("%w: Tron transactions are signed as digests", chain.ErrSignerMismatch)
+	}
 	service, err := a.service(networkID)
 	if err != nil {
 		return chain.Transaction{}, err
@@ -522,6 +545,9 @@ func (a *Adapter) Transaction(ctx context.Context, networkID, txID string) (chai
 	}
 	return chain.Transaction{NetworkID: networkID, Hash: txID, Status: status}, nil
 }
+
+// TokenKind is the asset kind Tron tokens are stored under.
+func (a *Adapter) TokenKind() string { return "trc20" }
 
 func (a *Adapter) TokenMetadata(ctx context.Context, networkID, contract string) (string, uint8, error) {
 	service, err := a.service(networkID)

@@ -65,6 +65,8 @@ type HTTPClientProvider interface {
 	HTTPClient(item network.Network) *http.Client
 }
 
+var _ chain.Adapter = (*Adapter)(nil)
+
 type Adapter struct {
 	registry  *network.Registry
 	endpoints EndpointProvider
@@ -164,6 +166,14 @@ func (a *Adapter) VerifyEndpoint(
 	return VerifyEndpoint(ctx, item, endpoint, headers, client)
 }
 
+// ProbeEndpoint is the Node Doctor's check. VerifyEndpoint already reads the
+// head block number, which is as much liveness as an EVM node is asked for.
+func (a *Adapter) ProbeEndpoint(
+	ctx context.Context, item network.Network, endpoint string, headers http.Header,
+) error {
+	return a.VerifyEndpoint(ctx, item, endpoint, headers)
+}
+
 func (a *Adapter) Health(ctx context.Context, networkID string) error {
 	_, client, err := a.client(ctx, networkID)
 	if err != nil {
@@ -176,11 +186,14 @@ func (a *Adapter) Health(ctx context.Context, networkID string) error {
 	return err
 }
 
+// BalanceStream reads every balance live; there is no cache for refresh to
+// bypass, so it is ignored.
 func (a *Adapter) BalanceStream(
 	ctx context.Context,
 	networkID string,
 	accounts []chain.AccountAddress,
 	assets []chain.Asset,
+	_ bool,
 ) <-chan chain.Balance {
 	out := make(chan chain.Balance)
 	go func() {
@@ -255,6 +268,9 @@ func (a *Adapter) Balance(ctx context.Context, networkID, holder string, asset c
 	}
 	return decimal.NewFromBigInt(units, -int32(asset.Decimals)).String(), nil
 }
+
+// TokenKind is the asset kind EVM tokens are stored under.
+func (a *Adapter) TokenKind() string { return "erc20" }
 
 func (a *Adapter) TokenMetadata(ctx context.Context, networkID, contract string) (string, uint8, error) {
 	_, client, err := a.client(ctx, networkID)
@@ -417,8 +433,14 @@ func (a *Adapter) Send(
 	ctx context.Context,
 	networkID string,
 	req chain.TransferRequest,
-	signer chain.Signer,
+	key chain.Key,
 ) (chain.Transaction, error) {
+	// EVM signs transaction digests. A key of another kind is refused before
+	// anything is built; a nil one gets the check below.
+	signer, ok := key.(chain.DigestSigner)
+	if key != nil && !ok {
+		return chain.Transaction{}, fmt.Errorf("%w: EVM transactions are signed as digests", chain.ErrSignerMismatch)
+	}
 	if signer == nil || signer.Family() != chain.FamilyEVM {
 		return chain.Transaction{}, errors.New("EVM signer is required")
 	}

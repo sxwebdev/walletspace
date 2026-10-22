@@ -13,8 +13,9 @@ import (
 type Family string
 
 const (
-	FamilyTron Family = "tron"
-	FamilyEVM  Family = "evm"
+	FamilyTron   Family = "tron"
+	FamilyEVM    Family = "evm"
+	FamilySolana Family = "solana"
 )
 
 type NativeAsset struct {
@@ -36,6 +37,11 @@ type Capabilities struct {
 	// TronSwap is a SunSwap TRX/USDT swap: every built-in Tron network has
 	// one deployed.
 	TronSwap bool `json:"tron_swap"`
+	// SolanaSwap is a swap through Raydium pools. The Trade API that routes
+	// it serves mainnet only.
+	SolanaSwap bool `json:"solana_swap"`
+	// SolanaCloseAccounts closes empty token accounts and returns their rent.
+	SolanaCloseAccounts bool `json:"solana_close_accounts"`
 }
 
 // WrappedNative describes a WETH9-compatible wrapper for this network’s native coin.
@@ -104,19 +110,32 @@ func Validate(item Network) error {
 	if item.ID == "" || item.Name == "" || item.ShortName == "" {
 		return errors.New("id, name and short name are required")
 	}
-	if item.Family != FamilyTron && item.Family != FamilyEVM {
+	if item.Family != FamilyTron && item.Family != FamilyEVM && item.Family != FamilySolana {
 		return fmt.Errorf("unsupported family %q", item.Family)
 	}
 	if item.Native.Symbol == "" || item.Native.Decimals == 0 {
 		return errors.New("native asset is incomplete")
 	}
-	if item.Family == FamilyEVM {
+	switch item.Family {
+	case FamilyEVM:
 		n, ok := new(big.Int).SetString(item.ChainID, 10)
 		if !ok || n.Sign() <= 0 {
 			return fmt.Errorf("invalid EVM chain id %q", item.ChainID)
 		}
-	} else if item.ChainID != "mainnet" && item.ChainID != "nile" {
-		return fmt.Errorf("invalid Tron network identity %q", item.ChainID)
+	case FamilyTron:
+		if item.ChainID != "mainnet" && item.ChainID != "nile" {
+			return fmt.Errorf("invalid Tron network identity %q", item.ChainID)
+		}
+	case FamilySolana:
+		// The cluster name; the adapter checks it against the node's genesis
+		// hash, which is what actually tells mainnet from devnet.
+		if item.ChainID != "mainnet" && item.ChainID != "devnet" {
+			return fmt.Errorf("invalid Solana cluster %q", item.ChainID)
+		}
+	default:
+		// Unreachable past the family check above; kept so that a family added
+		// there without its own identity rule is refused, not checked as Tron.
+		return fmt.Errorf("unsupported family %q", item.Family)
 	}
 	if !item.Testnet && item.NativePrice == "" {
 		return errors.New("mainnet native price identifier is required")
@@ -146,6 +165,20 @@ func tronExplorer(base string) Explorer {
 	return e
 }
 
+// solanaExplorer is Solscan, which names an address page /account/{address}
+// and selects a cluster other than mainnet with a query parameter.
+func solanaExplorer(cluster string) Explorer {
+	query := ""
+	if cluster != "" {
+		query = "?cluster=" + cluster
+	}
+	return Explorer{
+		Address: "https://solscan.io/account/{address}" + query,
+		Tx:      "https://solscan.io/tx/{tx}" + query,
+		Block:   "https://solscan.io/block/{block}" + query,
+	}
+}
+
 func explorer(base string) Explorer {
 	base = strings.TrimSuffix(base, "/")
 	return Explorer{
@@ -171,6 +204,9 @@ func builtinNetworks() []Network {
 		NativeTransfer: true, TokenTransfer: true, TronResources: true, TronDeploy: true,
 		TronSwap: true,
 	}
+	solanaCapabilities := Capabilities{NativeTransfer: true, TokenTransfer: true, SolanaCloseAccounts: true}
+	solanaMainnetCapabilities := solanaCapabilities
+	solanaMainnetCapabilities.SolanaSwap = true
 	return []Network{
 		{
 			ID: "tron-mainnet", Name: "Tron Mainnet", ShortName: "Mainnet",
@@ -184,6 +220,19 @@ func builtinNetworks() []Network {
 			Family: FamilyTron, ChainID: "nile", Native: NativeAsset{Symbol: "TRX", Decimals: 6},
 			Testnet: true, Enabled: true, Explorer: tronExplorer("https://nile.tronscan.org"),
 			RPCFallbacks: []string{"https://nile.trongrid.io"}, Capabilities: tronCapabilities,
+		},
+		{
+			ID: "solana-mainnet", Name: "Solana Mainnet", ShortName: "Mainnet",
+			Family: FamilySolana, ChainID: "mainnet", Native: NativeAsset{Symbol: "SOL", Decimals: 9},
+			Enabled: true, Explorer: solanaExplorer(""),
+			RPCFallbacks: []string{"https://api.mainnet.solana.com"}, Capabilities: solanaMainnetCapabilities,
+			PriceChain: "solana", NativePrice: "coingecko:solana",
+		},
+		{
+			ID: "solana-devnet", Name: "Solana Devnet", ShortName: "Devnet",
+			Family: FamilySolana, ChainID: "devnet", Native: NativeAsset{Symbol: "SOL", Decimals: 9},
+			Testnet: true, Enabled: true, Explorer: solanaExplorer("devnet"),
+			RPCFallbacks: []string{"https://api.devnet.solana.com"}, Capabilities: solanaCapabilities,
 		},
 		evm("ethereum-mainnet", "Ethereum Mainnet", "Mainnet", "1", "ETH", "https://ethereum-rpc.publicnode.com", "https://etherscan.io", false),
 		evm("ethereum-sepolia", "Ethereum Sepolia", "Sepolia", "11155111", "ETH", "https://ethereum-sepolia-rpc.publicnode.com", "https://sepolia.etherscan.io", true),

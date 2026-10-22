@@ -25,6 +25,11 @@ func TestDerivedAddressesUseFamilyPaths(t *testing.T) {
 	if got[account.FamilyTron] == got[account.FamilyEVM] {
 		t.Error("families unexpectedly produced the same address")
 	}
+	// The legacy two-family projection: pre-binding records never had a
+	// Solana address and unlock compares exactly these two.
+	if len(got) != 2 {
+		t.Errorf("DerivedAddresses() = %v, want exactly Tron and EVM", got)
+	}
 }
 
 func TestImportOneKeyProducesBothAddresses(t *testing.T) {
