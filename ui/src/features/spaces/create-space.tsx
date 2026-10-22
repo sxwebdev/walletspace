@@ -45,7 +45,7 @@ export function Welcome() {
         <div className="flex flex-col gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">Walletspace</h1>
           <p className="text-sm text-balance text-muted-foreground">
-            One encrypted space for your wallets on Tron and every EVM network.
+            One encrypted space for your wallets on Tron, Solana and every EVM network.
             Keys never leave this machine.
           </p>
         </div>

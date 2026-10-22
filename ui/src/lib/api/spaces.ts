@@ -1,5 +1,5 @@
 import { download, request } from "@/lib/api/client"
-import type { Account, Space } from "@/lib/api/types"
+import type { Account, KeyCurve, NetworkFamily, Space } from "@/lib/api/types"
 
 const base = (spaceId: string) => `/api/spaces/${encodeURIComponent(spaceId)}`
 
@@ -67,11 +67,16 @@ export const accountsApi = {
     }),
   import: (
     spaceId: string,
-    body: { private_key: string; label?: string; network_id: string }
+    body: {
+      curve: KeyCurve
+      private_key: string
+      label?: string
+      network_id: string
+    }
   ) =>
     request<{ account: Account }>(`${base(spaceId)}/accounts/import`, {
       method: "POST",
-      body: { curve: "secp256k1", ...body },
+      body,
     }),
   rename: (spaceId: string, accountId: string, label: string) =>
     request<Account>(
@@ -91,10 +96,11 @@ export const accountsApi = {
   exportPrivateKey: (
     spaceId: string,
     accountId: string,
-    family: string,
+    family: NetworkFamily,
     password: string
   ) =>
-    request<{ private_key: string; family: string }>(
+    // A Solana key comes back as a base58 64-byte keypair, the others as hex.
+    request<{ private_key: string; family: NetworkFamily }>(
       `${base(spaceId)}/accounts/${encodeURIComponent(accountId)}/private-key`,
       { method: "POST", body: { family, password } }
     ),

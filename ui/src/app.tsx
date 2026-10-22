@@ -37,6 +37,8 @@ import { AddWallet } from "@/features/wallet/add-wallet"
 import { PickWallet } from "@/features/wallet/pick-wallet"
 import { ReceiveScreen } from "@/features/wallet/receive"
 import { SendScreen } from "@/features/wallet/send/send"
+import { CloseAccountsScreen } from "@/features/wallet/solana/close-accounts"
+import { SolanaSwapScreen } from "@/features/wallet/solana/swap"
 import { DeployScreen } from "@/features/wallet/tron/deploy"
 import { SwapScreen } from "@/features/wallet/tron/swap"
 import { TronResourcesScreen } from "@/features/wallet/tron/resources"
@@ -203,6 +205,14 @@ function Shell({ wide }: { wide: boolean }) {
                   <Route
                     path="/wallet/:accountId/:networkId/swap"
                     element={<SwapScreen />}
+                  />
+                  <Route
+                    path="/wallet/:accountId/:networkId/close-accounts"
+                    element={<CloseAccountsScreen />}
+                  />
+                  <Route
+                    path="/wallet/:accountId/:networkId/solana-swap"
+                    element={<SolanaSwapScreen />}
                   />
                   <Route path="/space" element={<SpaceSettings />} />
                   <Route path="/spaces/new" element={<NewSpaceChoice />} />

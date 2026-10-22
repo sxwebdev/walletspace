@@ -8,7 +8,9 @@ export type Space = {
   updated_at: string
 }
 
-export type NetworkFamily = "evm" | "tron"
+export type NetworkFamily = "evm" | "tron" | "solana"
+
+export type KeyCurve = "secp256k1" | "ed25519"
 
 export type Network = {
   id: string
@@ -27,6 +29,8 @@ export type Network = {
     tron_resources: boolean
     tron_deploy: boolean
     tron_swap: boolean
+    solana_swap: boolean
+    solana_close_accounts: boolean
   }
   wrapped_native?: { symbol: string; contract: string }
 }
@@ -69,7 +73,7 @@ export type Settings = {
   restart_required: string[]
 }
 
-export type AssetKind = "native" | "erc20" | "trc20"
+export type AssetKind = "native" | "erc20" | "trc20" | "spl"
 
 export type Asset = {
   id: string
@@ -78,6 +82,8 @@ export type Asset = {
   name: string
   symbol: string
   decimals: number
+  // The token contract; for an SPL token, its mint. Base58 values keep their
+  // case.
   contract?: string
   configured?: boolean
 }
@@ -111,6 +117,12 @@ export type TransferEstimate = {
   fee_shortfall?: string
   additional_fee?: string
   estimated_fee?: string
+  // Solana: echoed back on send as the approval. A zero price is omitted.
+  // fee is the total, the token account rent included.
+  compute_unit_limit?: number
+  compute_unit_price_micro_lamports?: number
+  creates_token_account?: boolean
+  token_account_rent?: string
 }
 
 export type TransferBody = {
@@ -339,4 +351,106 @@ export type SwapBody = {
   route: SwapRoute
   step: SwapStepKind
   unlimited: boolean
+}
+
+// An empty Solana token account that can be closed for its rent. The symbol
+// is there only when the wallet knows the mint.
+export type EmptyTokenAccount = {
+  address: string
+  mint: string
+  symbol?: string
+  rent: string
+}
+
+export type EmptyTokenAccounts = {
+  network_id: string
+  max_per_transaction: number
+  accounts: EmptyTokenAccount[]
+}
+
+export type CloseAccountsEstimate = {
+  network_id: string
+  accounts: EmptyTokenAccount[]
+  // SOL coming back to the wallet: the accounts' rent.
+  returned: string
+  fee: string
+  fee_model: string
+  compute_unit_limit: number
+  // Omitted when 0.
+  compute_unit_price_micro_lamports?: number
+}
+
+export type CloseAccountsBody = {
+  accounts: string[]
+  fee_model?: string
+  fee?: string
+  compute_unit_limit?: number
+  compute_unit_price_micro_lamports?: number
+}
+
+export type SolanaOperationResult = {
+  network_id: string
+  tx_id: string
+  status: OperationStatus
+  warning?: string
+}
+
+export type SolanaSwapHop = {
+  pool: string
+  kind: string
+  input_mint: string
+  output_mint: string
+}
+
+export type SolanaSwapRoute = {
+  hops: SolanaSwapHop[]
+  lookup_tables?: string[]
+}
+
+export type SolanaSwapQuoteBody = {
+  in_asset_id: string
+  out_asset_id: string
+  amount: string
+  // 1..500
+  slippage_bps: number
+}
+
+export type SolanaSwapQuote = {
+  network_id: string
+  amount_in: string
+  // What the simulation of this swap paid out.
+  amount_out: string
+  min_out: string
+  slippage_bps: number
+  source: "raydium_api" | "discovery"
+  api_route_rejected?: string
+  quoted_out?: string
+  price_impact_pct?: string
+  // Absent for a two-hop route.
+  quote_deviation_pct?: string
+  route: SolanaSwapRoute
+  intermediate_mint?: string
+  intermediate_leftover?: string
+  unwraps_wrapped_sol?: string
+  message_version: string
+  message_size: number
+  fee_model: string
+  fee: string
+  compute_unit_limit: number
+  compute_unit_price_micro_lamports?: number
+  token_accounts_created: number
+  token_account_rent?: string
+  native_balance: string
+}
+
+// The approved swap: the quote's request, its minimum, route and fee echoed
+// back exactly.
+export type SolanaSwapBody = SolanaSwapQuoteBody & {
+  min_out: string
+  route: SolanaSwapRoute
+  compute_unit_limit: number
+  compute_unit_price_micro_lamports: number
+  token_accounts_created: number
+  token_account_rent?: string
+  fee: string
 }

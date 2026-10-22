@@ -39,7 +39,12 @@ export function TxResult({
   onDone: () => void
 }) {
   const explorer = txId ? explorerUrl(network.explorer.tx, "tx", txId) : null
-  const text = copy[status]
+  // A Solana transaction does not revert; it fails, or its blockhash expires
+  // before any block includes it.
+  const text =
+    status === "failed" && network.family === "solana"
+      ? { ...copy.failed, description: "It failed on chain, or expired before the network included it." }
+      : copy[status]
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 py-8 text-center">
       <StatusIcon status={status} />

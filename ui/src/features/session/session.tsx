@@ -20,6 +20,8 @@ export const queryKeys = {
   prices: (ids: string[]) => ["prices", ...ids] as const,
   resources: (spaceId: string, networkId: string, accountId: string) =>
     ["tron-resources", spaceId, networkId, accountId] as const,
+  emptyTokenAccounts: (spaceId: string, networkId: string, accountId: string) =>
+    ["empty-token-accounts", spaceId, networkId, accountId] as const,
 }
 
 type SessionState = {

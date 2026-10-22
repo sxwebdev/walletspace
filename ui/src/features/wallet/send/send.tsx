@@ -22,27 +22,84 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { useSendConfirmation } from "@/features/security/send-confirmation"
+import { needsConfirmation, useSendConfirmation } from "@/features/security/send-confirmation"
 import { useSession } from "@/features/session/session"
 import { GroupedAddress } from "@/features/wallet/send/grouped-address"
 import { RefuelPanel } from "@/features/wallet/send/refuel"
+import { DiscardAttemptDialog } from "@/features/wallet/send/discard-dialog"
+import {
+  classifyRefusal,
+  staysUnsure,
+  UNSURE_MESSAGE,
+  UNSURE_TITLE,
+  unsureMessage,
+} from "@/features/wallet/send/refusal"
 import { inFlight, useTxTracker } from "@/features/wallet/send/tx-tracker"
+import {
+  clearUnsure,
+  loadUnsure,
+  saveUnsure,
+  saveUnsureOwned,
+  unsureStoreKey,
+} from "@/features/wallet/send/unsure-store"
 import { TxResult } from "@/features/wallet/send/tx-result"
 import { useAccountRoute } from "@/features/wallet/use-account-route"
 import { accountAddress, accountNetworks, accountTitle, balanceKey, useWallet } from "@/features/wallet/wallet-data"
-import { transfersApi } from "@/lib/api/chain"
+import { transfersApi, type FeeApproval } from "@/lib/api/chain"
 import { APIError, errorMessage } from "@/lib/api/client"
-import type { Account, Asset, Network, Operation, TransferBody, TransferEstimate } from "@/lib/api/types"
-import { isDecimalInput, isPositive, toNumber } from "@/lib/decimal"
+import type {
+  Account,
+  Asset,
+  Network,
+  NetworkFamily,
+  Operation,
+  TransferBody,
+  TransferEstimate,
+} from "@/lib/api/types"
+import { isDecimalInput, isPositive, subtractDecimal, toNumber } from "@/lib/decimal"
+import { addressPlaceholder, isSolanaAddress, sameAddress } from "@/lib/family"
 import { formatAmount, formatUSD } from "@/lib/format"
 
 type Step = "form" | "review" | "result"
 type Approved = { body: TransferBody; estimate: TransferEstimate }
+// What is kept of an unsure attempt across a remount.
+type StoredAttempt = {
+  key: string
+  approved: Approved
+  action: "wrap" | "unwrap"
+  fromMax: boolean
+  // A request under the key may have passed the password gate.
+  reserved: boolean
+}
 
 // The server refuses to reuse a key only with this wording; every other
 // failure keeps the key, so a retry cannot sign a second transaction.
 export function retryIsSafe(error: unknown) {
   return error instanceof APIError && error.message.includes("new idempotency key")
+}
+
+// The fee the estimate showed, echoed back exactly: the server signs what was
+// approved and refuses a send whose approval does not match its family.
+function approvalOf(family: NetworkFamily, fee: TransferEstimate): FeeApproval {
+  switch (family) {
+    case "solana":
+      return {
+        fee_model: fee.fee_model,
+        fee: fee.fee,
+        compute_unit_limit: fee.compute_unit_limit,
+        compute_unit_price_micro_lamports: fee.compute_unit_price_micro_lamports,
+        creates_token_account: fee.creates_token_account,
+        token_account_rent: fee.token_account_rent,
+      }
+    case "evm":
+    case "tron":
+      return {
+        fee_model: fee.fee_model,
+        gas_limit: fee.gas_limit,
+        max_fee_per_gas: fee.max_fee_per_gas,
+        max_priority_fee_per_gas: fee.max_priority_fee_per_gas,
+      }
+  }
 }
 
 export function SendScreen({ mode }: { mode: "send" | "wrap" }) {
@@ -78,24 +135,53 @@ function SendFlow({
     (a) => a.contract && network.wrapped_native && a.contract.toLowerCase() === network.wrapped_native.contract.toLowerCase()
   )
 
-  const [action, setAction] = React.useState<"wrap" | "unwrap">("wrap")
+  // An attempt that got no clear answer before this screen was last left
+  // (an auto-lock, a reload) comes back as it was: its review, its key.
+  const storeKey = unsureStoreKey(mode, spaceId, account.id, network.id)
+  const [restored] = React.useState(() => {
+    const stored = loadUnsure<StoredAttempt>(storeKey)
+    // Nothing got past the password gate under that key (the prompt was cut
+    // short, say by the auto-lock): nothing was reserved, so there is nothing
+    // to come back to.
+    if (stored && stored.reserved === false) {
+      clearUnsure(storeKey, stored.key)
+      return null
+    }
+    return stored
+  })
+  const [action, setAction] = React.useState<"wrap" | "unwrap">(restored?.action ?? "wrap")
   const [assetId, setAssetId] = React.useState(() => {
+    if (restored) return restored.approved.body.asset_id
     const requested = params.get("asset")
     return networkAssets.some((a) => a.id === requested) ? requested! : (native?.id ?? networkAssets[0]?.id ?? "")
   })
-  const [to, setTo] = React.useState(conversion ? address : "")
-  const [amount, setAmount] = React.useState("")
-  const [step, setStep] = React.useState<Step>("form")
-  const [approved, setApproved] = React.useState<Approved | null>(null)
+  const [to, setTo] = React.useState(restored?.approved.body.to ?? (conversion ? address : ""))
+  const [amount, setAmount] = React.useState(restored?.approved.body.amount ?? "")
+  const [step, setStep] = React.useState<Step>(restored ? "review" : "form")
+  const [approved, setApproved] = React.useState<Approved | null>(restored?.approved ?? null)
   const [needsRefuel, setNeedsRefuel] = React.useState<Approved | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
+  const [error, setError] = React.useState<string | null>(restored ? UNSURE_MESSAGE : null)
+  // The last signature got no clear answer: it may still go through, so only
+  // the same key and request may follow. Only a success, the server's word
+  // that this key never went out (new_key), or an explicit discard ends it.
+  const [unsure, setUnsure] = React.useState(restored !== null)
+  const [discarding, setDiscarding] = React.useState(false)
+  // Shown on a review that replaced one the network moved past.
+  const [notice, setNotice] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState<"estimate" | "max" | "sign" | null>(null)
   // The approval the sign button was armed for; a new approval disarms it.
   const [armedFor, setArmedFor] = React.useState<Approved | null>(null)
   const armed = armedFor !== null && armedFor === approved
-  const [operation, setOperation] = React.useState<Operation | null>(null)
+  // What went out, with the request that was signed. It is kept apart from
+  // the approval, so the result is shown even if anything else was reset
+  // meanwhile; a transfer that went out must never look like it did not.
+  const [sent, setSent] = React.useState<{ operation: Operation; body: TransferBody } | null>(null)
   const generation = React.useRef(0)
-  const idempotencyKey = React.useRef<string | null>(null)
+  // Whether the review on screen came from MAX: a fresh estimate after a fee
+  // change asks for the maximum again rather than the old, now too large,
+  // amount.
+  const fromMax = React.useRef(restored?.fromMax ?? false)
+  const idempotencyKey = React.useRef<string | null>(restored?.key ?? null)
 
   const effectiveAssetId = conversion ? (action === "wrap" ? native?.id : wrapped?.id) ?? "" : assetId
   const asset = networkAssets.find((a) => a.id === effectiveAssetId)
@@ -111,6 +197,10 @@ function SendFlow({
     setNeedsRefuel(null)
     idempotencyKey.current = null
     setError(null)
+    setNotice(null)
+    // An estimate still out belongs to the old generation and will not clear
+    // its own spinner; a signature in flight finishes and clears it itself.
+    setBusy((current) => (current === "sign" ? current : null))
   }
 
   const body = (overrideAmount?: string): TransferBody => ({
@@ -121,25 +211,34 @@ function SendFlow({
     amount: overrideAmount ?? amount.trim(),
   })
 
+  // Reports whether a review is now on screen.
   const present = (request: TransferBody, estimate: TransferEstimate) => {
     if (network.testnet && isPositive(estimate.fee_shortfall)) {
-      setError(`Not enough ${network.native.symbol} for gas. Get testnet funds from the network's faucet.`)
-      return
+      setError(
+        `Not enough ${network.native.symbol} for ${network.family === "solana" ? "the network fee" : "gas"}. Get testnet funds from the network's faucet.`
+      )
+      return false
     }
     if (!conversion && network.family === "evm" && isPositive(estimate.fee_shortfall)) {
       setNeedsRefuel({ body: request, estimate })
       setStep("review")
-      return
+      return true
     }
     setApproved({ body: request, estimate })
     setStep("review")
+    return true
   }
 
   const estimate = async (max: boolean) => {
     const current = ++generation.current
     setError(null)
+    setNotice(null)
     if (!conversion && !to.trim()) {
       setError(max ? "Enter the recipient first — the fee depends on it." : "Enter the recipient.")
+      return
+    }
+    if (!conversion && network.family === "solana" && !isSolanaAddress(to.trim())) {
+      setError("Not a Solana address: it is 32 bytes in base58.")
       return
     }
     if (!max && !isPositive(amount)) {
@@ -155,6 +254,7 @@ function SendFlow({
       const request = body(max ? "max" : undefined)
       const result = await transfersApi.estimate(spaceId, network.id, request)
       if (current !== generation.current) return
+      fromMax.current = max
       if (max) setAmount(result.amount)
       present({ ...request, amount: result.amount || request.amount }, result)
     } catch (cause) {
@@ -163,6 +263,48 @@ function SendFlow({
       if (current === generation.current) setBusy(null)
     }
   }
+
+  // After a 409 the same transfer is estimated again and its new review shown;
+  // nothing is sent until the user signs that one. The approval is cleared
+  // first and the answer is dropped if anything changed meanwhile, so a late
+  // answer cannot arm the button with a stale approval.
+  const reestimate = async (previous: TransferBody) => {
+    const current = ++generation.current
+    setApproved(null)
+    setNeedsRefuel(null)
+    idempotencyKey.current = null
+    setError(null)
+    setNotice(null)
+    setBusy("estimate")
+    try {
+      const request = fromMax.current ? { ...previous, amount: "max" } : previous
+      const result = await transfersApi.estimate(spaceId, network.id, request)
+      if (current !== generation.current) return
+      if (fromMax.current) setAmount(result.amount)
+      if (present({ ...request, amount: result.amount || request.amount }, result)) {
+        setNotice("The network fee changed; review the new fee and sign again.")
+      }
+    } catch (cause) {
+      if (current === generation.current) setError(errorMessage(cause))
+    } finally {
+      if (current === generation.current) setBusy(null)
+    }
+  }
+
+  // The unsure attempt outlives a remount. It is written ahead in sign() and
+  // removed only where an answer ends it (success, a proof that nothing was
+  // reserved, a discard) — never by a re-render.
+  React.useEffect(() => {
+    if (unsure && approved && idempotencyKey.current) {
+      saveUnsure(storeKey, {
+        key: idempotencyKey.current,
+        approved,
+        action,
+        fromMax: fromMax.current,
+        reserved: true,
+      } satisfies StoredAttempt)
+    }
+  }, [unsure, approved, action, storeKey])
 
   // The sign button wakes up 600 ms after the review appears, so a held Enter
   // or a double click on "Review" cannot sign.
@@ -179,46 +321,80 @@ function SendFlow({
     idempotencyKey.current ??= crypto.randomUUID()
     const key = idempotencyKey.current
     const { estimate: fee } = approved
+    const started = generation.current
+    let changed = false
+    // Written ahead: if the screen goes away while the request is out (a
+    // reload, the auto-lock, navigation), the attempt comes back as unsure
+    // with this key instead of a fresh form that would sign again. reserved
+    // turns true as each request leaves, and back to false when the password
+    // gate refuses it — unless an earlier attempt may already hold the key.
+    const wasReserved = unsure
+    let reserved = wasReserved
+    const record = () =>
+      saveUnsureOwned(storeKey, {
+        key,
+        approved,
+        action,
+        fromMax: fromMax.current,
+        reserved,
+      } satisfies StoredAttempt)
+    saveUnsure(storeKey, { key, approved, action, fromMax: fromMax.current, reserved } satisfies StoredAttempt)
+    const dispatch = async () => {
+      reserved = true
+      record()
+      try {
+        return await transfersApi.send(spaceId, network.id, { ...approved.body, ...approvalOf(network.family, fee) }, key)
+      } catch (cause) {
+        if (needsConfirmation(cause) && !wasReserved) {
+          reserved = false
+          record()
+        }
+        throw cause
+      }
+    }
     try {
-      const result = await confirm(() =>
-        transfersApi.send(
-          spaceId,
-          network.id,
-          {
-            ...approved.body,
-            fee_model: fee.fee_model,
-            gas_limit: fee.gas_limit,
-            max_fee_per_gas: fee.max_fee_per_gas,
-            max_priority_fee_per_gas: fee.max_priority_fee_per_gas,
-          },
-          key
-        )
-      )
-      setOperation(result)
+      const result = await confirm(dispatch)
+      setSent({ operation: result, body: approved.body })
+      setUnsure(false)
+      clearUnsure(storeKey, key)
       setStep("result")
     } catch (cause) {
-      if (retryIsSafe(cause)) idempotencyKey.current = null
-      const message = errorMessage(cause)
-      setError(message)
-      toast.add({ type: "error", title: "Not sent", description: message })
-      if (cause instanceof APIError && cause.status === 409) {
-        // The fee moved or the key is taken: back to a fresh estimate.
-        setApproved(null)
-        idempotencyKey.current = null
+      const refusal = classifyRefusal(cause)
+      const stillUnsure = staysUnsure(unsure, refusal)
+      setUnsure(stillUnsure)
+      // Proven that nothing was reserved under the key: the saved attempt goes.
+      if (!stillUnsure) clearUnsure(storeKey, key)
+      // The fee or the chain moved: a fresh estimate follows.
+      changed = !stillUnsure && refusal === "changed"
+      // Proven not signed: the same approval may go under a new key. A
+      // cancelled password prompt never used its key and keeps it.
+      if (!stillUnsure && (refusal === "new_key" || refusal === "refused")) idempotencyKey.current = null
+      if (stillUnsure) {
+        const message = unsureMessage(refusal, cause)
+        setError(message)
+        toast.add({ type: "error", title: UNSURE_TITLE, description: message })
+      } else if (!changed) {
+        const message = errorMessage(cause)
+        setError(message)
+        toast.add({ type: "error", title: "Not sent", description: message })
       }
     } finally {
       setBusy(null)
     }
+    // Not if the user went back to the form while the send was out.
+    if (changed && started === generation.current) await reestimate(approved.body)
   }
 
-  const txId = operation?.tx_hash
+  const txId = sent?.operation.tx_hash
+  const recipientTo = sent?.body.to ?? approved?.body.to
   const recipientAccount = accounts.find(
     (a) =>
       a.id !== account.id &&
       accountNetworks(a).includes(network.id) &&
-      accountAddress(a, network).toLowerCase() === approved?.body.to.toLowerCase()
+      recipientTo !== undefined &&
+      sameAddress(network.family, accountAddress(a, network), recipientTo)
   )
-  const tracked = useTxTracker(spaceId, network.id, step === "result" ? txId : undefined, (status) => {
+  const tracked = useTxTracker(spaceId, network.id, sent ? txId : undefined, (status) => {
     toast.add(
       status === "confirmed"
         ? { type: "success", title: "Transaction confirmed" }
@@ -230,18 +406,26 @@ function SendFlow({
     })
   })
 
+  // Back to the form from the review, but not while a signature is out: the
+  // answer to it decides what the screen shows next.
+  const leaveReview = () => {
+    if (busy === "sign" || unsure) return
+    invalidate()
+    setStep("form")
+  }
+
   const title = conversion ? (action === "wrap" ? "Wrap" : "Unwrap") : "Send"
   const symbol = asset?.symbol ?? ""
   const back = `/wallet/${account.id}/${network.id}`
 
-  if (step === "result" && operation && approved) {
+  if (sent) {
     return (
       <Screen header={<div className="h-14 sm:hidden" />}>
         <TxResult
           network={network}
           txId={txId}
-          status={inFlight(operation.status) ? "unknown" : tracked}
-          summary={`${formatAmount(approved.body.amount)} ${symbol} · ${network.name}`}
+          status={inFlight(sent.operation.status) ? "unknown" : tracked}
+          summary={`${formatAmount(sent.body.amount)} ${symbol} · ${network.name}`}
           onDone={() => navigate(back, { replace: true })}
         />
       </Screen>
@@ -256,15 +440,33 @@ function SendFlow({
       header={
         <ScreenHeader
           title={reviewing ? "Review" : title}
-          back={reviewing ? () => { invalidate(); setStep("form") } : back}
+          back={reviewing ? leaveReview : back}
         />
       }
       footer={
         reviewing ? (
           approved ? (
-            <Button size="lg" className="w-full" onClick={sign} disabled={!armed || busy === "sign"}>
-              {busy === "sign" && <Spinner data-icon="inline-start" />}
-              {busy === "sign" ? "Signing…" : conversion ? `Sign and ${action}` : "Sign and send"}
+            <div className="flex flex-col gap-2">
+              <Button size="lg" className="w-full" onClick={sign} disabled={!armed || busy === "sign"}>
+                {busy === "sign" && <Spinner data-icon="inline-start" />}
+                {busy === "sign"
+                  ? "Signing…"
+                  : unsure
+                    ? "Try again"
+                    : conversion
+                      ? `Sign and ${action}`
+                      : "Sign and send"}
+              </Button>
+              {unsure && (
+                <Button variant="ghost" className="w-full" disabled={busy !== null} onClick={() => setDiscarding(true)}>
+                  Discard and start over
+                </Button>
+              )}
+            </div>
+          ) : busy === "estimate" ? (
+            <Button size="lg" className="w-full" disabled>
+              <Spinner data-icon="inline-start" />
+              Calculating the new fee…
             </Button>
           ) : null
         ) : (
@@ -347,7 +549,7 @@ function SendFlow({
                       rows={1}
                       spellCheck={false}
                       autoCapitalize="off"
-                      placeholder={network.family === "tron" ? "T…" : "0x…"}
+                      placeholder={addressPlaceholder[network.family]}
                       className="min-h-0 font-mono text-sm"
                       value={to}
                       onChange={(e) => {
@@ -421,10 +623,8 @@ function SendFlow({
                 approved={target}
                 conversion={conversion ? { from: action === "wrap" ? native! : wrapped!, to: action === "wrap" ? wrapped! : native! } : null}
                 usd={quote ? toNumber(target.body.amount) * toNumber(quote.current_usd) : null}
-                onEdit={() => {
-                  invalidate()
-                  setStep("form")
-                }}
+                onEdit={leaveReview}
+                editDisabled={busy === "sign" || unsure}
               />
             )}
             {needsRefuel && !approved && (
@@ -439,10 +639,26 @@ function SendFlow({
                 }}
               />
             )}
+            {notice && (
+              <Alert>
+                <TriangleAlertIcon />
+                <AlertDescription>{notice}</AlertDescription>
+              </Alert>
+            )}
             <FormError message={error} />
           </motion.div>
         )}
       </AnimatePresence>
+      <DiscardAttemptDialog
+        open={discarding}
+        onOpenChange={setDiscarding}
+        onDiscard={() => {
+          if (idempotencyKey.current) clearUnsure(storeKey, idempotencyKey.current)
+          setUnsure(false)
+          invalidate()
+          setStep("form")
+        }}
+      />
     </Screen>
   )
 }
@@ -518,6 +734,7 @@ function Review({
   conversion,
   usd,
   onEdit,
+  editDisabled,
 }: {
   account: Account
   network: Network
@@ -527,6 +744,7 @@ function Review({
   conversion: { from: Asset; to: Asset } | null
   usd: number | null
   onEdit: () => void
+  editDisabled: boolean
 }) {
   const { body, estimate } = approved
   return (
@@ -556,25 +774,29 @@ function Review({
           </Row>
         )}
         {(asset.contract || conversion) && (
-          <Row label={conversion ? "Wrapper contract" : "Token contract"}>
+          <Row label={conversion ? "Wrapper contract" : asset.kind === "spl" ? "Token mint" : "Token contract"}>
             <GroupedAddress value={conversion ? network.wrapped_native!.contract : asset.contract!} />
           </Row>
         )}
-        <Row label="Network fee (max)">
-          <span className="tabular">
-            {formatAmount(estimate.fee, 8)} {network.native.symbol}
-          </span>
-          {estimate.gas_limit !== undefined && (
-            <span className="block text-xs text-muted-foreground tabular">
-              Gas limit {estimate.gas_limit.toLocaleString()} · {estimate.fee_model}
+        {network.family === "solana" ? (
+          <SolanaFeeRows network={network} estimate={estimate} />
+        ) : (
+          <Row label="Network fee (max)">
+            <span className="tabular">
+              {formatAmount(estimate.fee, 8)} {network.native.symbol}
             </span>
-          )}
-          {isPositive(estimate.additional_fee) && (
-            <span className="block text-xs text-muted-foreground tabular">
-              Includes an L1 fee of about {formatAmount(estimate.additional_fee, 8)} {network.native.symbol}
-            </span>
-          )}
-        </Row>
+            {estimate.gas_limit !== undefined && (
+              <span className="block text-xs text-muted-foreground tabular">
+                Gas limit {estimate.gas_limit.toLocaleString()} · {estimate.fee_model}
+              </span>
+            )}
+            {isPositive(estimate.additional_fee) && (
+              <span className="block text-xs text-muted-foreground tabular">
+                Includes an L1 fee of about {formatAmount(estimate.additional_fee, 8)} {network.native.symbol}
+              </span>
+            )}
+          </Row>
+        )}
       </div>
       {estimate.warning && (
         <Alert>
@@ -582,10 +804,57 @@ function Review({
           <AlertDescription>{estimate.warning}</AlertDescription>
         </Alert>
       )}
-      <Button variant="ghost" size="sm" className="self-center text-muted-foreground" onClick={onEdit}>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="self-center text-muted-foreground"
+        onClick={onEdit}
+        disabled={editDisabled}
+      >
         <PencilIcon data-icon="inline-start" />
         Edit
       </Button>
+    </>
+  )
+}
+
+// A Solana fee is exact: the compute-unit limit and price are signed as
+// approved. The estimate's fee is the total, so a new recipient token account's
+// rent is split out of it here for display only.
+function SolanaFeeRows({ network, estimate }: { network: Network; estimate: TransferEstimate }) {
+  const { decimals, symbol } = network.native
+  const rent = estimate.creates_token_account ? (estimate.token_account_rent ?? "0") : "0"
+  const opens = estimate.creates_token_account && isPositive(rent)
+  return (
+    <>
+      <Row label="Network fee">
+        <span className="tabular">
+          {formatAmount(opens ? subtractDecimal(estimate.fee, rent, decimals) : estimate.fee, decimals)} {symbol}
+        </span>
+        {estimate.compute_unit_limit !== undefined && (
+          <span className="block text-xs text-muted-foreground tabular">
+            {estimate.compute_unit_limit.toLocaleString()} compute units · priority{" "}
+            {(estimate.compute_unit_price_micro_lamports ?? 0).toLocaleString()} micro-lamports per unit
+          </span>
+        )}
+      </Row>
+      {opens && (
+        <>
+          <Row label="Recipient token account">
+            <span className="tabular">
+              {formatAmount(rent, decimals)} {symbol}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              One-time rent to open the recipient&apos;s account for this token; paid by you.
+            </span>
+          </Row>
+          <Row label="Total fee">
+            <span className="tabular">
+              {formatAmount(estimate.fee, decimals)} {symbol}
+            </span>
+          </Row>
+        </>
+      )}
     </>
   )
 }

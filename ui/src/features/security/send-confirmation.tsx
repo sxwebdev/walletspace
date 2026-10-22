@@ -39,7 +39,9 @@ export function useSendConfirmation() {
   return context
 }
 
-function needsConfirmation(error: unknown) {
+// needsConfirmation reports the gate's refusal. The server checks it before it
+// records the idempotency key, so a request refused this way reserved nothing.
+export function needsConfirmation(error: unknown) {
   return (
     error instanceof APIError &&
     (error.payload as { code?: string } | null)?.code ===
@@ -65,14 +67,31 @@ export function SendConfirmationProvider({
     controller: AbortController
     done: Promise<boolean>
   } | null>(null)
+  // The prompt waiting for an answer, for the unmount below.
+  const waiting = React.useRef<Pending | null>(null)
 
   const ask = React.useCallback(
     () =>
       new Promise<void>((resolve, reject) => {
         setPassword("")
         setError(null)
-        setPending({ resolve, reject })
+        const entry = { resolve, reject }
+        waiting.current = entry
+        setPending(entry)
       }),
+    []
+  )
+
+  // Leaving the unlocked app — the auto-lock above all — takes the prompt
+  // with it. A prompt left unanswered would keep its caller waiting for
+  // good, so it settles as not confirmed: the request is not sent again, and
+  // nothing was signed under it.
+  React.useEffect(
+    () => () => {
+      inflight.current?.controller.abort()
+      waiting.current?.reject(new Error(NOT_CONFIRMED))
+      waiting.current = null
+    },
     []
   )
 
@@ -92,6 +111,7 @@ export function SendConfirmationProvider({
   const close = async () => {
     const current = pending
     setPending(null)
+    waiting.current = null
     if (!current) return
     const attempt = inflight.current
     if (!attempt) {
@@ -126,6 +146,7 @@ export function SendConfirmationProvider({
     if (ok) {
       const current = pending
       setPending(null)
+      waiting.current = null
       current.resolve()
     }
   }
@@ -149,8 +170,8 @@ export function SendConfirmationProvider({
               </div>
               <DialogTitle>Confirm with your password</DialogTitle>
               <DialogDescription>
-                Nothing has been signed yet. The transfer goes ahead exactly as
-                shown once the password checks out.
+                Nothing has been signed yet. The transaction goes ahead exactly
+                as shown once the password checks out.
               </DialogDescription>
             </DialogHeader>
             <FieldGroup>

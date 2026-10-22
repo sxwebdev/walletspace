@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useQuery } from "@tanstack/react-query"
 import { motion } from "motion/react"
 import {
   ArrowDownLeftIcon,
@@ -6,6 +7,8 @@ import {
   ArrowLeftRightIcon,
   ArrowUpRightIcon,
   BatteryChargingIcon,
+  ChevronRightIcon,
+  CoinsIcon,
   EllipsisIcon,
   ExternalLinkIcon,
   FileCodeIcon,
@@ -38,7 +41,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { useSession } from "@/features/session/session"
+import { queryKeys, useSession } from "@/features/session/session"
 import { useAccountRoute } from "@/features/wallet/use-account-route"
 import {
   ConnectNetworkDialog,
@@ -54,7 +57,8 @@ import {
   useWallet,
 } from "@/features/wallet/wallet-data"
 import type { Account, Asset, Balance, Network } from "@/lib/api/types"
-import { isPositive, toNumber } from "@/lib/decimal"
+import { solanaApi } from "@/lib/api/chain"
+import { isPositive, sumDecimals, toNumber } from "@/lib/decimal"
 import { formatAmount, formatUSD } from "@/lib/format"
 
 export function useWalletAssets(
@@ -93,13 +97,29 @@ export function explorerUrl(
 
 export function WalletScreen() {
   const { account, network, address, loading } = useAccountRoute()
-  const { enabledNetworks, networkById } = useSession()
+  const { space, enabledNetworks, networkById } = useSession()
   const navigate = useNavigate()
   const [dialog, setDialog] = React.useState<
     "rename" | "connect" | "export" | "delete" | null
   >(null)
   const rows = useWalletAssets(account, network)
   const { balancesLoading } = useWallet()
+  // Empty Solana token accounts hold rent the wallet can take back.
+  const canClose = Boolean(
+    account && network?.enabled && network.capabilities.solana_close_accounts
+  )
+  const emptyAccounts = useQuery({
+    queryKey: queryKeys.emptyTokenAccounts(
+      space?.id ?? "",
+      network?.id ?? "",
+      account?.id ?? ""
+    ),
+    queryFn: () =>
+      solanaApi.emptyTokenAccounts(space!.id, network!.id, account!.id),
+    enabled: canClose && Boolean(space),
+    staleTime: 60_000,
+  })
+  const reclaimable = emptyAccounts.data?.accounts ?? []
 
   if (loading) return null
   if (!account) return <Navigate to="/" replace />
@@ -112,25 +132,38 @@ export function WalletScreen() {
     ? explorerUrl(network.explorer.address, "address", address)
     : null
 
+  // Everything past Send and Receive is a feature of one family and shows
+  // only where the network says it has it.
   const actions = network?.enabled
     ? [
         { label: "Send", icon: ArrowUpRightIcon, to: `${base}/send` },
         { label: "Receive", icon: ArrowDownLeftIcon, to: `${base}/receive` },
-        ...(network.wrapped_native
+        ...(network.family === "evm" && network.wrapped_native
           ? [{ label: "Wrap", icon: ArrowLeftRightIcon, to: `${base}/wrap` }]
+          : []),
+        ...(network.capabilities.solana_swap
+          ? [
+              {
+                label: "Swap",
+                icon: ArrowDownUpIcon,
+                to: `${base}/solana-swap`,
+              },
+            ]
           : []),
         ...(network.capabilities.tron_swap
           ? [{ label: "Swap", icon: ArrowDownUpIcon, to: `${base}/swap` }]
           : []),
-        ...(network.family === "tron"
+        ...(network.capabilities.tron_resources
           ? [
               {
                 label: "Resources",
                 icon: BatteryChargingIcon,
                 to: `${base}/resources`,
               },
-              { label: "Deploy", icon: FileCodeIcon, to: `${base}/deploy` },
             ]
+          : []),
+        ...(network.capabilities.tron_deploy
+          ? [{ label: "Deploy", icon: FileCodeIcon, to: `${base}/deploy` }]
           : []),
       ]
     : []
@@ -154,7 +187,7 @@ export function WalletScreen() {
               >
                 <EllipsisIcon />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuContent align="end" className="w-60">
                 <DropdownMenuGroup>
                   <DropdownMenuItem onClick={() => setDialog("rename")}>
                     <PencilIcon />
@@ -164,6 +197,14 @@ export function WalletScreen() {
                     <DropdownMenuItem onClick={() => setDialog("connect")}>
                       <PlusIcon />
                       Connect a network
+                    </DropdownMenuItem>
+                  )}
+                  {canClose && (
+                    <DropdownMenuItem
+                      onClick={() => navigate(`${base}/close-accounts`)}
+                    >
+                      <CoinsIcon />
+                      Close empty token accounts
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuGroup>
@@ -312,6 +353,29 @@ export function WalletScreen() {
             </motion.li>
           ))}
         </ul>
+      )}
+
+      {canClose && reclaimable.length > 0 && network && (
+        <button
+          type="button"
+          onClick={() => navigate(`${base}/close-accounts`)}
+          className="-mx-2 mt-2 flex items-center gap-3 rounded-2xl px-2 py-2.5 text-left text-sm transition-colors hover:bg-muted/60"
+        >
+          <CoinsIcon className="size-4 text-muted-foreground" />
+          <span className="flex-1">
+            Reclaim{" "}
+            {formatAmount(
+              sumDecimals(
+                reclaimable.map((a) => a.rent),
+                network.native.decimals
+              ),
+              network.native.decimals
+            )}{" "}
+            {network.native.symbol} from {reclaimable.length} empty token
+            account{reclaimable.length > 1 ? "s" : ""}
+          </span>
+          <ChevronRightIcon className="size-4 text-muted-foreground" />
+        </button>
       )}
 
       <RenameWalletDialog

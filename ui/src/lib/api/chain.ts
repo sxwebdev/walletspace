@@ -2,7 +2,10 @@ import { request, revisionHeaders, streamNDJSON } from "@/lib/api/client"
 import type {
   Asset,
   Balance,
+  CloseAccountsBody,
+  CloseAccountsEstimate,
   DoctorSnapshot,
+  EmptyTokenAccounts,
   Network,
   NetworkOverrides,
   Operation,
@@ -10,6 +13,10 @@ import type {
   RefuelQuotes,
   RefuelState,
   Settings,
+  SolanaOperationResult,
+  SolanaSwapBody,
+  SolanaSwapQuote,
+  SolanaSwapQuoteBody,
   SwapBody,
   SwapQuoteBody,
   SwapQuotes,
@@ -64,9 +71,21 @@ export function streamBalances(
   )
 }
 
-type Approved = Pick<
-  TransferEstimate,
-  "fee_model" | "gas_limit" | "max_fee_per_gas" | "max_priority_fee_per_gas"
+// The fee the user approved, echoed back from the estimate: EVM gas fields,
+// or the Solana compute, rent and total fee.
+export type FeeApproval = Partial<
+  Pick<
+    TransferEstimate,
+    | "fee_model"
+    | "gas_limit"
+    | "max_fee_per_gas"
+    | "max_priority_fee_per_gas"
+    | "fee"
+    | "compute_unit_limit"
+    | "compute_unit_price_micro_lamports"
+    | "creates_token_account"
+    | "token_account_rent"
+  >
 >
 
 export const transfersApi = {
@@ -81,7 +100,7 @@ export const transfersApi = {
   send: (
     spaceId: string,
     networkId: string,
-    body: TransferBody & Approved,
+    body: TransferBody & FeeApproval,
     idempotencyKey: string
   ) =>
     request<Operation>(`${scoped(spaceId, networkId)}/transfers`, {
@@ -190,6 +209,62 @@ export const tronApi = {
   ) =>
     request<TronOperationResult>(
       `${scoped(spaceId, networkId)}/accounts/${enc(accountId)}/swap`,
+      { method: "POST", body, headers: { "Idempotency-Key": idempotencyKey } }
+    ),
+}
+
+const tokenAccounts = (spaceId: string, networkId: string, accountId: string) =>
+  `${scoped(spaceId, networkId)}/accounts/${enc(accountId)}/token-accounts`
+
+const solanaAccount = (spaceId: string, networkId: string, accountId: string) =>
+  `${scoped(spaceId, networkId)}/accounts/${enc(accountId)}/solana`
+
+export const solanaApi = {
+  swapQuote: (
+    spaceId: string,
+    networkId: string,
+    accountId: string,
+    body: SolanaSwapQuoteBody,
+    signal?: AbortSignal
+  ) =>
+    request<SolanaSwapQuote>(
+      `${solanaAccount(spaceId, networkId, accountId)}/swap-quote`,
+      { method: "POST", body, signal }
+    ),
+  swap: (
+    spaceId: string,
+    networkId: string,
+    accountId: string,
+    body: SolanaSwapBody,
+    idempotencyKey: string
+  ) =>
+    request<SolanaOperationResult>(
+      `${solanaAccount(spaceId, networkId, accountId)}/swap`,
+      { method: "POST", body, headers: { "Idempotency-Key": idempotencyKey } }
+    ),
+  emptyTokenAccounts: (spaceId: string, networkId: string, accountId: string) =>
+    request<EmptyTokenAccounts>(
+      `${tokenAccounts(spaceId, networkId, accountId)}/empty`
+    ),
+  closeEstimate: (
+    spaceId: string,
+    networkId: string,
+    accountId: string,
+    body: CloseAccountsBody
+  ) =>
+    request<CloseAccountsEstimate>(
+      `${tokenAccounts(spaceId, networkId, accountId)}/close/estimate`,
+      { method: "POST", body }
+    ),
+  close: (
+    spaceId: string,
+    networkId: string,
+    accountId: string,
+    body: CloseAccountsBody,
+    idempotencyKey: string
+  ) =>
+    request<SolanaOperationResult>(
+      `${tokenAccounts(spaceId, networkId, accountId)}/close`,
       { method: "POST", body, headers: { "Idempotency-Key": idempotencyKey } }
     ),
 }

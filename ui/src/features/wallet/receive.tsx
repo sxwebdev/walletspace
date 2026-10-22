@@ -11,6 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { useAccountRoute } from "@/features/wallet/use-account-route"
 import { accountTitle } from "@/features/wallet/wallet-data"
+import { tokenStandard } from "@/lib/family"
 
 export function ReceiveScreen() {
   const { account, network, address, loading } = useAccountRoute()
@@ -43,8 +44,10 @@ export function ReceiveScreen() {
         <Alert>
           <TriangleAlertIcon />
           <AlertDescription>
-            Send only {network.native.symbol} and {network.family === "tron" ? "TRC-20" : "ERC-20"} tokens on{" "}
-            {network.name} to this address. Assets sent from another network may be lost.
+            {network.family === "solana"
+              ? `Send only ${network.native.symbol} and classic SPL tokens on ${network.name} to this address; Token-2022 tokens are not supported.`
+              : `Send only ${network.native.symbol} and ${tokenStandard[network.family]} tokens on ${network.name} to this address.`}{" "}
+            Assets sent from another network may be lost.
           </AlertDescription>
         </Alert>
       </div>

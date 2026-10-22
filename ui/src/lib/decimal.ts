@@ -21,6 +21,31 @@ export function fromBaseUnits(raw: string, decimals: number): string {
   return fraction ? `${whole}.${fraction}` : whole
 }
 
+function decimalUnits(value: string, decimals: number) {
+  const [whole, fraction = ""] = value.split(".")
+  return BigInt(
+    (whole || "0") + fraction.padEnd(decimals, "0").slice(0, decimals)
+  )
+}
+
+// a − b for exact decimal strings with at most `decimals` fraction digits,
+// never below zero. For splitting a shown total into its parts, not for
+// anything that is signed.
+export function subtractDecimal(
+  a: string,
+  b: string,
+  decimals: number
+): string {
+  const diff = decimalUnits(a, decimals) - decimalUnits(b, decimals)
+  return fromBaseUnits((diff > 0n ? diff : 0n).toString(), decimals)
+}
+
+// The exact sum of decimal strings, for display.
+export function sumDecimals(values: string[], decimals: number): string {
+  const total = values.reduce((sum, v) => sum + decimalUnits(v, decimals), 0n)
+  return fromBaseUnits(total.toString(), decimals)
+}
+
 export function isDecimalInput(value: string) {
   return /^\d*\.?\d*$/.test(value) && value !== "."
 }

@@ -7,7 +7,7 @@ import { FormError } from "@/components/common/form-error"
 import { TokenAvatar } from "@/components/common/token-avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
@@ -17,6 +17,7 @@ import { SectionHeader } from "@/features/settings/settings"
 import { NetworkSelect } from "@/features/wallet/wallet-dialogs"
 import { networksApi, settingsApi } from "@/lib/api/chain"
 import { errorMessage } from "@/lib/api/client"
+import { addressPlaceholder, isSolanaAddress, tokenStandard } from "@/lib/family"
 import { shortAddress } from "@/lib/format"
 
 export function AssetsSection() {
@@ -46,6 +47,10 @@ export function AssetsSection() {
     onError: (error) => toast.add({ type: "error", title: "Not deleted", description: errorMessage(error) }),
   })
   const network = networks.find((n) => n.id === networkId)
+  const solana = network?.family === "solana"
+  // A mint is checked here only for shape; the server decides whether it is a
+  // token it can hold, and its refusal is shown as it is.
+  const malformed = solana && contract.trim() !== "" && !isSolanaAddress(contract.trim())
 
   return (
     <div className="flex flex-col gap-6">
@@ -57,7 +62,7 @@ export function AssetsSection() {
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
-          if (contract.trim()) add.mutate()
+          if (contract.trim() && !malformed) add.mutate()
         }}
       >
         <FieldGroup>
@@ -65,22 +70,33 @@ export function AssetsSection() {
             <FieldLabel>Network</FieldLabel>
             <NetworkSelect networks={networks} value={networkId} onChange={setNetworkId} />
           </Field>
-          <Field>
-            <FieldLabel htmlFor="asset-contract">{network?.family === "tron" ? "TRC-20" : "ERC-20"} contract</FieldLabel>
+          <Field data-invalid={malformed || undefined}>
+            <FieldLabel htmlFor="asset-contract">
+              {solana ? "SPL mint address" : `${tokenStandard[network?.family ?? "evm"]} contract`}
+            </FieldLabel>
             <div className="flex gap-2">
               <Input
                 id="asset-contract"
                 spellCheck={false}
                 className="font-mono text-xs"
-                placeholder={network?.family === "tron" ? "T…" : "0x…"}
+                autoCapitalize="off"
+                placeholder={solana ? "Base58 mint address" : addressPlaceholder[network?.family ?? "evm"]}
+                aria-invalid={malformed || undefined}
                 value={contract}
                 onChange={(e) => setContract(e.target.value)}
               />
-              <Button type="submit" disabled={!contract.trim() || add.isPending}>
+              <Button type="submit" disabled={!contract.trim() || malformed || add.isPending}>
                 {add.isPending && <Spinner data-icon="inline-start" />}
                 Add
               </Button>
             </div>
+            {solana && (
+              <FieldDescription>
+                {malformed
+                  ? "Not a Solana address: a mint is 32 bytes in base58."
+                  : "A classic SPL Token mint with Metaplex metadata. Token-2022 mints are not supported."}
+              </FieldDescription>
+            )}
           </Field>
           <FormError message={add.isError ? errorMessage(add.error) : null} />
         </FieldGroup>

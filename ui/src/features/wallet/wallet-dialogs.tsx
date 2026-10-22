@@ -32,6 +32,9 @@ import {
 import { errorMessage } from "@/lib/api/client"
 import { accountsApi } from "@/lib/api/spaces"
 import type { Account, Network, NetworkFamily } from "@/lib/api/types"
+import { familyName } from "@/lib/family"
+
+const families: NetworkFamily[] = ["evm", "tron", "solana"]
 
 type DialogProps = {
   account: Account
@@ -120,7 +123,10 @@ export function connectableNetworks(account: Account, enabled: Network[]) {
       !bound.includes(network.id) &&
       (account.kind === "imported" ||
         !account.family ||
-        account.family === network.family)
+        account.family === network.family) &&
+      // A key reaches only the families it has an address in: an imported
+      // ed25519 key has no EVM or Tron address, a secp256k1 one no Solana.
+      Boolean(account.addresses[network.family])
   )
 }
 
@@ -253,12 +259,14 @@ export function ExportKeyDialog({ account, open, onOpenChange }: DialogProps) {
 
 function ExportKeyBody({ account }: { account: Account }) {
   const { space } = useSession()
-  const families: NetworkFamily[] =
+  // A derived wallet has one family; an imported or old record offers each
+  // family it has an address in.
+  const options: NetworkFamily[] =
     account.kind === "derived" && account.family
       ? [account.family]
-      : ["evm", "tron"]
+      : families.filter((f) => account.addresses[f])
   const [family, setFamily] = React.useState<NetworkFamily>(
-    account.family ?? "evm"
+    account.family ?? options[0] ?? "evm"
   )
   const [password, setPassword] = React.useState("")
   const reveal = useMutation({
@@ -273,12 +281,23 @@ function ExportKeyBody({ account }: { account: Account }) {
         <DialogTitle>Export private key</DialogTitle>
         <DialogDescription>
           {account.kind === "imported"
-            ? "An imported key is shared between Tron and EVM."
-            : `A derived wallet uses the ${(account.family ?? "legacy").toUpperCase()} BIP44 path.`}
+            ? options.includes("solana")
+              ? "An imported Solana key is an ed25519 keypair."
+              : "An imported key is shared between Tron and EVM."
+            : account.family === "solana"
+              ? `A derived Solana wallet uses the path m/44'/501'/${account.index ?? "?"}'/0'.`
+              : `A derived wallet uses the ${(account.family ?? "legacy").toUpperCase()} BIP44 path.`}
         </DialogDescription>
       </DialogHeader>
       {reveal.data ? (
-        <SecretReveal value={reveal.data.private_key} label="Private key" />
+        <div className="flex flex-col gap-2">
+          <SecretReveal value={reveal.data.private_key} label="Private key" />
+          {reveal.data.family === "solana" && (
+            <p className="text-xs text-muted-foreground">
+              A base58 64-byte keypair: the format Phantom and Solflare import.
+            </p>
+          )}
+        </div>
       ) : (
         <form
           className="flex flex-col gap-5"
@@ -296,7 +315,7 @@ function ExportKeyBody({ account }: { account: Account }) {
             </AlertDescription>
           </Alert>
           <FieldGroup>
-            {families.length > 1 && (
+            {options.length > 1 && (
               <Field>
                 <FieldLabel>Key format</FieldLabel>
                 <ToggleGroup
@@ -307,8 +326,11 @@ function ExportKeyBody({ account }: { account: Account }) {
                   variant="outline"
                   spacing={0}
                 >
-                  <ToggleGroupItem value="evm">EVM</ToggleGroupItem>
-                  <ToggleGroupItem value="tron">Tron</ToggleGroupItem>
+                  {options.map((f) => (
+                    <ToggleGroupItem key={f} value={f}>
+                      {familyName[f]}
+                    </ToggleGroupItem>
+                  ))}
                 </ToggleGroup>
               </Field>
             )}
