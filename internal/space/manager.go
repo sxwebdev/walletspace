@@ -716,8 +716,20 @@ func (m *Manager) Derive(
 	family account.Family,
 	label string,
 ) (account.Account, error) {
-	if networkID == "" {
-		return account.Account{}, errors.New("network is required")
+	return m.DeriveNetworks(id, []string{networkID}, family, label)
+}
+
+// DeriveNetworks creates one wallet on several networks of a family at once.
+// Its index is the lowest one no derived wallet uses on any of them, so the
+// new wallet is new on every network it is created for.
+func (m *Manager) DeriveNetworks(
+	id string, networkIDs []string,
+	family account.Family,
+	label string,
+) (account.Account, error) {
+	networkIDs, err := networkList(networkIDs)
+	if err != nil {
+		return account.Account{}, err
 	}
 	if _, err := account.CurveOf(family); err != nil {
 		return account.Account{}, err
@@ -733,7 +745,8 @@ func (m *Manager) Derive(
 	}
 	used := make(map[uint32]struct{})
 	for _, item := range file.Accounts {
-		if item.Kind == account.KindDerived && item.BoundTo(networkID) && item.Index != nil {
+		if item.Kind == account.KindDerived && item.Index != nil &&
+			slices.ContainsFunc(networkIDs, item.BoundTo) {
 			used[*item.Index] = struct{}{}
 		}
 	}
@@ -756,7 +769,9 @@ func (m *Manager) Derive(
 			item.Index == nil || *item.Index != next {
 			continue
 		}
-		item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
+		for _, networkID := range networkIDs {
+			item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
+		}
 		if item.Label == "" {
 			item.Label = strings.TrimSpace(label)
 		}
@@ -784,7 +799,7 @@ func (m *Manager) Derive(
 	now := m.now()
 	created := account.Account{
 		ID: accountID, Label: strings.TrimSpace(label), Kind: account.KindDerived,
-		Family: family, NetworkIDs: []string{networkID},
+		Family: family, NetworkIDs: networkIDs,
 		Addresses: map[account.Family]string{family: address},
 		Index:     &next, DerivationProfile: "bip44-v1",
 		CreatedAt: now, UpdatedAt: now,
@@ -803,8 +818,19 @@ func (m *Manager) Import(
 	family account.Family,
 	label, privateKey string,
 ) (ImportResult, error) {
-	if networkID == "" {
-		return ImportResult{}, errors.New("network is required")
+	return m.ImportNetworks(id, []string{networkID}, family, label, privateKey)
+}
+
+// ImportNetworks imports a key onto several networks at once. family names
+// the key's curve; the caller checks that every network takes that curve.
+func (m *Manager) ImportNetworks(
+	id string, networkIDs []string,
+	family account.Family,
+	label, privateKey string,
+) (ImportResult, error) {
+	networkIDs, err := networkList(networkIDs)
+	if err != nil {
+		return ImportResult{}, err
 	}
 	curve, err := account.CurveOf(family)
 	if err != nil {
@@ -825,10 +851,12 @@ func (m *Manager) Import(
 	for i := range file.Accounts {
 		item := &file.Accounts[i]
 		if item.Kind == account.KindImported && item.Fingerprint == fingerprint {
-			if item.BoundTo(networkID) {
+			if !slices.ContainsFunc(networkIDs, func(id string) bool { return !item.BoundTo(id) }) {
 				return ImportResult{}, ErrDuplicateKey
 			}
-			item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
+			for _, networkID := range networkIDs {
+				item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
+			}
 			if item.Label == "" {
 				item.Label = strings.TrimSpace(label)
 			}
@@ -856,7 +884,7 @@ func (m *Manager) Import(
 	importedAt := now
 	created := account.Account{
 		ID: accountID, Label: strings.TrimSpace(label), Kind: account.KindImported,
-		NetworkIDs: []string{networkID}, Addresses: addresses,
+		NetworkIDs: networkIDs, Addresses: addresses,
 		KeyRef: keyRef, Fingerprint: fingerprint, ImportedAt: &importedAt,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -1889,6 +1917,16 @@ func cloneAccount(item account.Account) account.Account {
 		item.ImportedAt = &importedAt
 	}
 	return item
+}
+
+// networkList is the sorted set of networks a wallet is created on.
+func networkList(ids []string) ([]string, error) {
+	if len(ids) == 0 || slices.Contains(ids, "") {
+		return nil, errors.New("network is required")
+	}
+	out := slices.Clone(ids)
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 func appendNetwork(ids []string, networkID string) []string {

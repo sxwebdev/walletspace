@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -340,6 +341,89 @@ func TestPlatformSecretExportNeedsTheSpacePassword(t *testing.T) {
 	}
 	if !strings.Contains(revealed.Body.String(), "mnemonic") {
 		t.Errorf("mnemonic response = %s", revealed.Body.String())
+	}
+}
+
+func TestPlatformCreatesAWalletOnSeveralNetworks(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPlatformFixture(t)
+	created := platformRequest(t, fixture.handler, http.MethodPost, "/api/spaces", map[string]any{
+		"password": "test-vault-password",
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("POST /api/spaces = %d %s", created.Code, created.Body.String())
+	}
+	spaceID := decodeBody[struct {
+		Space struct {
+			ID string `json:"id"`
+		} `json:"space"`
+	}](t, created).Space.ID
+	accounts := "/api/spaces/" + spaceID + "/accounts/"
+
+	for _, tt := range []struct {
+		name     string
+		path     string
+		body     map[string]any
+		wantCode int
+		wantIDs  []string
+	}{
+		{
+			name: "derive on two EVM networks", path: "derive",
+			body:     map[string]any{"network_ids": []string{"ethereum-mainnet", "bsc-mainnet"}},
+			wantCode: http.StatusCreated, wantIDs: []string{"bsc-mainnet", "ethereum-mainnet"},
+		},
+		{
+			name: "derive across families", path: "derive",
+			body:     map[string]any{"network_ids": []string{"ethereum-mainnet", "tron-nile"}},
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name: "both network fields", path: "derive",
+			body:     map[string]any{"network_id": "base-mainnet", "network_ids": []string{"bsc-mainnet"}},
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name: "import onto EVM and Tron", path: "import",
+			body: map[string]any{
+				"private_key": fmt.Sprintf("%064x", 7), "curve": "secp256k1",
+				"network_ids": []string{"tron-nile", "base-mainnet"},
+			},
+			wantCode: http.StatusCreated, wantIDs: []string{"base-mainnet", "tron-nile"},
+		},
+		{
+			name: "import onto curves that differ", path: "import",
+			body: map[string]any{
+				"private_key": fmt.Sprintf("%064x", 8),
+				"network_ids": []string{"base-mainnet", "solana-devnet"},
+			},
+			wantCode: http.StatusBadRequest,
+		},
+	} {
+		response := platformRequest(t, fixture.handler, http.MethodPost, accounts+tt.path, tt.body)
+		if response.Code != tt.wantCode {
+			t.Errorf("%s: code = %d %s, want %d", tt.name, response.Code, response.Body.String(), tt.wantCode)
+			continue
+		}
+		if tt.wantIDs == nil {
+			continue
+		}
+		var payload struct {
+			NetworkIDs []string `json:"network_ids"`
+			Account    *struct {
+				NetworkIDs []string `json:"network_ids"`
+			} `json:"account"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("%s: decode: %v", tt.name, err)
+		}
+		got := payload.NetworkIDs
+		if payload.Account != nil {
+			got = payload.Account.NetworkIDs
+		}
+		if !slices.Equal(got, tt.wantIDs) {
+			t.Errorf("%s: network_ids = %v, want %v", tt.name, got, tt.wantIDs)
+		}
 	}
 }
 

@@ -371,20 +371,30 @@ func (p *Platform) listAccounts(w http.ResponseWriter, r *http.Request) {
 
 func (p *Platform) deriveAccount(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Label     string `json:"label"`
-		NetworkID string `json:"network_id"`
+		Label      string   `json:"label"`
+		NetworkID  string   `json:"network_id"`
+		NetworkIDs []string `json:"network_ids"`
 	}
 	if err := decodeOptionalJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	item, err := p.enabledNetwork(request.NetworkID)
+	items, err := p.enabledNetworks(request.NetworkID, request.NetworkIDs)
 	if err != nil {
 		p.writePlatformError(w, err)
 		return
 	}
-	created, err := p.spaces.Derive(
-		r.PathValue("space_id"), item.ID, account.Family(item.Family), request.Label,
+	// A derived wallet is one key of one family's derivation path.
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.Family != items[0].Family {
+			writeError(w, http.StatusBadRequest, "a new wallet takes networks of one family")
+			return
+		}
+		ids = append(ids, item.ID)
+	}
+	created, err := p.spaces.DeriveNetworks(
+		r.PathValue("space_id"), ids, account.Family(items[0].Family), request.Label,
 	)
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -395,10 +405,11 @@ func (p *Platform) deriveAccount(w http.ResponseWriter, r *http.Request) {
 
 func (p *Platform) importAccount(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Curve      string `json:"curve"`
-		PrivateKey string `json:"private_key"`
-		Label      string `json:"label"`
-		NetworkID  string `json:"network_id"`
+		Curve      string   `json:"curve"`
+		PrivateKey string   `json:"private_key"`
+		Label      string   `json:"label"`
+		NetworkID  string   `json:"network_id"`
+		NetworkIDs []string `json:"network_ids"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -409,29 +420,41 @@ func (p *Platform) importAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "only secp256k1 and ed25519 private keys are supported")
 		return
 	}
-	item, err := p.enabledNetwork(request.NetworkID)
+	items, err := p.enabledNetworks(request.NetworkID, request.NetworkIDs)
 	if err != nil {
 		request.PrivateKey = ""
 		p.writePlatformError(w, err)
 		return
 	}
-	// The network decides the curve; a stated curve only has to agree with
-	// it, so a Solana keypair is never read as some other family's key.
-	curve, err := account.CurveOf(account.Family(item.Family))
-	if err != nil {
-		request.PrivateKey = ""
-		p.writePlatformError(w, err)
-		return
+	// The networks decide the curve; a stated curve only has to agree with
+	// it, so a Solana keypair is never read as some other family's key. One
+	// key can go to several families only when they share its curve.
+	ids := make([]string, 0, len(items))
+	var curve account.Curve
+	for _, item := range items {
+		itemCurve, err := account.CurveOf(account.Family(item.Family))
+		if err != nil {
+			request.PrivateKey = ""
+			p.writePlatformError(w, err)
+			return
+		}
+		if request.Curve != "" && request.Curve != string(itemCurve) {
+			request.PrivateKey = ""
+			writeError(w, http.StatusBadRequest, fmt.Sprintf(
+				"%s networks take %s private keys, not %s", item.Family, itemCurve, request.Curve,
+			))
+			return
+		}
+		if curve != "" && itemCurve != curve {
+			request.PrivateKey = ""
+			writeError(w, http.StatusBadRequest, "the chosen networks take different kinds of private keys")
+			return
+		}
+		curve = itemCurve
+		ids = append(ids, item.ID)
 	}
-	if request.Curve != "" && request.Curve != string(curve) {
-		request.PrivateKey = ""
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
-			"%s networks take %s private keys, not %s", item.Family, curve, request.Curve,
-		))
-		return
-	}
-	result, err := p.spaces.Import(
-		r.PathValue("space_id"), item.ID, account.Family(item.Family),
+	result, err := p.spaces.ImportNetworks(
+		r.PathValue("space_id"), ids, account.Family(items[0].Family),
 		request.Label, request.PrivateKey,
 	)
 	request.PrivateKey = ""
@@ -1984,6 +2007,26 @@ func (p *Platform) effectiveNetwork(item network.Network) network.Network {
 		}
 	}
 	return item
+}
+
+// enabledNetworks resolves the networks a wallet is created on: network_ids,
+// or the single network_id that older clients send.
+func (p *Platform) enabledNetworks(single string, many []string) ([]network.Network, error) {
+	ids := many
+	if len(ids) == 0 {
+		ids = []string{single}
+	} else if single != "" {
+		return nil, fmt.Errorf("%w: send network_id or network_ids, not both", chain.ErrInvalidRequest)
+	}
+	items := make([]network.Network, 0, len(ids))
+	for _, id := range ids {
+		item, err := p.enabledNetwork(id)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 func (p *Platform) enabledNetwork(id string) (network.Network, error) {

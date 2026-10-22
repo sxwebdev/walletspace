@@ -60,7 +60,7 @@ export const spacesApi = {
 export const accountsApi = {
   list: (spaceId: string) =>
     request<{ accounts: Account[] }>(`${base(spaceId)}/accounts`),
-  derive: (spaceId: string, body: { label?: string; network_id: string }) =>
+  derive: (spaceId: string, body: { label?: string; network_ids: string[] }) =>
     request<Account>(`${base(spaceId)}/accounts/derive`, {
       method: "POST",
       body,
@@ -71,7 +71,7 @@ export const accountsApi = {
       curve: KeyCurve
       private_key: string
       label?: string
-      network_id: string
+      network_ids: string[]
     }
   ) =>
     request<{ account: Account }>(`${base(spaceId)}/accounts/import`, {

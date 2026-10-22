@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -287,6 +288,112 @@ func TestFailedBindingDoesNotMutateInMemoryState(t *testing.T) {
 	}
 	if accounts[0].BoundTo("tron-mainnet") {
 		t.Fatal("failed binding leaked into in-memory state")
+	}
+}
+
+func TestDeriveNetworksTakesAnIndexFreeOnEveryChosenNetwork(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	created, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	spaceID := created.Space.ID
+	derive := func(networkIDs ...string) account.Account {
+		t.Helper()
+		item, err := manager.DeriveNetworks(spaceID, networkIDs, account.FamilyEVM, "")
+		if err != nil {
+			t.Fatalf("DeriveNetworks(%v) error = %v", networkIDs, err)
+		}
+		return item
+	}
+	// Index 0 on Ethereum and BSC, index 1 on BSC alone.
+	evmZero := derive("ethereum-mainnet", "bsc-mainnet")
+	bscOne := derive("bsc-mainnet")
+	if *evmZero.Index != 0 || *bscOne.Index != 1 ||
+		!slices.Equal(evmZero.NetworkIDs, []string{"bsc-mainnet", "ethereum-mainnet"}) {
+		t.Fatalf("setup wallets = %+v, %+v", evmZero, bscOne)
+	}
+
+	// Base is free everywhere, BSC is taken at 0 and 1: the wallet is new at 2.
+	fresh := derive("base-mainnet", "bsc-mainnet", "base-mainnet")
+	if fresh.Index == nil || *fresh.Index != 2 ||
+		!slices.Equal(fresh.NetworkIDs, []string{"base-mainnet", "bsc-mainnet"}) {
+		t.Fatalf("fresh wallet = %+v, want index 2 on Base and BSC once each", fresh)
+	}
+	want, err := account.DerivedAddress(mnemonic(t, manager, spaceID), "", account.FamilyEVM, 2)
+	if err != nil {
+		t.Fatalf("DerivedAddress() error = %v", err)
+	}
+	if fresh.Addresses[account.FamilyEVM] != want {
+		t.Fatalf("fresh address = %s, want index 2 address %s", fresh.Addresses[account.FamilyEVM], want)
+	}
+
+	// Ethereum uses 0, Base uses 2: index 1 is free on both, and the BSC
+	// wallet at index 1 is that same key, so it gains the two networks.
+	reused := derive("ethereum-mainnet", "base-mainnet")
+	if reused.ID != bscOne.ID ||
+		!slices.Equal(reused.NetworkIDs, []string{"base-mainnet", "bsc-mainnet", "ethereum-mainnet"}) {
+		t.Fatalf("index 1 wallet = %+v, want %s on Base, BSC and Ethereum", reused, bscOne.ID)
+	}
+	accounts, err := manager.Accounts(spaceID)
+	if err != nil || len(accounts) != 3 {
+		t.Fatalf("accounts = %d (%v), want 3: no key stored twice", len(accounts), err)
+	}
+
+	for _, networkIDs := range [][]string{nil, {"ethereum-mainnet", ""}} {
+		if _, err := manager.DeriveNetworks(spaceID, networkIDs, account.FamilyEVM, ""); err == nil {
+			t.Errorf("DeriveNetworks(%q) error = nil", networkIDs)
+		}
+	}
+}
+
+func mnemonic(t *testing.T, manager *space.Manager, spaceID string) string {
+	t.Helper()
+	value, err := manager.Mnemonic(spaceID, "test-vault-password")
+	if err != nil {
+		t.Fatalf("Mnemonic() error = %v", err)
+	}
+	return value
+}
+
+func TestImportNetworksBindsTheKeyOnceAcrossNetworks(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	spaceID := result.Space.ID
+	privateKey := "0000000000000000000000000000000000000000000000000000000000000002"
+	// secp256k1 serves EVM and Tron alike: one import reaches both.
+	imported, err := manager.ImportNetworks(
+		spaceID, []string{"ethereum-mainnet", "tron-nile"}, account.FamilyEVM, "Ops", privateKey,
+	)
+	if err != nil {
+		t.Fatalf("ImportNetworks() error = %v", err)
+	}
+	if !slices.Equal(imported.Account.NetworkIDs, []string{"ethereum-mainnet", "tron-nile"}) ||
+		imported.Account.Addresses[account.FamilyEVM] == "" || imported.Account.Addresses[account.FamilyTron] == "" {
+		t.Fatalf("imported wallet = %+v", imported.Account)
+	}
+	if _, err := manager.ImportNetworks(
+		spaceID, []string{"tron-nile", "ethereum-mainnet"}, account.FamilyEVM, "", privateKey,
+	); !errors.Is(err, space.ErrDuplicateKey) {
+		t.Fatalf("ImportNetworks(same networks) error = %v, want ErrDuplicateKey", err)
+	}
+	// One new network among known ones binds the new one to the same wallet.
+	widened, err := manager.ImportNetworks(
+		spaceID, []string{"ethereum-mainnet", "bsc-mainnet"}, account.FamilyEVM, "", privateKey,
+	)
+	if err != nil {
+		t.Fatalf("ImportNetworks(add BSC) error = %v", err)
+	}
+	if widened.Account.ID != imported.Account.ID ||
+		!slices.Equal(widened.Account.NetworkIDs, []string{"bsc-mainnet", "ethereum-mainnet", "tron-nile"}) {
+		t.Fatalf("widened wallet = %+v", widened.Account)
 	}
 }
 
