@@ -246,7 +246,7 @@ func builtinNetworks() []Network {
 		evm("arbitrum-sepolia", "Arbitrum Sepolia", "Sepolia", "421614", "ETH", "https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia.arbiscan.io", true),
 		evm("base-mainnet", "Base", "Mainnet", "8453", "ETH", "https://mainnet.base.org", "https://basescan.org", false),
 		evm("kaia-mainnet", "Kaia Mainnet", "Mainnet", "8217", "KAIA", "https://public-en.node.kaia.io", "https://kaiascan.io", false),
-		evm("robinhood-mainnet", "Robinhood Chain", "Mainnet", "4663", "ETH", "https://rpc.mainnet.chain.robinhood.com", "https://explorer.chain.robinhood.com", false),
+		evm("robinhood-mainnet", "Robinhood Chain", "Mainnet", "4663", "ETH", "https://rpc.mainnet.chain.robinhood.com", "https://robin.etherscan.io", false),
 		evm("robinhood-testnet", "Robinhood Chain Testnet", "Testnet", "46630", "ETH", "https://rpc.testnet.chain.robinhood.com", "https://explorer.testnet.chain.robinhood.com", true),
 		evm("avalanche-mainnet", "Avalanche C-Chain", "Mainnet", "43114", "AVAX", "https://api.avax.network/ext/bc/C/rpc", "https://snowtrace.io", false),
 		evm("avalanche-fuji", "Avalanche Fuji C-Chain", "Fuji", "43113", "AVAX", "https://api.avax-test.network/ext/bc/C/rpc", "https://testnet.snowtrace.io", true),
@@ -284,4 +284,6 @@ var wrappedNatives = map[string]*WrappedNative{
 	"base-mainnet":     {Symbol: "WETH", Contract: "0x4200000000000000000000000000000000000006"},
 	"optimism-mainnet": {Symbol: "WETH", Contract: "0x4200000000000000000000000000000000000006"},
 	"arbitrum-mainnet": {Symbol: "WETH", Contract: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"},
+	// https://docs.robinhood.com/chain/contracts/
+	"robinhood-mainnet": {Symbol: "WETH", Contract: "0x0bd7d308f8e1639fab988df18a8011f41eacad73"},
 }

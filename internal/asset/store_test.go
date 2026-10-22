@@ -132,7 +132,7 @@ func TestBuiltinMainnetAssets(t *testing.T) {
 	var found bool
 	for _, token := range store.List(robinhood) {
 		if strings.EqualFold(token.Contract, "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73") {
-			found = token.Name == "Robinhood Wrapped ETH" && token.Symbol == "WETH" && token.Decimals == 18
+			found = token.Name == "Wrapped Ether" && token.Symbol == "WETH" && token.Decimals == 18
 		}
 	}
 	if !found {

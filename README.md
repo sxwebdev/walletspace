@@ -44,8 +44,8 @@ locally and are never sent to an RPC provider.
   yet: Token-2022 tokens, swaps on devnet, Gas.zip top-ups and on-chain
   transaction history.
 - On-chain wrap/unwrap at 1:1 through native wrapper contracts: ETH/WETH on
-  Ethereum, Base, OP and Arbitrum; BNB/WBNB on BSC mainnet and testnet. Use
-  **Wrap / Unwrap** beside the wallet, choose a direction and amount (or MAX),
+  Ethereum, Base, OP, Arbitrum and Robinhood Chain; BNB/WBNB on BSC mainnet
+  and testnet. Use **Wrap / Unwrap** beside the wallet, choose a direction and amount (or MAX),
   estimate the fee, then sign. Both directions require native coins for gas.
   Supported pairs are defined per network; bridged tokens are not native wrappers.
 - TRX ↔ USDT swaps on Tron through SunSwap V2, V3 and V4, mainnet and Nile.

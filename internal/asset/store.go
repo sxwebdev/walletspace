@@ -276,9 +276,6 @@ var builtinTokens = map[string][]builtinToken{
 		erc20("USD Coin", "USDC", "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", 6),
 		erc20("Tether USD", "USDT", "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7", 6),
 	},
-	"robinhood-mainnet": {
-		erc20("Robinhood Wrapped ETH", "WETH", "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", 18),
-	},
 	// Classic SPL token program mints only; Token-2022 is not supported.
 	"solana-mainnet": {
 		spl("USD Coin", "USDC", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 6),
