@@ -1,17 +1,8 @@
 import { cn } from "cn"
 
-// The full address in groups of four, spaced by CSS only, so a copy still
-// yields one unbroken string. Every pre-signature review uses it: comparing
-// groups is what catches an address-poisoning lookalike.
+// The full address on every pre-signature review, never shortened: comparing
+// the whole string is what catches an address-poisoning lookalike that
+// shares its first and last characters with the real one.
 export function GroupedAddress({ value, className }: { value: string; className?: string }) {
-  const groups = value.match(/.{1,4}/g) ?? []
-  return (
-    <span className={cn("font-mono text-xs leading-relaxed break-all", className)}>
-      {groups.map((group, i) => (
-        <span key={i} className="mr-1 inline-block last:mr-0">
-          {group}
-        </span>
-      ))}
-    </span>
-  )
+  return <span className={cn("font-mono text-xs leading-relaxed break-all", className)}>{value}</span>
 }
