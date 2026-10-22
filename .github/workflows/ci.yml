@@ -21,11 +21,29 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The UI is a Vite build embedded into the binary, so every job that
+      # compiles a binary for use needs Node and the locked dependencies.
+      # pnpm comes from the packageManager field in ui/package.json.
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ui/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
       # Test before Build: `go test ./...` compiles every package anyway, so a
       # broken build fails here with the test signal rather than without it.
       - name: Test
         run: make test
 
+      - name: Type-check and lint the UI
+        run: make ui-lint
+
+      # make build runs the UI build first, so the binary carries the real UI
+      # and a frontend that no longer compiles fails here.
       - name: Build
         run: make build
 

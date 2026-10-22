@@ -866,3 +866,101 @@ func TestProviderCredentialsDoNotFollowTheFallback(t *testing.T) {
 		t.Errorf("credentials were not resolved per endpoint: %#v", provider.asked)
 	}
 }
+
+type clientEndpoints struct {
+	url    string
+	client *http.Client
+}
+
+func (e clientEndpoints) Endpoints(context.Context, network.Network) ([]string, error) {
+	return []string{e.url}, nil
+}
+
+func (e clientEndpoints) HTTPClient(network.Network) *http.Client { return e.client }
+
+type countingTransport struct {
+	base  http.RoundTripper
+	mu    sync.Mutex
+	count int
+}
+
+func (c *countingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.count++
+	c.mu.Unlock()
+	return c.base.RoundTrip(request)
+}
+
+// The Doctor's probe for an EVM endpoint is the same check as saving it: the
+// chain id has to match and the node has to answer for its head block, through
+// the HTTP client the endpoint provider supplies.
+func TestAdapterProbeEndpointChecksIdentityThroughTheProvidedClient(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	chainID := "0x1"
+	node := rpcServer(t, func(request rpcRequest) (any, error) {
+		switch request.Method {
+		case "eth_chainId":
+			mu.Lock()
+			defer mu.Unlock()
+			return chainID, nil
+		case "eth_blockNumber":
+			return "0x100", nil
+		default:
+			return nil, fmt.Errorf("unexpected method %s", request.Method)
+		}
+	})
+	// A keyed RPC answers nothing without the endpoint's credential.
+	var unkeyed int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer evm-key" {
+			mu.Lock()
+			unkeyed++
+			mu.Unlock()
+			http.Error(w, "unauthorised", http.StatusUnauthorized)
+			return
+		}
+		node.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	transport := &countingTransport{base: server.Client().Transport}
+	registry, err := network.Builtin()
+	if err != nil {
+		t.Fatalf("network.Builtin() error = %v", err)
+	}
+	adapter, err := evm.New(registry, clientEndpoints{url: server.URL, client: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatalf("evm.New() error = %v", err)
+	}
+	t.Cleanup(adapter.Close)
+	ethereum, err := registry.Get("ethereum-mainnet")
+	if err != nil {
+		t.Fatalf("registry.Get() error = %v", err)
+	}
+	headers := http.Header{"Authorization": {"Bearer evm-key"}}
+	if err := adapter.ProbeEndpoint(t.Context(), ethereum, server.URL, headers); err != nil {
+		t.Fatalf("ProbeEndpoint() error = %v", err)
+	}
+	mu.Lock()
+	if unkeyed != 0 {
+		t.Errorf("%d probe requests arrived without the endpoint's credential", unkeyed)
+	}
+	mu.Unlock()
+	transport.mu.Lock()
+	requests := transport.count
+	transport.mu.Unlock()
+	if requests != 2 {
+		t.Errorf("requests through the provided client = %d, want 2 (chain id and head block)", requests)
+	}
+	mu.Lock()
+	chainID = "0x38"
+	mu.Unlock()
+	if err := adapter.ProbeEndpoint(t.Context(), ethereum, server.URL, headers); err == nil ||
+		!strings.Contains(err.Error(), "chain id") {
+		t.Errorf("ProbeEndpoint(wrong chain) error = %v, want a chain id mismatch", err)
+	}
+	if got := adapter.TokenKind(); got != "erc20" {
+		t.Errorf("TokenKind() = %q, want erc20", got)
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/config"
 	"github.com/sxwebdev/walletspace/internal/hostpolicy"
 	"github.com/sxwebdev/walletspace/internal/network"
@@ -93,9 +94,7 @@ func New(settings Settings) *Resolver {
 			// Built per dial, not captured once: whether a private address is
 			// allowed is a setting, and a setting can change while this client
 			// lives for the whole process.
-			DialContext: func(ctx context.Context, networkName, address string) (net.Conn, error) {
-				return resolver.DialContext(network.Network{})(ctx, networkName, address)
-			},
+			DialContext:           resolver.Dial,
 			TLSHandshakeTimeout:   5 * time.Second,
 			ResponseHeaderTimeout: 5 * time.Second,
 		},
@@ -198,6 +197,11 @@ func cacheableEndpoint(endpoint string) bool {
 
 	return parsed.User == nil && parsed.RawQuery == "" && strings.Trim(parsed.Path, "/") == ""
 }
+
+// CredentialFreeURL reports whether an endpoint URL carries no credential: no
+// user info, no query and no path — the same rule the cache uses. A chain
+// adapter uses it to tell a public endpoint from a provider's keyed one.
+func CredentialFreeURL(endpoint string) bool { return cacheableEndpoint(endpoint) }
 
 // Invalidate removes endpoints learned from previous clients. In particular,
 // deleting a custom override must not leave that provider active through the
@@ -313,6 +317,14 @@ func (r *Resolver) DialContext(_ network.Network) func(context.Context, string, 
 	}
 }
 
+// Dial is DialContext for a connection that is not to a network's node, made
+// by a client that lives for the whole process — node discovery, the gas
+// top-up provider. Whether a private address is allowed is read on every dial,
+// not once, because that setting can change while such a client lives.
+func (r *Resolver) Dial(ctx context.Context, networkName, address string) (net.Conn, error) {
+	return r.DialContext(network.Network{})(ctx, networkName, address)
+}
+
 // GRPCDialContext adapts DialContext to grpc.WithContextDialer, which passes
 // only the address.
 func (r *Resolver) GRPCDialContext(item network.Network) func(context.Context, string) (net.Conn, error) {
@@ -327,10 +339,15 @@ func (r *Resolver) discover(ctx context.Context, settings config.DiscoverySettin
 	if err != nil {
 		return nil, fmt.Errorf("parse discovery URL: %w", err)
 	}
-	if item.Family == network.FamilyEVM {
+	switch item.Family {
+	case network.FamilyEVM:
 		base.Path = path.Join(base.Path, "/api/v1/nodes", item.ChainID)
-	} else {
+	case network.FamilyTron:
 		base.Path = path.Join(base.Path, "/api/v1/tron/nodes", item.ChainID)
+	default:
+		// The service is not asked about a family it has no path for: under
+		// another family's path the same chain id names a different chain.
+		return nil, fmt.Errorf("node discovery: %w: %q", chain.ErrUnsupportedFamily, item.Family)
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, settings.RequestTimeout)
 	defer cancel()

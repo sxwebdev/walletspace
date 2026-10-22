@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "id": "spc_pm426g4plnykx6uycq2a",
+  "name": "head-fixture",
+  "created_at": "2026-10-22T09:57:39.926619Z",
+  "updated_at": "2026-10-22T09:57:40.047807Z",
+  "accounts": [
+    {
+      "id": "acc_sfei6bi3h745r3qfwbeq",
+      "label": "legacy",
+      "kind": "derived",
+      "addresses": {
+        "evm": "0x3E50D2D5F93be1ED37B4Ecc2B4f2bb47f93b6D35",
+        "tron": "TYeYduiMkzzjRqpL56sVM2h7fxGkprCV2P"
+      },
+      "index": 2,
+      "derivation_profile": "bip44-v1",
+      "created_at": "2026-10-22T09:57:39.926619Z",
+      "updated_at": "2026-10-22T09:57:39.926619Z"
+    },
+    {
+      "id": "acc_i6poz5hseqro7jyftraq",
+      "label": "tron",
+      "kind": "derived",
+      "family": "tron",
+      "network_ids": [
+        "tron-nile"
+      ],
+      "addresses": {
+        "tron": "TQqYwNjqAp67183yj8umGTKYKbvv5YP6cW"
+      },
+      "index": 0,
+      "derivation_profile": "bip44-v1",
+      "created_at": "2026-10-22T09:57:40.015051Z",
+      "updated_at": "2026-10-22T09:57:40.015051Z"
+    },
+    {
+      "id": "acc_4ebvkiulcsvcxwjnlorq",
+      "label": "evm",
+      "kind": "derived",
+      "family": "evm",
+      "network_ids": [
+        "ethereum-mainnet"
+      ],
+      "addresses": {
+        "evm": "0x6AA6fb8752D490a0D10c75E302B4006529612c80"
+      },
+      "index": 0,
+      "derivation_profile": "bip44-v1",
+      "created_at": "2026-10-22T09:57:40.027491Z",
+      "updated_at": "2026-10-22T09:57:40.027491Z"
+    },
+    {
+      "id": "acc_s5kctjpiqlvfa5kqq46a",
+      "label": "imported",
+      "kind": "imported",
+      "network_ids": [
+        "ethereum-mainnet",
+        "tron-nile"
+      ],
+      "addresses": {
+        "evm": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+        "tron": "TE2H9hWjzYdwzDFRJfx9BFhr4MmjH1CHaz"
+      },
+      "key_ref": "key_lgj7kijzx2mej4hixzoa",
+      "fingerprint": "f49c63af9f6e657abc52a941bb7e812c",
+      "imported_at": "2026-10-22T09:57:40.037415Z",
+      "created_at": "2026-10-22T09:57:40.037415Z",
+      "updated_at": "2026-10-22T09:57:40.047807Z"
+    }
+  ],
+  "vault": {
+    "version": 1,
+    "kdf": {
+      "name": "argon2id",
+      "time": 2,
+      "memory_kib": 32768,
+      "parallelism": 1,
+      "salt": "SU3dnhsJWVQ1mnPFo9ug5g"
+    },
+    "cipher": {
+      "name": "aes-256-gcm",
+      "nonce": "FmZJhEcX/TG/y0s5"
+    },
+    "ciphertext": "QKrew85/poijBw7meZYMsAyt86bECCqQdh5E2zn136j/wuf3O0u6camw6otn18C+cYIHaVsRT5oKmvM2igN6tcWlw9jQv4yiQMFH0SNzVOVRt1rLPKDs2JCt3ZKoCT7DZNX75g5jiMg5/xwnsb8jgkzBpZ+v5on3nud4lgrTnyZ71qkaIZJ/lJoxeEvQ8feJGnSIvnyuRRvc4j8E9DcKZk134WPHrekNMU/RqHryH9c2QNeOQjvHwF1rC+AXbna/QIKMRNEVuvZDBAo2VCETXZpETTgCw4TbxrSJseKFE4U/+t3otimiYaPo955YUq3dFRHK0NoadUkcV0MDalzBJ+YajoGkKyakyxrbk3StwhHOV5hKlehhxq/cWyEtT1wm0u/iQQ3X0hTM2n6LGjumhoLO9lAB3A0jaGOFfKbGiZ0i6hyTbP7dxiFTfEL8Slia2wHrYvOheftZDYTnf/GgFJJieNWasCWLPwq502KUa615X8wlKMgOVW118OmGFI4Oabbb/aLL/ds1qxj793VeawOKxaYhHpHiyc9UZDt6V6j/RZUM3BrzDP0odJA2EUL5"
+  }
+}

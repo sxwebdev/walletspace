@@ -29,6 +29,11 @@ type Operation struct {
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+
+	// LastValidBlockHeight is the block height past which a Solana
+	// transaction can no longer land. It is written before the broadcast, so
+	// an expired transaction is recognised as failed after a restart too.
+	LastValidBlockHeight uint64 `json:"last_valid_block_height,omitempty"`
 }
 
 type file struct {
@@ -162,6 +167,21 @@ func (s *Store) Begin(spaceID, key, requestHash, networkID string) (operation Op
 }
 
 func (s *Store) Update(spaceID, key, txHash, status string) (Operation, error) {
+	return s.update(spaceID, key, txHash, status, 0)
+}
+
+// UpdateExpiring is Update for a transaction that expires at a block height:
+// the id, the status and the height land in one write, so the record never
+// names a transaction without the height that tells when it can no longer
+// land.
+func (s *Store) UpdateExpiring(spaceID, key, txHash, status string, lastValidBlockHeight uint64) (Operation, error) {
+	if txHash == "" || lastValidBlockHeight == 0 {
+		return Operation{}, errors.New("an expiring transaction needs its id and its last valid block height")
+	}
+	return s.update(spaceID, key, txHash, status, lastValidBlockHeight)
+}
+
+func (s *Store) update(spaceID, key, txHash, status string, lastValidBlockHeight uint64) (Operation, error) {
 	if !storage.ValidID(spaceID, "spc_") {
 		return Operation{}, errors.New("invalid space id")
 	}
@@ -181,6 +201,9 @@ func (s *Store) Update(spaceID, key, txHash, status string) (Operation, error) {
 	// information that says which transaction may be on chain.
 	if txHash != "" {
 		item.TxHash = txHash
+	}
+	if lastValidBlockHeight != 0 {
+		item.LastValidBlockHeight = lastValidBlockHeight
 	}
 	item.Status = status
 	item.UpdatedAt = time.Now().UTC()
@@ -253,4 +276,41 @@ func (s *Store) saveLocked(spaceID string, current file) error {
 		filepath.Join(s.home, "spaces", spaceID, "operations.json"),
 		append(data, '\n'),
 	)
+}
+
+// FindByTxHash returns the operation that recorded a transaction.
+func (s *Store) FindByTxHash(spaceID, txHash string) (Operation, bool, error) {
+	if !storage.ValidID(spaceID, "spc_") {
+		return Operation{}, false, errors.New("invalid space id")
+	}
+	if txHash == "" {
+		return Operation{}, false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.loadLocked(spaceID)
+	if err != nil {
+		return Operation{}, false, err
+	}
+	for _, item := range current.Operations {
+		if item.TxHash == txHash {
+			return item, true, nil
+		}
+	}
+	return Operation{}, false, nil
+}
+
+// Get returns the durable state of one operation without reserving or retrying it.
+func (s *Store) Get(spaceID, key string) (Operation, bool, error) {
+	if !storage.ValidID(spaceID, "spc_") {
+		return Operation{}, false, errors.New("invalid space id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.loadLocked(spaceID)
+	if err != nil {
+		return Operation{}, false, err
+	}
+	item, ok := current.Operations[NormalizeKey(key)]
+	return item, ok, nil
 }

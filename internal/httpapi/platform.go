@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/decred/base58"
 	"github.com/shopspring/decimal"
 	"github.com/sxwebdev/walletspace/internal/account"
 	"github.com/sxwebdev/walletspace/internal/asset"
@@ -25,21 +25,28 @@ import (
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
 	"github.com/sxwebdev/walletspace/internal/price"
+	"github.com/sxwebdev/walletspace/internal/refuel"
 	"github.com/sxwebdev/walletspace/internal/space"
 	"github.com/sxwebdev/walletspace/internal/vault"
 )
 
+// Platform serves the wallet API. chains answers everything every chain family
+// offers; evm and tron are there for the features only that family has, and
+// every route to them checks the network's family first.
 type Platform struct {
-	spaces     *space.Manager
-	settings   *config.HomeManager
-	networks   *network.Registry
-	operations *operation.Store
-	assets     *asset.Store
-	evm        *evmchain.Adapter
-	tron       *tronchain.Adapter
-	doctor     *doctor.Doctor
-	prices     price.Provider
-	log        *slog.Logger
+	spaces      *space.Manager
+	settings    *config.HomeManager
+	networks    *network.Registry
+	operations  *operation.Store
+	assets      *asset.Store
+	chains      *chain.Adapters
+	evm         *evmchain.Adapter
+	tron        *tronchain.Adapter
+	doctor      *doctor.Doctor
+	prices      price.Provider
+	log         *slog.Logger
+	refuel      refuel.Provider
+	refuelPlans *refuel.Store
 }
 
 func NewPlatform(
@@ -48,15 +55,17 @@ func NewPlatform(
 	networks *network.Registry,
 	operations *operation.Store,
 	assets *asset.Store,
+	chains *chain.Adapters,
 	evm *evmchain.Adapter,
 	tron *tronchain.Adapter,
 	nodeDoctor *doctor.Doctor,
 	prices price.Provider,
 	access Access,
 	log *slog.Logger,
+	options ...PlatformOption,
 ) (http.Handler, error) {
 	if spaces == nil || settings == nil || networks == nil || operations == nil ||
-		assets == nil || evm == nil || tron == nil || nodeDoctor == nil || prices == nil {
+		assets == nil || chains == nil || evm == nil || tron == nil || nodeDoctor == nil || prices == nil {
 		return nil, errors.New("all platform services are required")
 	}
 	// Without these the guard would fall open, so refuse to build a handler at
@@ -69,25 +78,20 @@ func NewPlatform(
 	}
 	p := &Platform{
 		spaces: spaces, settings: settings, networks: networks,
-		operations: operations, assets: assets, evm: evm, tron: tron,
+		operations: operations, assets: assets, chains: chains, evm: evm, tron: tron,
 		doctor: nodeDoctor, prices: prices, log: log,
+		refuel: refuel.New(refuel.Options{}), refuelPlans: refuel.NewStore(settings.Home()),
 	}
-	ui, err := fs.Sub(uiFS, "ui")
+	for _, option := range options {
+		option(p)
+	}
+	ui, err := uiFiles()
 	if err != nil {
 		return nil, err
 	}
 	mux := http.NewServeMux()
-	fileServer := http.FileServerFS(ui)
-	mux.Handle("GET /", fileServer)
-	mux.HandleFunc("GET /settings", func(w http.ResponseWriter, r *http.Request) {
-		data, err := fs.ReadFile(ui, "index.html")
-		if err != nil {
-			http.Error(w, "UI unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(data)
-	})
+	// Every path the API does not claim belongs to the UI's client-side router.
+	mux.Handle("GET /", spaHandler(ui))
 
 	mux.HandleFunc("GET /api/spaces", p.listSpaces)
 	mux.HandleFunc("POST /api/spaces", p.createSpace)
@@ -104,6 +108,7 @@ func NewPlatform(
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/derive", p.deriveAccount)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/import", p.importAccount)
 	mux.HandleFunc("PATCH /api/spaces/{space_id}/accounts/{account_id}", p.renameAccount)
+	mux.HandleFunc("DELETE /api/spaces/{space_id}/accounts/{account_id}", p.deleteAccount)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/{account_id}/networks", p.bindAccountNetwork)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/{account_id}/private-key", p.exportPrivateKey)
 
@@ -128,6 +133,9 @@ func NewPlatform(
 	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/balances/stream", p.balanceStream)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/transfers/estimate", p.estimateTransfer)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/transfers", p.sendTransfer)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/gas-refuel/quotes", p.quoteRefuel)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/gas-refuel/{plan_id}", p.sendRefuel)
+	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/gas-refuel/{plan_id}", p.refuelStatus)
 	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/transactions/{tx_id}", p.transaction)
 	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/resources", p.tronResources)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/stake", p.tronStake)
@@ -138,6 +146,13 @@ func NewPlatform(
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/cancel-unstakes", p.tronCancelUnstakes)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/deploy-estimate", p.tronDeployEstimate)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/deploy", p.tronDeploy)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/swap-quote", p.tronSwapQuote)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/swap", p.tronSwap)
+	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/token-accounts/empty", p.emptyTokenAccounts)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/token-accounts/close/estimate", p.estimateCloseTokenAccounts)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/token-accounts/close", p.closeTokenAccounts)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/solana/swap-quote", p.solanaSwapQuote)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/solana/swap", p.solanaSwap)
 
 	return access.guard(mux), nil
 }
@@ -330,6 +345,14 @@ func (p *Platform) requireSendConfirmation(w http.ResponseWriter, r *http.Reques
 // that breaks the moment the wording improves.
 const codeSendConfirmationRequired = "send_confirmation_required"
 
+// codeNotBroadcast promises that the operation behind this idempotency key was
+// recorded as never broadcast, so the caller may sign a fresh request under a
+// new key. Every other failure — a key already in use, a record that could
+// not be written after a broadcast, an answer that never arrived — leaves that
+// question open, and a client that cannot tell them apart would sign the same
+// swap twice.
+const codeNotBroadcast = "not_broadcast"
+
 // statusClientClosedRequest is 499, which the standard library has no name for
 // because it is not in the RFC. It says what happened when a caller goes away
 // mid-request, and the alternatives all say something false: 200 that the work
@@ -380,14 +403,30 @@ func (p *Platform) importAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if request.Curve != "" && request.Curve != "secp256k1" {
-		writeError(w, http.StatusBadRequest, "only secp256k1 private keys are supported")
+	if request.Curve != "" && request.Curve != string(account.CurveSecp256k1) &&
+		request.Curve != string(account.CurveEd25519) {
+		writeError(w, http.StatusBadRequest, "only secp256k1 and ed25519 private keys are supported")
 		return
 	}
 	item, err := p.enabledNetwork(request.NetworkID)
 	if err != nil {
 		request.PrivateKey = ""
 		p.writePlatformError(w, err)
+		return
+	}
+	// The network decides the curve; a stated curve only has to agree with
+	// it, so a Solana keypair is never read as some other family's key.
+	curve, err := account.CurveOf(account.Family(item.Family))
+	if err != nil {
+		request.PrivateKey = ""
+		p.writePlatformError(w, err)
+		return
+	}
+	if request.Curve != "" && request.Curve != string(curve) {
+		request.PrivateKey = ""
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"%s networks take %s private keys, not %s", item.Family, curve, request.Curve,
+		))
 		return
 	}
 	result, err := p.spaces.Import(
@@ -416,6 +455,25 @@ func (p *Platform) renameAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// deleteAccount removes a wallet. The body carries the space password: for an
+// imported wallet this destroys the only copy of its key the space holds.
+func (p *Platform) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	err := p.spaces.DeleteAccount(r.PathValue("space_id"), r.PathValue("account_id"), request.Password)
+	request.Password = ""
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
 func (p *Platform) bindAccountNetwork(w http.ResponseWriter, r *http.Request) {
@@ -667,16 +725,33 @@ func (p *Platform) patchDiscovery(w http.ResponseWriter, r *http.Request) {
 	}
 	// A changed discovery policy must take effect immediately. Drop both the
 	// adapter clients and resolver entries learned under the previous policy.
-	for _, item := range p.networks.List() {
-		if item.Family == network.FamilyEVM {
-			p.evm.Invalidate(item.ID)
-		} else {
-			p.tron.Invalidate(item.ID)
-		}
-	}
+	p.invalidateNetworks(p.networks.List())
 	p.doctor.Refresh()
 	w.Header().Set("ETag", `"`+saved.Revision+`"`)
 	writeJSON(w, http.StatusOK, settingsResponse(saved))
+}
+
+// invalidateNetworks drops what each network's own adapter cached for it. A
+// network no adapter serves has nothing cached anywhere, and is logged rather
+// than handed to another family's adapter.
+func (p *Platform) invalidateNetworks(items []network.Network) {
+	for _, item := range items {
+		adapter, err := p.chains.For(item.Family)
+		if err != nil {
+			p.log.Warn("network has no chain adapter", "network_id", item.ID, "error", err)
+			continue
+		}
+		adapter.Invalidate(item.ID)
+	}
+}
+
+// invalidateEverywhere drops a network from every adapter. Settings for a
+// network id are saved before anything checks which family it belongs to, so
+// no adapter is trusted to be the only one holding it.
+func (p *Platform) invalidateEverywhere(networkID string) {
+	for _, adapter := range p.chains.All() {
+		adapter.Invalidate(networkID)
+	}
 }
 
 func (p *Platform) saveSettings(w http.ResponseWriter, next config.HomeConfig, revision string) {
@@ -751,8 +826,7 @@ func (p *Platform) putNetworkSettings(w http.ResponseWriter, r *http.Request) {
 		p.writePlatformError(w, err)
 		return
 	}
-	p.evm.Invalidate(r.PathValue("network_id"))
-	p.tron.Invalidate(r.PathValue("network_id"))
+	p.invalidateEverywhere(r.PathValue("network_id"))
 	p.doctor.Refresh()
 	w.Header().Set("ETag", `"`+snapshot.Revision+`"`)
 	writeJSON(w, http.StatusOK, map[string]any{"networks": snapshot.Networks, "revision": snapshot.Revision})
@@ -764,8 +838,7 @@ func (p *Platform) deleteNetworkSettings(w http.ResponseWriter, r *http.Request)
 		p.writePlatformError(w, err)
 		return
 	}
-	p.evm.Invalidate(r.PathValue("network_id"))
-	p.tron.Invalidate(r.PathValue("network_id"))
+	p.invalidateEverywhere(r.PathValue("network_id"))
 	p.doctor.Refresh()
 	w.Header().Set("ETag", `"`+snapshot.Revision+`"`)
 	writeJSON(w, http.StatusOK, map[string]any{"networks": snapshot.Networks, "revision": snapshot.Revision})
@@ -820,6 +893,10 @@ func (p *Platform) verifyRPCs(ctx context.Context, item network.Network, overrid
 	if len(override.Endpoints) == 0 {
 		return errors.New("at least one RPC URL is required")
 	}
+	adapter, err := p.chains.For(item.Family)
+	if err != nil {
+		return err
+	}
 	timeout := max(p.settings.Snapshot().Config.NodeDiscovery.RequestTimeout, 5*time.Second)
 	for _, configured := range override.Endpoints {
 		// Only this endpoint's own credentials are sent to it. Probing every
@@ -838,12 +915,7 @@ func (p *Platform) verifyRPCs(ctx context.Context, item network.Network, overrid
 			return expandErr
 		}
 		checkCtx, cancel := context.WithTimeout(ctx, timeout)
-		var err error
-		if item.Family == network.FamilyEVM {
-			err = p.evm.VerifyEndpoint(checkCtx, item, endpoint, headers)
-		} else {
-			err = p.tron.VerifyEndpoint(checkCtx, item, endpoint, headers)
-		}
+		err := adapter.VerifyEndpoint(checkCtx, item, endpoint, headers)
 		cancel()
 		if err != nil {
 			// Both the endpoint and whatever the node said about it are
@@ -933,6 +1005,12 @@ func priceIdentifier(item network.Network, itemAsset chain.Asset) string {
 	if itemAsset.Kind == "native" {
 		return item.NativePrice
 	}
+	// Native wrappers redeem 1:1, so they share the native quote even when
+	// the provider has no market quote for the contract.
+	if item.WrappedNative != nil && itemAsset.Kind == "erc20" &&
+		strings.EqualFold(itemAsset.Contract, item.WrappedNative.Contract) {
+		return item.NativePrice
+	}
 	// Price Robinhood's canonical WETH through ETH even when contract pricing
 	// is unavailable for this network. Match the contract, never the symbol.
 	// https://docs.robinhood.com/chain/contracts/
@@ -944,8 +1022,15 @@ func priceIdentifier(item network.Network, itemAsset chain.Asset) string {
 		return ""
 	}
 	contract := itemAsset.Contract
-	if item.Family == network.FamilyEVM {
+	switch item.Family {
+	case network.FamilyEVM:
 		contract = strings.ToLower(contract)
+	case network.FamilyTron, network.FamilySolana:
+		// Base58 is case-sensitive: the contract stays as written.
+	default:
+		// Whether a contract is case-sensitive is a property of its family;
+		// guessing it would ask the feed for some other token's price.
+		return ""
 	}
 	return item.PriceChain + ":" + contract
 }
@@ -967,30 +1052,35 @@ func (p *Platform) addAsset(w http.ResponseWriter, r *http.Request) {
 	item = p.effectiveNetwork(item)
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	var symbol string
-	var decimals uint8
-	var kind string
-	if item.Family == network.FamilyEVM {
-		kind = "erc20"
-		symbol, decimals, err = p.evm.TokenMetadata(ctx, item.ID, request.Contract)
-	} else {
-		kind = "trc20"
-		symbol, decimals, err = p.tron.TokenMetadata(ctx, item.ID, request.Contract)
-	}
+	token, err := p.tokenAsset(ctx, item, request.Contract)
 	if err != nil {
 		p.writePlatformError(w, err)
 		return
-	}
-	token := chain.Asset{
-		ID: asset.ID(item.ID, kind, request.Contract), NetworkID: item.ID, Kind: kind,
-		Name: symbol, Symbol: symbol, Decimals: decimals,
-		Contract: request.Contract, Configured: true,
 	}
 	if err := p.assets.Add(token); err != nil {
 		p.writePlatformError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, token)
+}
+
+// tokenAsset reads a token's metadata from the chain through the adapter of
+// the network's family and returns it as a configured asset.
+func (p *Platform) tokenAsset(ctx context.Context, item network.Network, contract string) (chain.Asset, error) {
+	adapter, err := p.chains.For(item.Family)
+	if err != nil {
+		return chain.Asset{}, err
+	}
+	symbol, decimals, err := adapter.TokenMetadata(ctx, item.ID, contract)
+	if err != nil {
+		return chain.Asset{}, err
+	}
+	kind := adapter.TokenKind()
+	return chain.Asset{
+		ID: asset.ID(item.ID, kind, contract), NetworkID: item.ID, Kind: kind,
+		Name: symbol, Symbol: symbol, Decimals: decimals,
+		Contract: contract, Configured: true,
+	}, nil
 }
 
 func (p *Platform) deleteAsset(w http.ResponseWriter, r *http.Request) {
@@ -1040,7 +1130,12 @@ func (p *Platform) balanceResults(w http.ResponseWriter, r *http.Request) (<-cha
 		return nil, false
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), balanceStreamTimeout)
-	base := p.chainBalanceStream(ctx, networkItem, holders, assets, r.URL.Query().Get("refresh") == "1")
+	base, err := p.chainBalanceStream(ctx, networkItem, holders, assets, r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		cancel()
+		p.writePlatformError(w, err)
+		return nil, false
+	}
 	out := make(chan chain.Balance)
 	go func() {
 		defer cancel()
@@ -1057,6 +1152,7 @@ func (p *Platform) balanceResults(w http.ResponseWriter, r *http.Request) (<-cha
 }
 
 type transferDTO struct {
+	Action    string `json:"action,omitempty"`
 	AccountID string `json:"account_id"`
 	AssetID   string `json:"asset_id"`
 	To        string `json:"to"`
@@ -1069,16 +1165,26 @@ type transferDTO struct {
 	GasLimit             uint64 `json:"gas_limit,omitempty"`
 	MaxFeePerGas         string `json:"max_fee_per_gas,omitempty"`
 	MaxPriorityFeePerGas string `json:"max_priority_fee_per_gas,omitempty"`
+	// Solana: the compute and rent the estimate showed, and its total fee.
+	ComputeUnitLimit              uint64 `json:"compute_unit_limit,omitempty"`
+	ComputeUnitPriceMicroLamports uint64 `json:"compute_unit_price_micro_lamports,omitempty"`
+	CreatesTokenAccount           bool   `json:"creates_token_account,omitempty"`
+	TokenAccountRent              string `json:"token_account_rent,omitempty"`
+	Fee                           string `json:"fee,omitempty"`
 }
 
 func (d transferDTO) approval() *chain.FeeApproval {
-	if d.FeeModel == "" && d.GasLimit == 0 && d.MaxFeePerGas == "" {
+	if d.FeeModel == "" && d.GasLimit == 0 && d.MaxFeePerGas == "" &&
+		d.ComputeUnitLimit == 0 && d.ComputeUnitPriceMicroLamports == 0 && !d.CreatesTokenAccount &&
+		d.TokenAccountRent == "" && d.Fee == "" {
 		return nil
 	}
 
 	return &chain.FeeApproval{
 		FeeModel: d.FeeModel, GasLimit: d.GasLimit,
 		MaxFeePerGas: d.MaxFeePerGas, MaxPriorityFeePerGas: d.MaxPriorityFeePerGas,
+		ComputeUnitLimit: d.ComputeUnitLimit, ComputeUnitPriceMicroLamports: d.ComputeUnitPriceMicroLamports,
+		CreatesTokenAccount: d.CreatesTokenAccount, TokenAccountRent: d.TokenAccountRent, Fee: d.Fee,
 	}
 }
 
@@ -1092,7 +1198,14 @@ func (p *Platform) estimateTransfer(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var estimate chain.TransferEstimate
 	var err error
-	if transfer.Amount == "max" {
+	if networkItem.Family == network.FamilyEVM && transfer.Asset.Kind == "erc20" && transfer.Action == "" {
+		if transfer.Amount == "max" {
+			transfer.Amount, err = p.evm.Balance(ctx, networkItem.ID, transfer.From, transfer.Asset)
+		}
+		if err == nil {
+			estimate, err = p.evm.EstimateFunding(ctx, networkItem.ID, transfer)
+		}
+	} else if transfer.Amount == "max" {
 		estimate, err = p.chainEstimateMax(ctx, networkItem, transfer)
 	} else {
 		estimate, err = p.chainEstimate(ctx, networkItem, transfer)
@@ -1142,10 +1255,23 @@ func (p *Platform) sendTransfer(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	var transaction chain.Transaction
-	err = p.spaces.WithSigner(ctx, r.PathValue("space_id"), request.AccountID, networkItem.ID,
-		account.Family(networkItem.Family), func(signer chain.Signer) error {
-			if networkItem.Family == network.FamilyTron {
-				signer = p.recordingTronSigner(r.PathValue("space_id"), idempotencyKey, signer)
+	// A family whose transactions expire at a block height says which before
+	// signing; the recording signer writes it with the transaction id.
+	var lastValidBlockHeight uint64
+	transfer.BeforeSigning = func(height uint64) error {
+		lastValidBlockHeight = height
+		return nil
+	}
+	err = p.spaces.WithKey(ctx, r.PathValue("space_id"), request.AccountID, networkItem.ID,
+		account.Family(networkItem.Family), func(signer chain.Key) error {
+			switch key := signer.(type) {
+			case chain.DigestSigner:
+				if networkItem.Family == network.FamilyTron {
+					signer = p.recordingTronSigner(r.PathValue("space_id"), idempotencyKey, key)
+				}
+			case chain.MessageSigner:
+				signer = p.recordingMessageSigner(r.PathValue("space_id"), idempotencyKey, key,
+					func() uint64 { return lastValidBlockHeight })
 			}
 			var sendErr error
 			transaction, sendErr = p.chainSend(ctx, networkItem, transfer, signer)
@@ -1193,6 +1319,10 @@ func (p *Platform) transaction(w http.ResponseWriter, r *http.Request) {
 	item = p.effectiveNetwork(item)
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
+	if err := p.restoreExpiry(r.PathValue("space_id"), item, r.PathValue("tx_id")); err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
 	result, err := p.chainTransaction(ctx, item, r.PathValue("tx_id"))
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -1205,6 +1335,24 @@ func (p *Platform) transaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// restoreExpiry hands the adapter the expiry height persisted with the
+// operation that sent txID, so a transaction that can no longer land is
+// reported failed after a restart as well.
+func (p *Platform) restoreExpiry(spaceID string, item network.Network, txID string) error {
+	stored, found, err := p.operations.FindByTxHash(spaceID, txID)
+	if err != nil || !found || stored.LastValidBlockHeight == 0 || stored.NetworkID != item.ID {
+		return err
+	}
+	adapter, err := p.chains.For(item.Family)
+	if err != nil {
+		return err
+	}
+	if recorder, ok := adapter.(chain.BlockhashExpiryRecorder); ok {
+		recorder.RecordBlockhashExpiry(item.ID, txID, stored.LastValidBlockHeight)
+	}
+	return nil
 }
 
 func (p *Platform) tronResources(w http.ResponseWriter, r *http.Request) {
@@ -1486,6 +1634,46 @@ func (p *Platform) recordingTronSigner(spaceID, key string, signer chain.Signer)
 	}}
 }
 
+// recordingMessageSigner is the Solana counterpart of recordingTronSigner.
+// A Solana transaction id is its first signature, known only once the message
+// is signed; it is recorded with status broadcasting before the signature is
+// handed back, so before anything can be broadcast. A failed record withholds
+// the signature.
+//
+// The record carries the transaction's last valid block height in the same
+// write: a record with an id but no height would, after a crash, be pending
+// forever, and its replay would answer "in flight" instead of saying it is
+// safe to try again. Without a height there is nothing to sign.
+func (p *Platform) recordingMessageSigner(
+	spaceID, key string, signer chain.MessageSigner, expiry func() uint64,
+) chain.MessageSigner {
+	return recordingMessage{MessageSigner: signer, record: func(signature []byte) error {
+		if _, err := p.operations.UpdateExpiring(
+			spaceID, key, base58.Encode(signature), operation.StatusBroadcasting, expiry(),
+		); err != nil {
+			return fmt.Errorf("record the transaction before broadcasting it: %w", err)
+		}
+		return nil
+	}}
+}
+
+type recordingMessage struct {
+	chain.MessageSigner
+	record func(signature []byte) error
+}
+
+func (s recordingMessage) SignMessage(ctx context.Context, message []byte) ([]byte, error) {
+	signature, err := s.MessageSigner.SignMessage(ctx, message)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.record(signature); err != nil {
+		clear(signature)
+		return nil, err
+	}
+	return signature, nil
+}
+
 type recordingSigner struct {
 	chain.Signer
 	record func(digest []byte) error
@@ -1530,7 +1718,11 @@ func (p *Platform) finishTronOperation(
 			})
 			return
 		}
-		p.writePlatformError(w, err)
+		if updateErr != nil {
+			p.writePlatformError(w, err)
+			return
+		}
+		p.writeCodedPlatformError(w, err, codeNotBroadcast)
 		return
 	}
 	if _, err := p.operations.Update(spaceID, key, txID, operation.StatusPending); err != nil {
@@ -1724,6 +1916,11 @@ func (p *Platform) decodePlatformTransfer(
 		writeError(w, http.StatusBadRequest, "network is disabled")
 		return transferDTO{}, network.Network{}, chain.TransferRequest{}, false
 	}
+	if request.Action != "" && (item.Family != network.FamilyEVM ||
+		(request.Action != "wrap" && request.Action != "unwrap")) {
+		writeError(w, http.StatusBadRequest, "unsupported conversion action")
+		return transferDTO{}, network.Network{}, chain.TransferRequest{}, false
+	}
 	accounts, err := p.spaces.Accounts(r.PathValue("space_id"))
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -1746,7 +1943,7 @@ func (p *Platform) decodePlatformTransfer(
 		return transferDTO{}, network.Network{}, chain.TransferRequest{}, false
 	}
 	return request, item, chain.TransferRequest{
-		AccountID: request.AccountID, From: from, To: request.To, Asset: asset,
+		Action: request.Action, AccountID: request.AccountID, From: from, To: request.To, Asset: asset,
 		Amount: request.Amount, Approved: request.approval(),
 	}, true
 }
@@ -1799,44 +1996,55 @@ func (p *Platform) enabledNetwork(id string) (network.Network, error) {
 
 func (p *Platform) chainBalanceStream(
 	ctx context.Context, item network.Network, holders []chain.AccountAddress, assets []chain.Asset, refresh bool,
-) <-chan chain.Balance {
-	if item.Family == network.FamilyEVM {
-		return p.evm.BalanceStream(ctx, item.ID, holders, assets)
+) (<-chan chain.Balance, error) {
+	adapter, err := p.chains.For(item.Family)
+	if err != nil {
+		return nil, err
 	}
-	return p.tron.BalanceStream(ctx, item.ID, holders, assets, refresh)
+	return adapter.BalanceStream(ctx, item.ID, holders, assets, refresh), nil
 }
 
 func (p *Platform) chainEstimate(ctx context.Context, item network.Network, request chain.TransferRequest) (chain.TransferEstimate, error) {
-	if item.Family == network.FamilyEVM {
-		return p.evm.EstimateTransfer(ctx, item.ID, request)
+	adapter, err := p.chains.For(item.Family)
+	if err != nil {
+		return chain.TransferEstimate{}, err
 	}
-	return p.tron.EstimateTransfer(ctx, item.ID, request)
+	return adapter.EstimateTransfer(ctx, item.ID, request)
 }
 
 func (p *Platform) chainEstimateMax(ctx context.Context, item network.Network, request chain.TransferRequest) (chain.TransferEstimate, error) {
-	if item.Family == network.FamilyEVM {
-		return p.evm.EstimateMaxTransfer(ctx, item.ID, request)
+	adapter, err := p.chains.For(item.Family)
+	if err != nil {
+		return chain.TransferEstimate{}, err
 	}
-	return p.tron.EstimateMaxTransfer(ctx, item.ID, request)
+	return adapter.EstimateMaxTransfer(ctx, item.ID, request)
 }
 
 func (p *Platform) chainSend(
-	ctx context.Context, item network.Network, request chain.TransferRequest, signer chain.Signer,
+	ctx context.Context, item network.Network, request chain.TransferRequest, signer chain.Key,
 ) (chain.Transaction, error) {
-	if item.Family == network.FamilyEVM {
-		return p.evm.Send(ctx, item.ID, request, signer)
+	adapter, err := p.chains.For(item.Family)
+	if err != nil {
+		return chain.Transaction{}, err
 	}
-	return p.tron.Send(ctx, item.ID, request, signer)
+	return adapter.Send(ctx, item.ID, request, signer)
 }
 
 func (p *Platform) chainTransaction(ctx context.Context, item network.Network, txID string) (chain.Transaction, error) {
-	if item.Family == network.FamilyEVM {
-		return p.evm.Transaction(ctx, item.ID, txID)
+	adapter, err := p.chains.For(item.Family)
+	if err != nil {
+		return chain.Transaction{}, err
 	}
-	return p.tron.Transaction(ctx, item.ID, txID)
+	return adapter.Transaction(ctx, item.ID, txID)
 }
 
 func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
+	p.writeCodedPlatformError(w, err, platformErrorCode(err))
+}
+
+// writeCodedPlatformError answers with err classified as writePlatformError
+// does, labelled with code when it is not empty.
+func (p *Platform) writeCodedPlatformError(w http.ResponseWriter, err error, code string) {
 	status := http.StatusBadRequest
 	switch {
 	case errors.Is(err, space.ErrNotFound), errors.Is(err, space.ErrAccountNotFound),
@@ -1855,7 +2063,8 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 		// space is being asked for its password before it will spend.
 		status = http.StatusForbidden
 	case errors.Is(err, space.ErrDuplicateKey), errors.Is(err, space.ErrFirstSpaceExists),
-		errors.Is(err, operation.ErrConflict), errors.Is(err, chain.ErrFeeChanged):
+		errors.Is(err, operation.ErrConflict), errors.Is(err, chain.ErrFeeChanged),
+		errors.Is(err, chain.ErrStateChanged):
 		// A stale fee approval is a conflict, not a bad request: nothing the
 		// caller sent was wrong, the network simply moved and the user has to
 		// see the new numbers before anything is signed.
@@ -1893,7 +2102,7 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 	// against an RPC endpoint quotes it, and by that point the ${ENV} reference
 	// in the configuration has been expanded into the real credential.
 	message := config.RedactError(err).Error()
-	if code := platformErrorCode(err); code != "" {
+	if code != "" {
 		writeJSON(w, status, map[string]string{"error": message, "code": code})
 		return
 	}
@@ -1903,12 +2112,13 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 // platformErrorCode labels the refusals the browser has to act on rather than
 // merely display.
 //
-// Exactly one error has a code, and that is the point: a code is a promise that
-// the UI has a remedy for this particular refusal — here, ask the person at the
-// keyboard for the space password and repeat the identical request, idempotency
-// key and approved fee included. Handing one to every error would turn a
-// contract into decoration, and leaving it at the call site is what let the
-// contract depend on where the check happened to be raised from.
+// Exactly one error is coded by its kind, and that is the point: a code is a
+// promise that the UI has a remedy for this particular refusal — here, ask the
+// person at the keyboard for the space password and repeat the identical
+// request, idempotency key and approved fee included. Handing one to every error
+// would turn a contract into decoration. The one other code, codeNotBroadcast,
+// is not about the error at all but about what was recorded for it, so only
+// finishTronOperation, which does the recording, can attach it.
 func platformErrorCode(err error) string {
 	if errors.Is(err, space.ErrSendConfirmationRequired) {
 		return codeSendConfirmationRequired

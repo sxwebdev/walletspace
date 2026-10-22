@@ -1,0 +1,12 @@
+{
+ "source": "https://api.mainnet.solana.com getMultipleAccounts (base64, confirmed)",
+ "captured": "2026-10-22T11:45:31Z",
+ "slot": 460023197,
+ "pubkey": "HgNPDD8bpbSrGyHegiCT5xrYxHTfwLfZydwGkjNCJRKA",
+ "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+ "lamports": 19411461049846,
+ "executable": false,
+ "space": 165,
+ "data": "BpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAAHrANn1spK0IUrH0De01vBkULlkYA3zcwUrtehPL46aZ77XJpWnEQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEAAAA4thYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+ "label": "vault SOL of cpmm Q2sP"
+}

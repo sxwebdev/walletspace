@@ -1,0 +1,406 @@
+{
+ "source": "GET https://api-v3.raydium.io/pools/info/mint?mint1=<SOL|USDC>&mint2=<USDC|USDT>&poolType=all&poolSortField=liquidity&sortType=desc&pageSize=20&page=1 (fields id, type, programId, price, mintA, mintB, feeRate copied from the response)",
+ "captured": "2026-10-22 (11:31 UTC)",
+ "pools": {
+  "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2": {
+   "type": "Standard",
+   "programId": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+   "price": 104.4136757888853,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0025
+  },
+  "3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.42724571592031,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0004
+  },
+  "8sLbNZoA1cfnvMJLPfp98ZLAnFSYCFApfJKMbiXNLwxj": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.4362778926993,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0001
+  },
+  "2QdhepnKRTLjjSqPL1PtKNwqrUkoLee5Gqs8bvZhRdMv": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.40979865860827,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0005
+  },
+  "CYbD9RaToYMtWKA7QZyoLahnHdWq553Vm62Lh6qWtuxq": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.43645252639273,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0002
+  },
+  "GqxUEcFw8GbfDPoWU6UG2ypvsM3aw3vZmiN4e1Nbv94G": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.4963391427625,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.01
+  },
+  "3tD34VtprDSkYCnATtQLCiVgTkECU3d12KtjupeR6N2X": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 196.08730071220356,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0025
+  },
+  "CztrCcLhgfazkBchMW7wXQL37AWQdBP1tQWHBR249neh": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.11279137612416,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.006
+  },
+  "5s7njN2X6k3trkibTKX6LJFu4PnybYhCuADP9LD2fhuP": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.47594405594404,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.002
+  },
+  "6MUjnGffYaqcHeqv4nNemUQVNMpJab3W2NV9bfPj576c": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 105.60917587161106,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.02
+  },
+  "87Dia7JixTXFrXs7i5YHT1Z3dJFkd9KdaWquNcPsGPyT": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.47372291243447,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.001
+  },
+  "5oAvct85WyF7Sj73VYHbyFJkdRJ28D8m4z4Sxjvzuc6n": {
+   "type": "Standard",
+   "programId": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+   "price": 104.41110359001755,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0025
+  },
+  "61acRgpURKTU8LKPJKs6WQa18KzD9ogavXzjxfD84KLu": {
+   "type": "Standard",
+   "programId": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+   "price": 104.41085761218181,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0025
+  },
+  "2SjLv6XwViJ17rq21N1y98LbMee1J4DXinP61rk9v2aK": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.25952616651658,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.004
+  },
+  "EXHyQxMSttcvLPwjENnXCPZ8GmLjJYHtNBnAkcFeFKMn": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.45226290110064,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0001
+  },
+  "7byw3sD4hNG5NTwTHFRfxyASJCHfed4i6FKVdtqXGtru": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.47455469298974,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0015
+  },
+  "CiSQxEhiS1j7PVHy57LqmjFWL1N7ciYD45Enq5tSyfaN": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 107.55932762035607,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.008
+  },
+  "2JtkunkYCRbe5YZuGU6kLFmNwN22Ba1pCicHoqW5Eqja": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 104.55593095122012,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.04
+  },
+  "4i1h1Uz8SFWVa2erTtD4rvbxmWgPLjQZEvZj9yZULce1": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 121.00850980779164,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.03
+  },
+  "9CmVGTJZZBHhNx1ZK45QgFYjRCPd8vPndf7bQCQn7uuv": {
+   "type": "Standard",
+   "programId": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+   "price": 104.39808619824808,
+   "mintA": "So11111111111111111111111111111111111111112",
+   "decimalsA": 9,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0025
+  },
+  "BZtgQEyS6eXUXicYPHecYQ7PybqodXQMvkjUbP4R8mUU": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1.0009939617126815,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0001
+  },
+  "2EXiumdi14E9b8Fy62QcA5Uh6WdHS2b38wtSxp72Mibj": {
+   "type": "Standard",
+   "programId": "5quBtoiQqxF9Jv6KYKctB59NT3gtJD2Y65kdnB1Uev3h",
+   "price": 1.0008991,
+   "mintA": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsA": 6,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0002
+  },
+  "7TbGqz32RsuwXbXY7EyBCiAnMbJq1gm1wKmfjQjuwoyF": {
+   "type": "Standard",
+   "programId": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+   "price": 1.0005943572841705,
+   "mintA": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsA": 6,
+   "mintB": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsB": 6,
+   "feeRate": 0.0025
+  },
+  "3NeUgARDmFgnKtkJLqUcEUNCfknFCcGsFfMJCtx6bAgx": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1.001005238420377,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0001
+  },
+  "By3gjE18rtuqSXdjefh9oTDjyaswYrjL3mqG53tkWjYR": {
+   "type": "Standard",
+   "programId": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+   "price": 1.0225565240197205,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.04
+  },
+  "FPfbntAR84nyxfcmATEwYG55joLcPCxgYBC3BTPqB7yR": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1.0007314194592518,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0005
+  },
+  "7qrgwiU47Qi1cr1ePtWeNCTfHjkce2BgZw3qPhNGvfwF": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1.0009066242151476,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0005
+  },
+  "FadBuCk9rxqAMyj6RaPPqvCqWWwpu8muhcqvQgs9nyZm": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 0.9999785896083885,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.001
+  },
+  "BrquTpDLmBeMjuvHoNCTQsm5mmGvvtuRipzphik7VuA2": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 0.9999999645815334,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0004
+  },
+  "FdBQLXNmoNZdjDCx9AeJSBf7q2zRays1CkzuY1JZgqP9": {
+   "type": "Standard",
+   "programId": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+   "price": 1.0031633554348565,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0025
+  },
+  "9bein6LoMkmU1EATDcqTJrHuJFhSaxhonXwLGrGAcPe5": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1.000000095164818,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0025
+  },
+  "Fp4knA3NKfPifCR4h1siPba2bMkG7vP5wZwu4HkER1RE": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1.0001391056105953,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0002
+  },
+  "HphkSvYuhVWLKrfBxbk8ps9kdPf5S2qMdqvJ2WNfNa6A": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.0018
+  },
+  "Tcvofhksa4QcUFLjvEJRuEdqW8qsYrVQxk7Mj46ZdXZ": {
+   "type": "Standard",
+   "programId": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+   "price": 7.118239769689492,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.01
+  },
+  "3J4SAwaRcwgqUhP4HPS97nmo1N58G2oy57oRJZ1JKHL8": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1.0004085019057933,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.002
+  },
+  "9kjq1uu6maL9bcP4Yf6q8sgPmgwo82qQMwn7wfXsS3C2": {
+   "type": "Standard",
+   "programId": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+   "price": 0.8752342704149934,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.003
+  },
+  "4A8sdiBRAddFvRjHNUW6V6yPHsBgeHjST9nmDuwf5U3J": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.02
+  },
+  "5kS8BBvaXdcBrSWcBDCD1AUtofmEKncyQBdhSU7KfoR1": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.04
+  },
+  "6ryAyQRGmcg7wdJPBT3tePgCQhLqrGjpvNAjcbvoyM9k": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.006
+  },
+  "88pNRumDuFaoPwbFGJRnN2oTmdeWNXPcnzMdVZqfYpUi": {
+   "type": "Concentrated",
+   "programId": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+   "price": 1,
+   "mintA": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+   "decimalsA": 6,
+   "mintB": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+   "decimalsB": 6,
+   "feeRate": 0.01
+  }
+ }
+}

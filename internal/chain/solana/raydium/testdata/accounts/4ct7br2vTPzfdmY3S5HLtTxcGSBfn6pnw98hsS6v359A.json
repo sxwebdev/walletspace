@@ -1,0 +1,12 @@
+{
+ "source": "https://api.mainnet.solana.com getMultipleAccounts (base64, confirmed)",
+ "captured": "2026-10-22T11:32:13Z",
+ "slot": 460019441,
+ "pubkey": "4ct7br2vTPzfdmY3S5HLtTxcGSBfn6pnw98hsS6v359A",
+ "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+ "lamports": 52545558529075,
+ "executable": false,
+ "space": 165,
+ "data": "BpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAAErMZNgv6LOy5LEsKRgQJoPBCgDP2ATALiz/Pmc82Auh84HLjHKLwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEAAADwHR8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+ "label": "vault SOL of clmm 3ucN"
+}

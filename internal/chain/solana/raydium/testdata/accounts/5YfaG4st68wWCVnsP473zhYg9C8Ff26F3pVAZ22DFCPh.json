@@ -1,0 +1,12 @@
+{
+ "source": "https://api.mainnet.solana.com getMultipleAccounts (base64, confirmed)",
+ "captured": "2026-10-22T11:45:31Z",
+ "slot": 460023197,
+ "pubkey": "5YfaG4st68wWCVnsP473zhYg9C8Ff26F3pVAZ22DFCPh",
+ "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+ "lamports": 2039280,
+ "executable": false,
+ "space": 165,
+ "data": "zgEOYK/tsicXvWMZL1QUWj+WWjO7gtLHAp6yzh4ggmTrANn1spK0IUrH0De01vBkULlkYA3zcwUrtehPL46aZ0B9MQQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+ "label": "vault USDT of cpmm By3g"
+}

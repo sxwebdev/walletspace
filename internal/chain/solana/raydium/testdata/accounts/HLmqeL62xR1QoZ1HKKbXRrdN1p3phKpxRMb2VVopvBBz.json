@@ -1,0 +1,12 @@
+{
+ "source": "https://api.mainnet.solana.com getMultipleAccounts (base64, confirmed)",
+ "captured": "2026-10-22T11:32:13Z",
+ "slot": 460019441,
+ "pubkey": "HLmqeL62xR1QoZ1HKKbXRrdN1p3phKpxRMb2VVopvBBz",
+ "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+ "lamports": 4682634,
+ "executable": false,
+ "space": 165,
+ "data": "xvp6877brTo9ZfNqq8l0MbG75MLS9uDkfKYCA0UvXWFBV7BYDzHF/ORKYlgtvPnXjudZQ6CEo5OzUDaNIomTCGqC6a/LCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+ "label": "vault USDC of amm v4 58oQ"
+}

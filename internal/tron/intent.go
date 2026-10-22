@@ -26,12 +26,16 @@ import (
 // raw data is decoded and checked against a locally held intent first, nothing
 // in the pipeline can tell those two apart.
 type Intent struct {
-	Kind         IntentKind
-	Owner        string
-	To           string
-	Amount       int64
-	Contract     string
-	Data         []byte
+	Kind     IntentKind
+	Owner    string
+	To       string
+	Amount   int64
+	Contract string
+	Data     []byte
+	// CallValue is the TRX, in SUN, a contract call sends along: zero for a
+	// TRC20 transfer or an approval, the amount being sold for a swap out of
+	// TRX. A node that changes it spends TRX the user never put into the call.
+	CallValue    int64
 	Resource     core.ResourceCode
 	FeeLimit     int64
 	PermissionID int32
@@ -303,18 +307,20 @@ func (i Intent) verifyParameter(entry *core.Transaction_Contract) error {
 		if err := i.sameAddress("owner", i.Owner, value.GetOwnerAddress()); err != nil {
 			return err
 		}
-		if err := i.sameAddress("token contract", i.Contract, value.GetContractAddress()); err != nil {
+		if err := i.sameAddress("contract", i.Contract, value.GetContractAddress()); err != nil {
 			return err
 		}
 		// The calldata is the whole of what the contract will do, so it is
 		// compared byte for byte rather than parsed and spot-checked.
 		if !bytes.Equal(value.GetData(), i.Data) {
-			return mismatch("call data does not match the requested transfer")
+			return mismatch("call data does not match the requested operation")
 		}
-		// A TRC20 transfer sends no TRX and no TRC10 alongside itself.
-		if value.GetCallValue() != 0 {
-			return mismatch("contract call attaches %d SUN, expected none", value.GetCallValue())
+		// TRX goes along only when the intent says so, and then exactly that
+		// much: a swap out of TRX sends the amount sold, everything else none.
+		if value.GetCallValue() != i.CallValue {
+			return mismatch("contract call attaches %d SUN, expected %d", value.GetCallValue(), i.CallValue)
 		}
+		// No call this wallet makes sends a TRC10 token along.
 		if value.GetCallTokenValue() != 0 || value.GetTokenId() != 0 {
 			return mismatch("contract call attaches a TRC10 token, expected none")
 		}

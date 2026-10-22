@@ -13,8 +13,9 @@ import (
 type Family string
 
 const (
-	FamilyTron Family = "tron"
-	FamilyEVM  Family = "evm"
+	FamilyTron   Family = "tron"
+	FamilyEVM    Family = "evm"
+	FamilySolana Family = "solana"
 )
 
 type NativeAsset struct {
@@ -33,22 +34,38 @@ type Capabilities struct {
 	TokenTransfer  bool `json:"token_transfer"`
 	TronResources  bool `json:"tron_resources"`
 	TronDeploy     bool `json:"tron_deploy"`
+	// TronSwap is a SunSwap TRX/USDT swap: every built-in Tron network has
+	// one deployed.
+	TronSwap bool `json:"tron_swap"`
+	// SolanaSwap is a swap through Raydium pools. The Trade API that routes
+	// it serves mainnet only.
+	SolanaSwap bool `json:"solana_swap"`
+	// SolanaCloseAccounts closes empty token accounts and returns their rent.
+	SolanaCloseAccounts bool `json:"solana_close_accounts"`
+}
+
+// WrappedNative describes a WETH9-compatible wrapper for this network’s native coin.
+// Contracts are explicit: a bridged token with the same symbol is not a wrapper.
+type WrappedNative struct {
+	Symbol   string `json:"symbol"`
+	Contract string `json:"contract"`
 }
 
 type Network struct {
-	ID           string       `json:"id" yaml:"id"`
-	Name         string       `json:"name" yaml:"name"`
-	ShortName    string       `json:"short_name" yaml:"short_name"`
-	Family       Family       `json:"family" yaml:"family"`
-	ChainID      string       `json:"chain_id" yaml:"chain_id"`
-	Native       NativeAsset  `json:"native" yaml:"native"`
-	Testnet      bool         `json:"testnet" yaml:"testnet"`
-	Enabled      bool         `json:"enabled" yaml:"enabled"`
-	Explorer     Explorer     `json:"explorer" yaml:"explorer"`
-	RPCFallbacks []string     `json:"rpc_fallbacks" yaml:"rpc_fallbacks"`
-	Capabilities Capabilities `json:"capabilities" yaml:"capabilities"`
-	PriceChain   string       `json:"-" yaml:"-"`
-	NativePrice  string       `json:"-" yaml:"-"`
+	ID            string         `json:"id" yaml:"id"`
+	WrappedNative *WrappedNative `json:"wrapped_native,omitempty" yaml:"-"`
+	Name          string         `json:"name" yaml:"name"`
+	ShortName     string         `json:"short_name" yaml:"short_name"`
+	Family        Family         `json:"family" yaml:"family"`
+	ChainID       string         `json:"chain_id" yaml:"chain_id"`
+	Native        NativeAsset    `json:"native" yaml:"native"`
+	Testnet       bool           `json:"testnet" yaml:"testnet"`
+	Enabled       bool           `json:"enabled" yaml:"enabled"`
+	Explorer      Explorer       `json:"explorer" yaml:"explorer"`
+	RPCFallbacks  []string       `json:"rpc_fallbacks" yaml:"rpc_fallbacks"`
+	Capabilities  Capabilities   `json:"capabilities" yaml:"capabilities"`
+	PriceChain    string         `json:"-" yaml:"-"`
+	NativePrice   string         `json:"-" yaml:"-"`
 }
 
 var ErrUnknownNetwork = errors.New("unknown network")
@@ -93,19 +110,32 @@ func Validate(item Network) error {
 	if item.ID == "" || item.Name == "" || item.ShortName == "" {
 		return errors.New("id, name and short name are required")
 	}
-	if item.Family != FamilyTron && item.Family != FamilyEVM {
+	if item.Family != FamilyTron && item.Family != FamilyEVM && item.Family != FamilySolana {
 		return fmt.Errorf("unsupported family %q", item.Family)
 	}
 	if item.Native.Symbol == "" || item.Native.Decimals == 0 {
 		return errors.New("native asset is incomplete")
 	}
-	if item.Family == FamilyEVM {
+	switch item.Family {
+	case FamilyEVM:
 		n, ok := new(big.Int).SetString(item.ChainID, 10)
 		if !ok || n.Sign() <= 0 {
 			return fmt.Errorf("invalid EVM chain id %q", item.ChainID)
 		}
-	} else if item.ChainID != "mainnet" && item.ChainID != "nile" {
-		return fmt.Errorf("invalid Tron network identity %q", item.ChainID)
+	case FamilyTron:
+		if item.ChainID != "mainnet" && item.ChainID != "nile" {
+			return fmt.Errorf("invalid Tron network identity %q", item.ChainID)
+		}
+	case FamilySolana:
+		// The cluster name; the adapter checks it against the node's genesis
+		// hash, which is what actually tells mainnet from devnet.
+		if item.ChainID != "mainnet" && item.ChainID != "devnet" {
+			return fmt.Errorf("invalid Solana cluster %q", item.ChainID)
+		}
+	default:
+		// Unreachable past the family check above; kept so that a family added
+		// there without its own identity rule is refused, not checked as Tron.
+		return fmt.Errorf("unsupported family %q", item.Family)
 	}
 	if !item.Testnet && item.NativePrice == "" {
 		return errors.New("mainnet native price identifier is required")
@@ -120,8 +150,33 @@ func Validate(item Network) error {
 }
 
 func clone(item Network) Network {
+	if item.WrappedNative != nil {
+		item.WrappedNative = new(*item.WrappedNative)
+	}
 	item.RPCFallbacks = append([]string(nil), item.RPCFallbacks...)
 	return item
+}
+
+// tronExplorer is explorer for Tronscan, which names a transaction page
+// /transaction/{tx}; /tx/{tx} is the Etherscan spelling and opens nothing there.
+func tronExplorer(base string) Explorer {
+	e := explorer(base)
+	e.Tx = strings.TrimSuffix(base, "/") + "/transaction/{tx}"
+	return e
+}
+
+// solanaExplorer is Solscan, which names an address page /account/{address}
+// and selects a cluster other than mainnet with a query parameter.
+func solanaExplorer(cluster string) Explorer {
+	query := ""
+	if cluster != "" {
+		query = "?cluster=" + cluster
+	}
+	return Explorer{
+		Address: "https://solscan.io/account/{address}" + query,
+		Tx:      "https://solscan.io/tx/{tx}" + query,
+		Block:   "https://solscan.io/block/{block}" + query,
+	}
 }
 
 func explorer(base string) Explorer {
@@ -140,26 +195,44 @@ func evm(id, name, shortName, chainID, symbol, rpc, explorerBase string, testnet
 		Explorer: explorer(explorerBase), RPCFallbacks: []string{rpc},
 		Capabilities: Capabilities{NativeTransfer: true, TokenTransfer: true},
 		PriceChain:   priceChains[id], NativePrice: nativePrices[id],
+		WrappedNative: wrappedNatives[id],
 	}
 }
 
 func builtinNetworks() []Network {
 	tronCapabilities := Capabilities{
 		NativeTransfer: true, TokenTransfer: true, TronResources: true, TronDeploy: true,
+		TronSwap: true,
 	}
+	solanaCapabilities := Capabilities{NativeTransfer: true, TokenTransfer: true, SolanaCloseAccounts: true}
+	solanaMainnetCapabilities := solanaCapabilities
+	solanaMainnetCapabilities.SolanaSwap = true
 	return []Network{
 		{
 			ID: "tron-mainnet", Name: "Tron Mainnet", ShortName: "Mainnet",
 			Family: FamilyTron, ChainID: "mainnet", Native: NativeAsset{Symbol: "TRX", Decimals: 6},
-			Enabled: true, Explorer: explorer("https://tronscan.org"),
+			Enabled: true, Explorer: tronExplorer("https://tronscan.org"),
 			RPCFallbacks: []string{"https://tron-rpc.publicnode.com"}, Capabilities: tronCapabilities,
 			PriceChain: "tron", NativePrice: "coingecko:tron",
 		},
 		{
 			ID: "tron-nile", Name: "Tron Nile", ShortName: "Nile",
 			Family: FamilyTron, ChainID: "nile", Native: NativeAsset{Symbol: "TRX", Decimals: 6},
-			Testnet: true, Enabled: true, Explorer: explorer("https://nile.tronscan.org"),
+			Testnet: true, Enabled: true, Explorer: tronExplorer("https://nile.tronscan.org"),
 			RPCFallbacks: []string{"https://nile.trongrid.io"}, Capabilities: tronCapabilities,
+		},
+		{
+			ID: "solana-mainnet", Name: "Solana Mainnet", ShortName: "Mainnet",
+			Family: FamilySolana, ChainID: "mainnet", Native: NativeAsset{Symbol: "SOL", Decimals: 9},
+			Enabled: true, Explorer: solanaExplorer(""),
+			RPCFallbacks: []string{"https://api.mainnet.solana.com"}, Capabilities: solanaMainnetCapabilities,
+			PriceChain: "solana", NativePrice: "coingecko:solana",
+		},
+		{
+			ID: "solana-devnet", Name: "Solana Devnet", ShortName: "Devnet",
+			Family: FamilySolana, ChainID: "devnet", Native: NativeAsset{Symbol: "SOL", Decimals: 9},
+			Testnet: true, Enabled: true, Explorer: solanaExplorer("devnet"),
+			RPCFallbacks: []string{"https://api.devnet.solana.com"}, Capabilities: solanaCapabilities,
 		},
 		evm("ethereum-mainnet", "Ethereum Mainnet", "Mainnet", "1", "ETH", "https://ethereum-rpc.publicnode.com", "https://etherscan.io", false),
 		evm("ethereum-sepolia", "Ethereum Sepolia", "Sepolia", "11155111", "ETH", "https://ethereum-sepolia-rpc.publicnode.com", "https://sepolia.etherscan.io", true),
@@ -201,4 +274,14 @@ var nativePrices = map[string]string{
 	"kaia-mainnet":      "coingecko:kaia",
 	"robinhood-mainnet": "coingecko:ethereum",
 	"avalanche-mainnet": "coingecko:avalanche-2",
+}
+
+// Only native-backed wrappers using deposit()/withdraw(uint256) belong here.
+var wrappedNatives = map[string]*WrappedNative{
+	"ethereum-mainnet": {Symbol: "WETH", Contract: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"},
+	"bsc-mainnet":      {Symbol: "WBNB", Contract: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c"},
+	"bsc-testnet":      {Symbol: "WBNB", Contract: "0xae13d989dac2f0debff460ac112a837c89baa7cd"},
+	"base-mainnet":     {Symbol: "WETH", Contract: "0x4200000000000000000000000000000000000006"},
+	"optimism-mainnet": {Symbol: "WETH", Contract: "0x4200000000000000000000000000000000000006"},
+	"arbitrum-mainnet": {Symbol: "WETH", Contract: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"},
 }

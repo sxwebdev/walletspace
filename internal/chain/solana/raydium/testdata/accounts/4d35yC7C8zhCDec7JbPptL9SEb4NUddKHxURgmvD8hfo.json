@@ -1,0 +1,12 @@
+{
+ "source": "https://api.mainnet.solana.com getMultipleAccounts (base64, confirmed)",
+ "captured": "2026-10-22T11:45:31Z",
+ "slot": 460023197,
+ "pubkey": "4d35yC7C8zhCDec7JbPptL9SEb4NUddKHxURgmvD8hfo",
+ "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+ "lamports": 2039394,
+ "executable": false,
+ "space": 165,
+ "data": "xvp6877brTo9ZfNqq8l0MbG75MLS9uDkfKYCA0UvXWEU6YsaioAZz4hj3MC2cFsMjjcO1PbUr6r0SxlB/b8TTRLNO+wzAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+ "label": "vault USDC of clmm 2Qdh"
+}

@@ -78,12 +78,29 @@ type (
 	Deployment = legacy.Deployment
 	DeployCost = legacy.DeployCost
 	Deployed   = legacy.Deployed
+
+	SwapQuoteRequest = legacy.SwapQuoteRequest
+	SwapQuotes       = legacy.SwapQuotes
+	SwapRequest      = legacy.SwapRequest
+	SwapRoute        = legacy.SwapRoute
+	SwapStepKind     = legacy.SwapStepKind
+	SwapProtocol     = legacy.SwapProtocol
+	Asset            = legacy.Asset
 )
 
 const (
 	ResourceBandwidth = legacy.ResourceBandwidth
 	ResourceEnergy    = legacy.ResourceEnergy
+
+	AssetTRX  = legacy.AssetTRX
+	AssetUSDT = legacy.AssetUSDT
+
+	SwapStepApprove = legacy.SwapStepApprove
+	SwapStepPermit2 = legacy.SwapStepPermit2
+	SwapStepSwap    = legacy.SwapStepSwap
 )
+
+var _ chain.Adapter = (*Adapter)(nil)
 
 type Adapter struct {
 	ctx       context.Context
@@ -277,6 +294,21 @@ func (a *Adapter) VerifyEndpoint(
 	return VerifyEndpoint(ctx, item, endpoint, headers, client)
 }
 
+// ProbeEndpoint is the Node Doctor's check: the package-level ProbeEndpoint
+// over the adapter's guarded HTTP client.
+func (a *Adapter) ProbeEndpoint(
+	ctx context.Context,
+	item network.Network,
+	endpoint string,
+	headers http.Header,
+) error {
+	var client *http.Client
+	if provider, ok := a.endpoints.(HTTPClientProvider); ok {
+		client = provider.HTTPClient(item)
+	}
+	return ProbeEndpoint(ctx, item, endpoint, headers, client)
+}
+
 func (a *Adapter) Health(ctx context.Context, networkID string) error {
 	a.mu.Lock()
 	service := a.services[networkID]
@@ -286,7 +318,7 @@ func (a *Adapter) Health(ctx context.Context, networkID string) error {
 		// Creating a service already proves the endpoint identity and performs
 		// two on-chain metadata reads. Avoid an immediate fourth request to
 		// public TronGrid, whose unauthenticated limit is three requests/s.
-		_, err := a.service(networkID)
+		_, err := a.service(ctx, networkID)
 		return err
 	}
 	if time.Since(readyAt) < 5*time.Second {
@@ -309,7 +341,7 @@ func (a *Adapter) BalanceStream(
 	out := make(chan chain.Balance)
 	go func() {
 		defer close(out)
-		service, err := a.service(networkID)
+		service, err := a.service(ctx, networkID)
 		if err != nil {
 			for _, holder := range accounts {
 				for _, asset := range assets {
@@ -370,7 +402,7 @@ func (a *Adapter) EstimateTransfer(
 	networkID string,
 	req chain.TransferRequest,
 ) (chain.TransferEstimate, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return chain.TransferEstimate{}, err
 	}
@@ -407,7 +439,7 @@ func (a *Adapter) EstimateMaxTransfer(
 			"%w: asset belongs to another network", chain.ErrInvalidRequest,
 		)
 	}
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return chain.TransferEstimate{}, err
 	}
@@ -464,9 +496,15 @@ func (a *Adapter) Send(
 	ctx context.Context,
 	networkID string,
 	req chain.TransferRequest,
-	signer chain.Signer,
+	key chain.Key,
 ) (chain.Transaction, error) {
-	service, err := a.service(networkID)
+	// Tron signs transaction digests. A key of another kind is refused before
+	// anything is built; a nil one goes on to the service's own check.
+	signer, ok := key.(chain.DigestSigner)
+	if key != nil && !ok {
+		return chain.Transaction{}, fmt.Errorf("%w: Tron transactions are signed as digests", chain.ErrSignerMismatch)
+	}
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return chain.Transaction{}, err
 	}
@@ -497,23 +535,22 @@ func (a *Adapter) Send(
 }
 
 func (a *Adapter) Transaction(ctx context.Context, networkID, txID string) (chain.Transaction, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return chain.Transaction{}, err
 	}
-	confirmed, err := service.TransactionConfirmed(ctx, txID)
+	status, err := service.TransactionStatus(ctx, txID)
 	if err != nil {
 		return chain.Transaction{}, err
-	}
-	status := "pending"
-	if confirmed {
-		status = "confirmed"
 	}
 	return chain.Transaction{NetworkID: networkID, Hash: txID, Status: status}, nil
 }
 
+// TokenKind is the asset kind Tron tokens are stored under.
+func (a *Adapter) TokenKind() string { return "trc20" }
+
 func (a *Adapter) TokenMetadata(ctx context.Context, networkID, contract string) (string, uint8, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return "", 0, err
 	}
@@ -521,7 +558,7 @@ func (a *Adapter) TokenMetadata(ctx context.Context, networkID, contract string)
 }
 
 func (a *Adapter) Resources(ctx context.Context, networkID, address string) (Resources, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return Resources{}, err
 	}
@@ -535,7 +572,7 @@ func (a *Adapter) Stake(
 	amount decimal.Decimal,
 	signer chain.Signer,
 ) (string, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return "", err
 	}
@@ -549,7 +586,7 @@ func (a *Adapter) Unstake(
 	amount decimal.Decimal,
 	signer chain.Signer,
 ) (string, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return "", err
 	}
@@ -563,7 +600,7 @@ func (a *Adapter) Delegate(
 	amount decimal.Decimal,
 	signer chain.Signer,
 ) (string, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return "", err
 	}
@@ -578,7 +615,7 @@ func (a *Adapter) Reclaim(
 	all bool,
 	signer chain.Signer,
 ) (string, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return "", err
 	}
@@ -594,7 +631,7 @@ func (a *Adapter) Withdraw(
 	cancel bool,
 	signer chain.Signer,
 ) (string, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return "", err
 	}
@@ -607,7 +644,7 @@ func (a *Adapter) Withdraw(
 func (a *Adapter) EstimateDeploy(
 	ctx context.Context, networkID, from string, deployment Deployment,
 ) (DeployCost, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return DeployCost{}, err
 	}
@@ -620,21 +657,53 @@ func (a *Adapter) Deploy(
 	deployment Deployment,
 	signer chain.Signer,
 ) (Deployed, error) {
-	service, err := a.service(networkID)
+	service, err := a.service(ctx, networkID)
 	if err != nil {
 		return Deployed{}, err
 	}
 	return service.DeployWithSigner(ctx, from, deployment, signer)
 }
 
-func (a *Adapter) service(networkID string) (*legacy.Service, error) {
-	value, err, _ := a.init.Do(networkID, func() (any, error) {
+// QuoteSwap prices a TRX/USDT swap on every SunSwap route of the network.
+func (a *Adapter) QuoteSwap(
+	ctx context.Context, networkID, from string, req SwapQuoteRequest,
+) (SwapQuotes, error) {
+	service, err := a.service(ctx, networkID)
+	if err != nil {
+		return SwapQuotes{}, err
+	}
+	return service.QuoteSwap(ctx, from, req)
+}
+
+// Swap signs and broadcasts the next step of a swap.
+func (a *Adapter) Swap(
+	ctx context.Context, networkID, from string, req SwapRequest, signer chain.Signer,
+) (string, error) {
+	service, err := a.service(ctx, networkID)
+	if err != nil {
+		return "", err
+	}
+	return service.SwapWithSigner(ctx, from, req, signer)
+}
+
+// service returns the network's service, building it on first use. Concurrent
+// first calls share one build, which runs under the adapter's lifetime rather
+// than any caller's: it goes on for whoever is still waiting and is kept for
+// later callers, while a caller that leaves stops waiting at once instead of
+// sitting through every endpoint check.
+func (a *Adapter) service(ctx context.Context, networkID string) (*legacy.Service, error) {
+	build := a.init.DoChan(networkID, func() (any, error) {
 		return a.initService(networkID)
 	})
-	if err != nil {
-		return nil, err
+	select {
+	case result := <-build:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		return result.Val.(*legacy.Service), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return value.(*legacy.Service), nil
 }
 
 func (a *Adapter) initService(networkID string) (*legacy.Service, error) {

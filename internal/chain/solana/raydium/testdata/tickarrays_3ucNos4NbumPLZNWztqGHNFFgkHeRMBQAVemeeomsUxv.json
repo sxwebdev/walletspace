@@ -1,0 +1,2743 @@
+{
+"_meta": {
+"source": "https://api.mainnet.solana.com: getMultipleAccounts of the pool and its bitmap extension, then getProgramAccounts(CLMM, dataSize 10240, memcmp pool at 8) twice with dataSlice {40,4} (start_tick_index) and {10124,1} (initialized_tick_count)",
+"captured": "2026-10-22T11:47:55Z",
+"poolSlot": 460023887,
+"startSlot": 460023896,
+"countSlot": 460023906
+},
+"pool": "3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv",
+"extension": "4NFvUKqknMpoe6CWTzK758B8ojVLzURL5pC6MtiaJ8TQ",
+"accounts": {
+"3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv": {
+"owner": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+"data": "9+3j9dfD3kb/J/h1kZHXDyshRTJ1cBKA+75w9IwihSFNbCJrm2AsTU2n4L9mLmKyVEpBQSbsZYZslSyLgLfqrjxPjwNPsqt58AabiFf+q4GE+2h/Y0YYwDXaxDncGus7VZig8AAAAAABxvp6877brTo9ZfNqq8l0MbG75MLS9uDkfKYCA0UvXWE1xC8EegCgoA4uXlAv1Mq8Ujt5easRI0mT0Kd5/M0SaUYpXTwujyqOjii0GtMaFsBn/mlkafyZcZXVyvv1WhbIJa4wmFjRjYV3XU2tkbL5lj49adulPU/iZbZpnkdbsRkJBgEAqc4ZgcSDAAAAAAAAAAAAAAAM2s+k1b5SAAAAAAAAAADCp///AAAAAMwbt9s5V05bAAAAAAAAAAAC78tsnqhTDQAAAAAAAAAAdG7uAAAAAACrbQIAAAAAAEqLn9KvziUBAAAAAAAAAAAKh7aUYfUuAAAAAAAAAAAAuetoMG0GLwAAAAAAAAAAADo7fnFD+SUBAAAAAAAAAAAAAAAAAAAAAANwIOdpAAAAAPBEFWoAAAAA8EQVagAAAAAwyQYXG1xscHUGAAAAAAAAKGiFqw4AAAAioYmKDgAAADeZjMvy0EWLYVy8xrGjZ8R0np/vcwZiLhsbWJEBILya+pXh4ovnMzhpJU3xedI1MncwmjtmCSjpjg8cFTiY+PQFbi5biuhaxy9JKpHBKlrVCfYFdU9E3Cnfqc2Lz1DJmLz+AFQXhK4BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAp+C/Zi5islRKQUEm7GWGbJUsi4C36q48T48DT7KrefAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKfgv2YuYrJUSkFBJuxlhmyVLIuAt+quPE+PA0+yq3nwAAAAAAAAAAAAAAAAAAAAALfSzXf//7///////////////////////////////////////////7+f/f405gjaBAASAAAIDEAAkgAhBAAQAAATAABAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQJZ2Nq0UZAAARbOJ9vBgAAG6nKoALBAAAJ7FPafkDAACMd44AAAAAAN2TFAAAAAAAtnezZgAAAAAoBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+},
+"4NFvUKqknMpoe6CWTzK758B8ojVLzURL5pC6MtiaJ8TQ": {
+"owner": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+"data": "PJYk22GAi5krMZNgv6LOy5LEsKRgQJoPBCgDP2ATALiz/Pmc82AuhwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAQEADwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAQAAAAABAAAAQQAAAAAAAAAAAAgAAAAEAmAAgAgQAAJBpmj0RQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+}
+},
+"tickArrays": {
+"12EagwvkiBz5wiRaPZg2rViGSuZF344ff4FiTAfE79z2": {
+"start": -25740,
+"initializedTickCount": 60
+},
+"13zJkT2WSbVQHgHQ1TMNENSbeqbuDSrtNBWTgxRUtyZG": {
+"start": 48120,
+"initializedTickCount": 0
+},
+"14oG5q8vhAAjqYe5h8x7pgNu9fjzLvXdWVgVTfKef64T": {
+"start": -35820,
+"initializedTickCount": 0
+},
+"6VU2b5cKSSXkdYLYuYfDHsN3xTJrS9FU8Fdt43GxnSS": {
+"start": -33660,
+"initializedTickCount": 0
+},
+"95iKTctGq9uAF9b5jEYPxkG4dFYMQU7P3Y3pTndpNjg": {
+"start": -21000,
+"initializedTickCount": 43
+},
+"9t2cpdgaTF6PCZFkg8m9wjArRJA7VyVfD6GMpDjSP3d": {
+"start": -3840,
+"initializedTickCount": 0
+},
+"A3y3mRrXroM9E5EaD2353yhtPUmykTmf2yNWTSfBRB9": {
+"start": -10380,
+"initializedTickCount": 3
+},
+"AHymjsG8NBbMkHDbubnr4HjtyqpTKp3EJi8TnaQQ6QG": {
+"start": -22680,
+"initializedTickCount": 41
+},
+"CeASpgBpCTc73P59tiQKxWGKFeXTEBz4RhMcnSzaMBp": {
+"start": -9060,
+"initializedTickCount": 0
+},
+"CuGsnZ7bEYpShRomksLjZ7x24KXp2TKuQZUY1kJMezH": {
+"start": -29040,
+"initializedTickCount": 3
+},
+"ECqnqYZJi21oAtCgTFxTz89C62g4v6gZkizcmsm9AWe": {
+"start": -11940,
+"initializedTickCount": 2
+},
+"GYMPNDwSWJnka8aQBov2NLnhD5edTgX3ctZMrFop8PT": {
+"start": -29100,
+"initializedTickCount": 0
+},
+"HGwtj26AGSRmdPBC597Jf4ErvHFqK1tgSkL83Bg5pz2": {
+"start": -24720,
+"initializedTickCount": 60
+},
+"KYqZxw2HJy2NddWcLzBa5mcqtxL4A1wCAmSa2dXCVAC": {
+"start": -4440,
+"initializedTickCount": 1
+},
+"Q6vV5bPinXaX6ByLkynYXZyZKCSLYcx6GEyUGwSFKzc": {
+"start": -16380,
+"initializedTickCount": 28
+},
+"QhY9P4fYxTY8sYdif5bhAiNYaXwNZsy3tLWbybQwxbY": {
+"start": 2040,
+"initializedTickCount": 0
+},
+"TqPtFXESmzPPZLj4MLdXzk5EWhF6FRpN7EvHAVTdqCy": {
+"start": -18960,
+"initializedTickCount": 43
+},
+"UKe2QGFQdpjuQUnDwAvaxTL4R7JfcwUMQJwZJ91x9m2": {
+"start": -11640,
+"initializedTickCount": 0
+},
+"X5rzkzjELcxqP7aQc8DDod7AwN3q9eTuiZAApocwaix": {
+"start": -23160,
+"initializedTickCount": 60
+},
+"ZfQjiCzkJsLeLcsBSZPrWQ94E5PMjHoKUMyMJUQnY16": {
+"start": -18000,
+"initializedTickCount": 33
+},
+"akj7dZ6RevNrTCVLsAtHhahtuc6mx1UUHoJiT7fBgDJ": {
+"start": -16680,
+"initializedTickCount": 27
+},
+"doSQhh8oQa3y2gMP9SC9HDkbmmzQ11NTvuMmvD8kePK": {
+"start": -114120,
+"initializedTickCount": 0
+},
+"eNbpsQK65MUFvvyueoi4WM1JxhrVPKmQ4JXNAn6Zs9D": {
+"start": -31080,
+"initializedTickCount": 1
+},
+"eW3QueoCEimzouwMzAYizmLSv7roxf1XJTj8nYzPECv": {
+"start": -89580,
+"initializedTickCount": 0
+},
+"fqacHUQJrohPogHSPRvFEEtmJz61J91mLvmhgbqAk4n": {
+"start": -30240,
+"initializedTickCount": 0
+},
+"gqNrhrxrfFiYs5W9peEVjs553QCzaxUbzQhke1j3HrS": {
+"start": -119760,
+"initializedTickCount": 0
+},
+"hiuMRdQee7WwNwZB1UPK6iF4fHy1jgDCwxnopJLs7jQ": {
+"start": -840,
+"initializedTickCount": 0
+},
+"hjhUwY8i9dujUsVFfwW53trr3FpJGwwCp9ium5HpcUj": {
+"start": -21900,
+"initializedTickCount": 47
+},
+"iJB92u77NYnHZ8sYKPSrkVDnZn3GfpmW4xA8DvmfkjS": {
+"start": 960,
+"initializedTickCount": 0
+},
+"kh6KVhnpa59J9LpiN6u4LmbWFSNERRgWntaPAZpddaX": {
+"start": -7980,
+"initializedTickCount": 0
+},
+"oebybFftqZeanuFKZBX64fcivwNjgnYqPgi5zttVvKp": {
+"start": 780,
+"initializedTickCount": 0
+},
+"sYMZRwGufv16kKDcsgRKnevdRiMtJMBrV63PJE3dGRm": {
+"start": 50640,
+"initializedTickCount": 0
+},
+"tGQgWMTgnCpQLZow6eC6DvUovwwuh3D1z6tatpZTqf6": {
+"start": -51360,
+"initializedTickCount": 0
+},
+"uNY6ua9BSEeQaKCB2qV8dzMScMvaoV4D8hhiUMod9Cz": {
+"start": -12840,
+"initializedTickCount": 4
+},
+"uNt2iZRmoDpshrGdMm25Rec2kRQTS54FMEtWtrWDrRU": {
+"start": 1260,
+"initializedTickCount": 0
+},
+"uZyogudXBfYJcsY637tapRg3EQY9p2DE9Fp2Yb1yhVt": {
+"start": -7260,
+"initializedTickCount": 0
+},
+"uqciZcKFspxqcBBBp4K1k74rRuYQnSrqVSKUYHcwnUY": {
+"start": 41700,
+"initializedTickCount": 0
+},
+"ww3UCP5SPttfTaFY32CuXhuJ3VxF9khav1QAw1Wenpq": {
+"start": -14100,
+"initializedTickCount": 14
+},
+"xSKsQM7mnXwPhRpwvgtriyY7oJnauNzR6A3WtXpTTJ4": {
+"start": -27540,
+"initializedTickCount": 8
+},
+"yUUc7mZXq5wcEGwkivJN8dZFG83zguyUAL7QeVAFtNq": {
+"start": -10020,
+"initializedTickCount": 0
+},
+"21suiymWZ4akT7SG6MxWx6VZpX99wE9hfeCFHSuyMGMz": {
+"start": -7200,
+"initializedTickCount": 0
+},
+"24NYpyxEAUGFnHepnxTiy4yrML2P1j8JSTjDMtusuZ7K": {
+"start": 16080,
+"initializedTickCount": 0
+},
+"25HAifeWsVmLFWxV7BQt9eH9YFoxUpjoAYbJ37XX6b3Z": {
+"start": -20700,
+"initializedTickCount": 43
+},
+"25P5zAhcyWti4K1eWrzWKXq9FYY9ux6CQ2EJHzWQC4Eh": {
+"start": -36480,
+"initializedTickCount": 0
+},
+"2AR3tQfwMwVyLxfxX5gKygohbhUT2xs23ykuste3ouhD": {
+"start": 51360,
+"initializedTickCount": 0
+},
+"2BZdCyhMaxmKTi15yWBHEzWpDM3J27xMeojxKU9Wou22": {
+"start": -21480,
+"initializedTickCount": 38
+},
+"2EStbCCcRyh2X5nDiWSZUu8riKtnusuJHXoR3HXoJ77R": {
+"start": -3780,
+"initializedTickCount": 1
+},
+"2H768bCYwDTsHreTdyKetDDr5mziR9x9qTs3HHCBYFuy": {
+"start": 17880,
+"initializedTickCount": 0
+},
+"2HHVBJXo9tC88Lhu89K897NR3qjwKHD8zaYF7ArbUo19": {
+"start": -24900,
+"initializedTickCount": 60
+},
+"2HQa6tjCMzeV8uGG6BUf4jAzhHjQssJMZAn9U5aJbXXd": {
+"start": -20160,
+"initializedTickCount": 35
+},
+"2JA65rxvUQK25KRYGe1EwdsyHPjhZeEAoLn772QKN7ER": {
+"start": -6960,
+"initializedTickCount": 4
+},
+"2KAWJnvpZj3Nas98imUmgTpkYA5nkzVWenH5hWNu6kVE": {
+"start": -6300,
+"initializedTickCount": 0
+},
+"2LGAkQKgeNY7dtQEwLu7AffBEA9nRVdCyYEngKXmdpFV": {
+"start": -13620,
+"initializedTickCount": 14
+},
+"2LK15GwEMkQgPctKoUKsfjByrq8YBCSuqjS5wkgGTJkL": {
+"start": -32820,
+"initializedTickCount": 0
+},
+"2Lr5T9M5EVdorWhadBhWQyM1kmBiznhsjrqte1toDCjd": {
+"start": -960,
+"initializedTickCount": 0
+},
+"2MEwDhwvtRNexZPpvaWXvgKX1tZ2kL6avA6UmgNKjoPT": {
+"start": -33840,
+"initializedTickCount": 0
+},
+"2NdyoMUxFmrv9BCx82XKB3Ns1fuTsBWGQmDoDqfBaAQq": {
+"start": -6900,
+"initializedTickCount": 0
+},
+"2Qg6N9Z4Gj38mLLHVQjZEqdbV82BEhbRVaPNVzFN7RU2": {
+"start": 7860,
+"initializedTickCount": 0
+},
+"2ScQq6aec4QvVcBYYowRKPXrMFUHNGJgif2tNshbERNM": {
+"start": -17340,
+"initializedTickCount": 33
+},
+"2ZTPLC5uEqTXZynzn2ob5SWmRtwUd3Bhjo9XCyXNa1uH": {
+"start": 47880,
+"initializedTickCount": 0
+},
+"2aVwTKhZummBWAmGT8W6iKSYeZWVSHvnn5KoyCG4kQm5": {
+"start": -17880,
+"initializedTickCount": 32
+},
+"2agB4ShXacaS3CqtWVavFr9q7Lyq4LfTdzZJwqNgLE2W": {
+"start": -26280,
+"initializedTickCount": 24
+},
+"2dRKTxHQobKUnpC7cxFo6Xi4FCAKWo4HvKhyaLZKQ8JA": {
+"start": 12480,
+"initializedTickCount": 0
+},
+"2dq9Pucz27wfrwaxZ2EMrqMiRXDbkBsXvoua98sU5C4A": {
+"start": -27360,
+"initializedTickCount": 7
+},
+"2dzBsFzSkuYFjqPzBRL9opPa1rkJMFbpgVxTzPRYbcCn": {
+"start": -3900,
+"initializedTickCount": 0
+},
+"2fqdpbdrMJpF3oZnsaCQQ94JTS2UDoW5xE7qRssH2Rjv": {
+"start": -49680,
+"initializedTickCount": 0
+},
+"2h21wsc8vmM8iCqfPA5w1uN3Q2NV5RbLKgRCFcgKYa7T": {
+"start": 53520,
+"initializedTickCount": 1
+},
+"2hBznEnzQFezbj4GNrvwP9LjZtHBogUpeXUcFUsYwUiE": {
+"start": -14220,
+"initializedTickCount": 23
+},
+"2hLCX89zMq5FUAM37DQiVUZeannxG7nwqjE79ciTkVVX": {
+"start": -31740,
+"initializedTickCount": 0
+},
+"2i6s8X4THwGHxoRE3uyru8xvW9w9tGj1hFKJZZLTKD8X": {
+"start": -27480,
+"initializedTickCount": 0
+},
+"2io413a2EEFr2h4zHgL8TYuHZGX4XZRKPyiz14JcNLuy": {
+"start": -32040,
+"initializedTickCount": 0
+},
+"2jpr97QSEMndzuvp1iawK5eV84G6bbfBWwdKAE1nhBPA": {
+"start": -10320,
+"initializedTickCount": 1
+},
+"2kJxf6tYJBEBhCCm6KqQdjWeKwQanURLbJEUs1ZqeZ4H": {
+"start": -22260,
+"initializedTickCount": 33
+},
+"2koSRUBMWNnSf8BDLznaUDYbtejWF41RnsuK3M1TZiPU": {
+"start": -4260,
+"initializedTickCount": 0
+},
+"2mGeZSAmTWh4TSHE2KWnpPydGX67ZPeTcSobboyNm81h": {
+"start": -19920,
+"initializedTickCount": 38
+},
+"2nBm3kwgzmHhrMwHYcRsz54kgyqzLXjgzQBvCfgBt3bo": {
+"start": -25440,
+"initializedTickCount": 60
+},
+"2nhf2ZcmwJfxFTn9MzFUs9G5JHTt54CUc9Jko2TYPYHf": {
+"start": 45180,
+"initializedTickCount": 0
+},
+"2oZjPEXMZxv1RkbUT4ceqj1RgNX4xm8oHEwJSd6Syuxg": {
+"start": 49200,
+"initializedTickCount": 0
+},
+"2qZj8veLzxRU2DPJGHH8BruLDhNrrHhh87YGHFUFrHqu": {
+"start": -7380,
+"initializedTickCount": 0
+},
+"2qzrwGPeJVzsUd43GpJY8QPH9NEpCz5j7S3PLt5V5sFW": {
+"start": -28440,
+"initializedTickCount": 4
+},
+"2rquS3N8oQQFF71rBf9iB6QQtnSQ3g6AaVmTJca4uMdF": {
+"start": -15000,
+"initializedTickCount": 15
+},
+"2tZvzcL8UQ4T5p3vSg5PPPksQ8wrmSJJ3qX2mKWvs7yY": {
+"start": -30120,
+"initializedTickCount": 0
+},
+"2wy5mLpkdr8zoNwR29aWnHaNpQfCcPrL1pwq3HxXHbvv": {
+"start": -16560,
+"initializedTickCount": 36
+},
+"2x4x632rtELyABNgdGG41F726wAjrrdS4qeLew5PJ5sc": {
+"start": -30720,
+"initializedTickCount": 1
+},
+"2xLsoiZJ8i7oHnyQ5fVsYaRbUgnntSfCQZx36ib3QGQV": {
+"start": -420,
+"initializedTickCount": 0
+},
+"2xa78XVrfa1bYgko3eJeLLv38tHhRZQiHKHYspPAXGKf": {
+"start": -29460,
+"initializedTickCount": 0
+},
+"35NmJTj5d5eDhAyk441RBuwxTT3GvuffQ71KQRHnbeTt": {
+"start": -31500,
+"initializedTickCount": 0
+},
+"367CwPh8VrFspmc762wLV6Sg3eVttu6SdLGGiP1gyMoz": {
+"start": -13440,
+"initializedTickCount": 23
+},
+"36vV6WNBJcdaoUKQFcYLFn6KXZV4BMjWAKGMXeEiNQqi": {
+"start": -85200,
+"initializedTickCount": 0
+},
+"36w4Hfixx2VAsuGQtdDesg9mt1uf86b6zi5KwHiefKzw": {
+"start": -7920,
+"initializedTickCount": 0
+},
+"375hWtnqGwqnCH2Cse2MhpGLSf4FY1DnzbqWYhm7Z24M": {
+"start": -2040,
+"initializedTickCount": 0
+},
+"37EPPT3LRue2aTUoTHRj6FJdVCHCPCLQkTDfVPaTKGPs": {
+"start": 21480,
+"initializedTickCount": 0
+},
+"38w3hZq69BZZ8G5v5hM9JUHXzBQB24HvBZg8Gz85YQH1": {
+"start": -20280,
+"initializedTickCount": 30
+},
+"3BY4BjKA2ZMRC7uBeWQUfc6x9NQeJq7ewyHMvmiLFD5D": {
+"start": -34140,
+"initializedTickCount": 0
+},
+"3E7qxeHRxKg6Zs4s7YPnAnibaB1JKE6KgsKu3CqRGNNt": {
+"start": 49500,
+"initializedTickCount": 0
+},
+"3EQ4ToCCSE1As6dqxWJqBJYtaKsVjVtxXb32c6RTqP1c": {
+"start": -17700,
+"initializedTickCount": 28
+},
+"3F92MK1jMEB9tQ3vLpgTHyqEaiJTE5fTuUJ4DiTnZ2Br": {
+"start": -14820,
+"initializedTickCount": 17
+},
+"3HAhCBAqtoYGoZhwSuPRc37Fi96dnnJLxKgibHMUSkeW": {
+"start": -15240,
+"initializedTickCount": 22
+},
+"3JCos6Q4E6rH9JKa9cojJ7egDmpeFkpg7baAmKUmorJh": {
+"start": -4620,
+"initializedTickCount": 0
+},
+"3JEHfsPNKXGtX6ZRgbgRntx2GMNKxvLC6Nm5Tos93y7s": {
+"start": -15780,
+"initializedTickCount": 20
+},
+"3KWPoUJK4ZPrds2bquirBiUHNxB8KBZcyGXQGrAuHDNH": {
+"start": -17400,
+"initializedTickCount": 29
+},
+"3Kg8iKqcprJQeFxeYLyHHnPoSpWfFkXmyXR4jbuq69T7": {
+"start": -32580,
+"initializedTickCount": 1
+},
+"3LFcLp3PhjKfRRjawAESr3Gm69Y11f2L4e7NvZAvwacD": {
+"start": -22500,
+"initializedTickCount": 37
+},
+"3MP8zRtdVCKn93UmzAaWV8AWsywR7F9c9RZoWmEciGZp": {
+"start": -5340,
+"initializedTickCount": 0
+},
+"3Mq9YNJy6tNzywoDMvvuyQU4bEjP5r8fnidG1BYkNffm": {
+"start": -19860,
+"initializedTickCount": 41
+},
+"3Puc31RuaiSS95uytMBerWUJQv5ec6X7XSdCdqv8JYyz": {
+"start": -11520,
+"initializedTickCount": 1
+},
+"3QXeBzrJWHUtRuK4gfzhYvoK7NQVTud3PVkPsf5UU9Cd": {
+"start": -11160,
+"initializedTickCount": 0
+},
+"3QmSmfWJGcvRMfCWzDcnRTPvJzho6fbKrGFjvEA2XZsq": {
+"start": -23580,
+"initializedTickCount": 60
+},
+"3RPeqUwNexYi4hiVHyuaYv723XPAduLJdi9KUkUaHSUL": {
+"start": -20340,
+"initializedTickCount": 44
+},
+"3S4jtj1MHUsd34VJUjGNCM7Vu6pN7Di2R9NUGTTdSPYY": {
+"start": -24000,
+"initializedTickCount": 60
+},
+"3S6Xake5r4Yh5PypF1rwg2PS8fg9MDU4JMeRQJVi91c1": {
+"start": -37320,
+"initializedTickCount": 1
+},
+"3TyGEWzuXg64fWFv164yFTN6dbLY6co8ensoKG8iAK9r": {
+"start": -28800,
+"initializedTickCount": 2
+},
+"3VehcS4c8XpiFhSZkiSaWyeEwb6WcMPruiCJCEeKAs4n": {
+"start": -13920,
+"initializedTickCount": 21
+},
+"3VuuojnJGqwFrPjwfbTD3GLKiiijGvktT9TUubW728W1": {
+"start": -15480,
+"initializedTickCount": 32
+},
+"3WUrV9TMwWdmRfczSSSfppG7ksVsNt8t61Z5Kmzzfw3X": {
+"start": -19800,
+"initializedTickCount": 45
+},
+"3XhGfTfA3EBqBXFEGjKqyhbeF2LiLfYzVMVyzF5tGep5": {
+"start": 47520,
+"initializedTickCount": 0
+},
+"3aJ5tQYE8V75hsRgeiHsqd77fv2eEMMvWgBHzGX4x5pb": {
+"start": 4680,
+"initializedTickCount": 0
+},
+"3e6eLb8pUKpH5rdcnsgtTTaq9hzug81S7Bx3K8qcaXvC": {
+"start": 113160,
+"initializedTickCount": 0
+},
+"3fZcwLAbnceMDqwAGcStP2mMtqtTdLd51fCWE85KrYm3": {
+"start": -120300,
+"initializedTickCount": 0
+},
+"3hWoKerpYqMnM9d46ugFDoUfTK2YPP1oomxw7nzaur1n": {
+"start": -29820,
+"initializedTickCount": 4
+},
+"3ib3ULHzvo4g8mzi1SMcnGLNy9nqMkEHXfX4ziuLZ45F": {
+"start": -114900,
+"initializedTickCount": 0
+},
+"3icaZ7sTcVK9Y4e9DEszPVCPhvtk7BPo7JhLT3bXFyWS": {
+"start": 46020,
+"initializedTickCount": 1
+},
+"3kNy46Cin8fgVZKQqP24vtFfsKkj9PU5b26yiVJd8XeL": {
+"start": 900,
+"initializedTickCount": 0
+},
+"3kdAar9Zi8iw4kGeGgAJvcLUcehgkuWff9AsGMwhhTLS": {
+"start": -15660,
+"initializedTickCount": 27
+},
+"3nffXiAbEcZtyduxd3SYK7jwzH6eJT5v5aNyejnZS9Ym": {
+"start": -15360,
+"initializedTickCount": 21
+},
+"3nsGeX42PubQPrY7RK9tdft1w1hTRucvS4pUmS8AfpKz": {
+"start": -19980,
+"initializedTickCount": 47
+},
+"3pCj4xgAMU81GjYqJnYg4r9PvtJZXFy9bt2hUcZVHTi3": {
+"start": -21840,
+"initializedTickCount": 51
+},
+"3pZjqGBxqUF48bCVyFvbzbWGWtr31ATkFHYL9cMJLVoG": {
+"start": -15540,
+"initializedTickCount": 22
+},
+"3pcV8WRQfPLgEHmouVacuawRaLb4xvCfGNS61V72hr3f": {
+"start": -52560,
+"initializedTickCount": 0
+},
+"3qqzXJ5rbKMdQ8vNC9E83tUACmS3qWLHkF9wTvSFpVPE": {
+"start": -7500,
+"initializedTickCount": 0
+},
+"3rADfyZrEXimP3E4E6GzKZF8BVX4Rb18epWXEHZdUu1q": {
+"start": -35460,
+"initializedTickCount": 0
+},
+"3tUMNTVRn79zzwjPZRP5RX6doJHMuLZsbWzkTrotsitA": {
+"start": -9720,
+"initializedTickCount": 0
+},
+"3uw4TLxcHZTHzvKDkRgQ45dX1jmLn3DjgsxHC8HSeMXm": {
+"start": 45840,
+"initializedTickCount": 0
+},
+"3w7pxAaNDCcbTZJAE9vbkEb6DQfWL37GuUGuH6nxF6kD": {
+"start": -3000,
+"initializedTickCount": 0
+},
+"3yw6CEJDHF3Uop4rxPK4XbCMRj7iQPurkDCrWSsA7xhy": {
+"start": -24660,
+"initializedTickCount": 60
+},
+"42CLfBD4KRY7Z2iYHEUAdEY398ya8otoBqzhNtJZdzP5": {
+"start": -25680,
+"initializedTickCount": 60
+},
+"44gWtpmq4nwH7DBVPdMHn5PXGnWEuw8Mv3BB2qQgyRAK": {
+"start": -9600,
+"initializedTickCount": 0
+},
+"44oi3ugbZxctgF7et4NGbz1FJLtML6ph8yMV57CWNPHt": {
+"start": 30480,
+"initializedTickCount": 1
+},
+"45GxDE7aUZxXots2J1CxZzU5dyFtxvWcVzauvu1GSPQB": {
+"start": -18300,
+"initializedTickCount": 38
+},
+"45TJU7RiMz4k9zXArs7FuX9PReipm1X7xBVjfdFZpLyV": {
+"start": -28620,
+"initializedTickCount": 1
+},
+"46ZrTAapCpUn9jQSMdkyELTvqCRUxbJ9zchFUwzYaye9": {
+"start": -17040,
+"initializedTickCount": 32
+},
+"48U91PSL5DTwbBcMtLS6VoVgDX9EmA8xtZodC4x5z2z9": {
+"start": -33780,
+"initializedTickCount": 0
+},
+"49WQ6eA152Vr6yEA5tfsyJsqbUrWpvgYiYz1NeZGGKDd": {
+"start": -31440,
+"initializedTickCount": 1
+},
+"4AqwVPvo6AF7xMB1KFjLmMSQxXt5PGb4UjXyrwkgmp43": {
+"start": -7440,
+"initializedTickCount": 0
+},
+"4C36u3enksLgnSSX39fmvmKU8RXNfXCqZ1E687qESqXQ": {
+"start": -1020,
+"initializedTickCount": 0
+},
+"4CUUArM44TzpMgGKtUwGcCWghok4aLzASowCTiGmkTvp": {
+"start": -16920,
+"initializedTickCount": 26
+},
+"4HJSBxGBYBQ4rRcX4aNCRudtcz9gZH8jWsagbQpfjwAL": {
+"start": -4080,
+"initializedTickCount": 0
+},
+"4HVJgbQkrZMTJvETeQpiNShYn5E2ynRUDtFn63aWLKrE": {
+"start": -4500,
+"initializedTickCount": 0
+},
+"4JEK9fmP5Q2GCTEHpYCyDD9X8no8UmYzex9hVJEgwThm": {
+"start": -12660,
+"initializedTickCount": 6
+},
+"4Loy1BPre2eDgZxH1W4sj43ZPUrY3chaKxyd3hr76vTw": {
+"start": -11220,
+"initializedTickCount": 0
+},
+"4QRViyU7AGqHmSQr3fAcSKQKu9gGiWJbunrW4xd5SoLt": {
+"start": -25260,
+"initializedTickCount": 60
+},
+"4TpqT5YeGX3gw6BuoZtwxzZUSrU72k4c2ePU8wHMuvDB": {
+"start": -25800,
+"initializedTickCount": 60
+},
+"4U4QKPdUCvfAQ9w8iAW2gk3EZpPi3gV9YMmcj9svdiBH": {
+"start": 53040,
+"initializedTickCount": 1
+},
+"4VaUye7ramp3AThrfehRKdKEBWWNhBZGmoDhx4vtKdgQ": {
+"start": -23520,
+"initializedTickCount": 60
+},
+"4ZHy5ye3AYPAKqqiQfXPHHAv9cnyuBdcGwr91LrHRUcF": {
+"start": -9000,
+"initializedTickCount": 0
+},
+"4cpY6dXwiMmmNsWnpUuTh6aFR7zEZokS1VzUr9di7tPU": {
+"start": -8160,
+"initializedTickCount": 0
+},
+"4dpux6HBY24Xz86qGjdipvfWaTun2qkP5vFYtXorkbcS": {
+"start": -19080,
+"initializedTickCount": 31
+},
+"4g8tbrgy4ud1kbwHroTAu5iAcdCCXLMzvNUvosrHVDXT": {
+"start": -32100,
+"initializedTickCount": 0
+},
+"4gvMznLFAqbjpnQ1rwvuToaZjbss2kn14gXmhBQHSLzv": {
+"start": -11400,
+"initializedTickCount": 2
+},
+"4piYtU1vsDFqMYdaVgW5ph1UxoLAaXKcRW6s5hRWyZJx": {
+"start": -30900,
+"initializedTickCount": 0
+},
+"4qUaiuoaHKRfnaDmi22dXmjdPS1j4Y1DX92NnhZC3ZNr": {
+"start": -14880,
+"initializedTickCount": 18
+},
+"4rpGbozPT73RJDY76pCYp3p3Fo3XhEhuENaTzhFJZXvu": {
+"start": -17460,
+"initializedTickCount": 30
+},
+"4sXJN26ioNGVYKWNct29JA32de3KpwNLchtCQCiJ9NcN": {
+"start": -12600,
+"initializedTickCount": 5
+},
+"4vNimbvjCjexYHpoaAFmrJzLT2NmujzL6fGx1PsFTeuj": {
+"start": -12060,
+"initializedTickCount": 14
+},
+"4wj7b5Wu5BAMAQMP2juEDoqmyczSwRK5DTCgDySbLZ4b": {
+"start": -31560,
+"initializedTickCount": 1
+},
+"4xL8XuSysD2gfLUhksozwuVPnVa2psDDXkTj2FPTmzsb": {
+"start": -15300,
+"initializedTickCount": 26
+},
+"4yFM6Dof1DwFWALRv9axGzNQDZ74ATNhfPD6XFVAzAE9": {
+"start": -2880,
+"initializedTickCount": 1
+},
+"4yVsuTkxTJQc8sXmkaftJgunwmR7wVhdSnoWpfw4aHeL": {
+"start": -30540,
+"initializedTickCount": 0
+},
+"51evxK6bZ6t9ucuM61jkUJzqQPEkTenrC5TLNfHrwnui": {
+"start": -29640,
+"initializedTickCount": 2
+},
+"53N9LXnfbNwAdbh8PLmxcT7BuLBaPbtbGvHzvKX9crGr": {
+"start": -18660,
+"initializedTickCount": 35
+},
+"54M7vScgqT9osE9vJ9u3fL3cX8FioYSwKzza3SWDzxez": {
+"start": -33420,
+"initializedTickCount": 0
+},
+"55mT3PdjeR2CCHGNPAtujYQPKQnE1iRMriNFBPpmtdZ9": {
+"start": 54600,
+"initializedTickCount": 1
+},
+"5BWQAv34xbVeZ1ktbzSRdjR1mzhpgJShHuMC9ddVjhzU": {
+"start": -8400,
+"initializedTickCount": 1
+},
+"5BodYx8KV5Vt1tzUTY2YRqDykjCQGegDwpDnYc8pLZeY": {
+"start": -17160,
+"initializedTickCount": 38
+},
+"5G7f4m1atjeVQ5HoPJ2ziZytHWhxspYNFs9NDb74TjZE": {
+"start": -6780,
+"initializedTickCount": 0
+},
+"5GaJqWRF7ENoRMGYxucf8nTcHiFrVvVjjy3HwApxr2JN": {
+"start": -9780,
+"initializedTickCount": 1
+},
+"5GgWD9mDT5rPQH2kK9BvxUfVaWyXPUCY5ZrDXZKsmPJt": {
+"start": 191700,
+"initializedTickCount": 0
+},
+"5H9t58AcSnPgaop5zqdzkkgaimw2tTRvQLQTfZtXH6om": {
+"start": -29160,
+"initializedTickCount": 1
+},
+"5HfUhcPAtToFC9WVqsnHb8cwZ7bNkxNRLhePYdymzhj7": {
+"start": -89640,
+"initializedTickCount": 0
+},
+"5HoKwtG6UdrzsYh47MndaE7VGBsTefohJeSAe1KgbmCp": {
+"start": 50700,
+"initializedTickCount": 0
+},
+"5HzS2xsNJ51XZYANH4ghbccLH9fjx67kmebejxd7NKdE": {
+"start": -4020,
+"initializedTickCount": 0
+},
+"5JTRzcGHeJvQJaRtZkKtrjz8MmtAPpNWA9HhM944dPxX": {
+"start": -5640,
+"initializedTickCount": 0
+},
+"5LK9ugGNEyEdzp63Uakhvwzb2F3XZz4b3ppsTFGUEZHM": {
+"start": -13260,
+"initializedTickCount": 9
+},
+"5LTLCHsdui4KSZ2Roy3PngfsuAhUkHKXGke6vnTnf1oW": {
+"start": 116640,
+"initializedTickCount": 0
+},
+"5LuEHwAuoPAEJunEvBcDnTwRGnXWtC7JQmAgeXzA44cV": {
+"start": -22980,
+"initializedTickCount": 60
+},
+"5MxjaKWRdaVb8QLyBch5EumvGdPbzfdjabFHs2uAeMLo": {
+"start": -27600,
+"initializedTickCount": 1
+},
+"5NrxehMKLpeTv6TPgNtVrn8wzAJMBm6oZNNNPGpCuXV8": {
+"start": -22200,
+"initializedTickCount": 41
+},
+"5QD7uzUAsGmCxNxigv1dXagWV4AFoFvFG977u3A8jpWb": {
+"start": -31140,
+"initializedTickCount": 0
+},
+"5Rhs62HSQRPydaWSEjnzXGTmExVDbMFhJ9GrtGeqJmn7": {
+"start": -10080,
+"initializedTickCount": 0
+},
+"5SNEW26NA7zhK5TDMuBmMTe49xm87bKdxuNdJ7erNgoY": {
+"start": -27240,
+"initializedTickCount": 9
+},
+"5TKKqa4Nqu9f31zWaqoyWfnMsm8nEKJsyfk16dUYhp7L": {
+"start": -53040,
+"initializedTickCount": 1
+},
+"5UGyour8ZxNgNA2JCGcH7L8hbhASnqqSDZ1oWQy6LncA": {
+"start": -25140,
+"initializedTickCount": 60
+},
+"5VQjgG9V89eNA3FZAFvZr3PN5QPi637iggULKeWbJdkZ": {
+"start": -14400,
+"initializedTickCount": 13
+},
+"5XHQgDqs8E2KrRPrX5VPwnHC2osiWsZ81cdJmfGzvyiw": {
+"start": -16080,
+"initializedTickCount": 28
+},
+"5Xtj51FJcWukYYJbukHxbMYPWsdzccZXERdDjp9TvjX5": {
+"start": -28260,
+"initializedTickCount": 5
+},
+"5YqsKNtNQFMHrnSQGQ9JKqRb2PoGnKcktZs7LccuNLjZ": {
+"start": -19140,
+"initializedTickCount": 35
+},
+"5ZECDrRueA8jbbTTy2efiGhmrimjkh6wRmQsXq2FtC3v": {
+"start": -31920,
+"initializedTickCount": 0
+},
+"5Zc7n2YPSxG4NoTdhFYMAxodFXC1XGEdMqKXhRnSnLpp": {
+"start": -10200,
+"initializedTickCount": 2
+},
+"5aFHccxpX8R4N3p7mCNwWqiWVejAp2z8ov2ej1zJLNL4": {
+"start": -16980,
+"initializedTickCount": 34
+},
+"5ardGZ59HLbKkCzQaLTovRGQNoeFLSciuQZ1y9e9CVyT": {
+"start": -16320,
+"initializedTickCount": 26
+},
+"5gfFuF2iQ41fZ7YQvYNCD4w7hojiKYsZgUd8AKSFaBUH": {
+"start": -19680,
+"initializedTickCount": 43
+},
+"5hfepBT2vVTivwe5LGhM286dYhen36Sa29M1QEpn5r43": {
+"start": 1800,
+"initializedTickCount": 1
+},
+"5hq4foCbPTS5wx5yKouQfdXR1EWQdreATrvwjMTEFF2k": {
+"start": 42660,
+"initializedTickCount": 0
+},
+"5neQFTSbg68pUwYTwHQF5mE77BVVYVkymQ3MBuuWjYSe": {
+"start": -10440,
+"initializedTickCount": 1
+},
+"5sbgAWXBEtXnStsqwcRsZf4oAFJHSd4Gf9J7jm5PxxfU": {
+"start": 49920,
+"initializedTickCount": 0
+},
+"5uJYJ4ng5RiX8r8s18UrVBCEezJxzzn3iLgKqu5v2oAg": {
+"start": -15960,
+"initializedTickCount": 31
+},
+"5uZcq1jx7AvKNmdrSHN69fPRoGqdoK4WUtREMJcopEVb": {
+"start": -26580,
+"initializedTickCount": 8
+},
+"5v5ftmYduBagDvs8DSuCzZaPKapZZVqkhb1GMxDRjZCV": {
+"start": -117900,
+"initializedTickCount": 0
+},
+"5w1bdb2FHnJvVKMf4wpdTV1mXtFvDrAa3xjjzkTK1RmC": {
+"start": -8940,
+"initializedTickCount": 2
+},
+"5w4kEmmHE61DPQHxao4r3XfJpsdtS6ALgQ5NPuLePmc5": {
+"start": -30960,
+"initializedTickCount": 0
+},
+"5w9AsQWDpCnucPzEE6Rq7ejqpSPXBzdoDZaUSYsDbEME": {
+"start": -29580,
+"initializedTickCount": 2
+},
+"5yEWMRaUKGbbEvWP35bbpSVtxKQmdsHGtHpZ4hDGr7TR": {
+"start": -8640,
+"initializedTickCount": 0
+},
+"6166bGk3b6frchTxaq7xUckSbPxyJ4b79xmxtvcGCQqR": {
+"start": -27660,
+"initializedTickCount": 6
+},
+"62Y44gmiPhT1hL2jAog4HpjLnVL8na9jM1gUiFuow1CB": {
+"start": -18060,
+"initializedTickCount": 40
+},
+"62tNMBF9H2xzGcKzvfRqKnmD5pezHytY9YbHPgaEgSk8": {
+"start": 44340,
+"initializedTickCount": 0
+},
+"63q19wxJcJJUTUNK1q11EenT4MtYjnyhWUfXJMUyEVyV": {
+"start": -2640,
+"initializedTickCount": 0
+},
+"64HXXxqqxtd8MocvVjBejDGS9hVMTEaVEpYu7MnRiMqk": {
+"start": -16260,
+"initializedTickCount": 33
+},
+"67sGKTsTn82R7xpkvU1vG9brBsnqwr4qPd5renB5rVcT": {
+"start": 24060,
+"initializedTickCount": 0
+},
+"699j3TgKa1BL5zgqve8mAGhp8TMbeEQSm1b5ryoketdA": {
+"start": -26460,
+"initializedTickCount": 11
+},
+"69BVC9y377zX8yEsftPZT3QBE2YyMyNsUYPLkMw4J4GS": {
+"start": 720,
+"initializedTickCount": 0
+},
+"6CgQmWGv9KvwLiwQeaf2mpCa1T9HxGF4L45jvZw5foGG": {
+"start": -10920,
+"initializedTickCount": 2
+},
+"6ELp7978j2aWcsRKUd4nbNTatXbyoAHF14TMHFgegZ62": {
+"start": -32460,
+"initializedTickCount": 0
+},
+"6JWcRBRm3ZUAib1c4W5x6JcoDESsVEoEd45sXyJguq8f": {
+"start": -22020,
+"initializedTickCount": 37
+},
+"6KUzfojgL8XFGnMJ8hnUKMD9B6qN6mkDE4gnPccnZcdY": {
+"start": -3600,
+"initializedTickCount": 1
+},
+"6LzHpwXxZLFmzg9jFbnq5eHbao7jRRYkwXC95bDEBxti": {
+"start": -28380,
+"initializedTickCount": 4
+},
+"6QByjAJgojkw91fG217FcNQpMJHAMg8RCkNk9mDkwkhs": {
+"start": -69120,
+"initializedTickCount": 1
+},
+"6Qw7eoqWjW5HM78itGc8sta74D7PQrRPnaxX6ZbK1QES": {
+"start": -29520,
+"initializedTickCount": 0
+},
+"6T5abQNSXjTZKRsa9B3aMKNkDmqcew6DermJxzn2CvHK": {
+"start": -22560,
+"initializedTickCount": 39
+},
+"6TjJF9MPeGuQEthwHxtD7PXoUS8CqvXMvZDdD9fqrZua": {
+"start": -20580,
+"initializedTickCount": 42
+},
+"6W5Kvszz7Yf4944WDvdTj2T9CVyY9XWvEBEEMuG6qmRv": {
+"start": -11100,
+"initializedTickCount": 1
+},
+"6W7fXeAqr4M6n9Pzs8hWkTvGKud5UHn56KAHrPPeLci5": {
+"start": -18240,
+"initializedTickCount": 28
+},
+"6WS5hqfQudRvZmSVc1iSNfTUBGKJZEfPh1RPzV18NvEj": {
+"start": -115140,
+"initializedTickCount": 1
+},
+"6YtgK74De7FeGLwXcx122xMtPJwXvEfV2FprQHdUc36m": {
+"start": -30060,
+"initializedTickCount": 0
+},
+"6cp9AVE3686hPgxRKdDgxuSZNDbTqHqeJMhZcWopKyME": {
+"start": -27780,
+"initializedTickCount": 2
+},
+"6db7ww2hJXz2E9CZjZnfSKjehgSe7ZSMoMFLtpBeN5e1": {
+"start": -8340,
+"initializedTickCount": 0
+},
+"6eyngx9h4TBh7MUaKApEnF8QNJwDK2bmzqMzXu74SDbK": {
+"start": -443640,
+"initializedTickCount": 1
+},
+"6jhcseyVgSFGEYZ2VaeFkSS951pz1Mi12AYkhEZbMEtY": {
+"start": -12780,
+"initializedTickCount": 9
+},
+"6kYFCxLe25vcJHLgFLefZMRYXaJPuan2zFFdcSNdWiGJ": {
+"start": -18480,
+"initializedTickCount": 40
+},
+"6ku7sL9ZutrDgDtiVMiNFHE9mXA77yr2qGMyA2X95c8G": {
+"start": -7140,
+"initializedTickCount": 1
+},
+"6mXy1V1B5b3xZLoetYykGxuib8Zb2MXBnYJaLkexgz2o": {
+"start": -25560,
+"initializedTickCount": 60
+},
+"6nBrPvVJHKjCqHuBPckNrEGo5VThvmBQEEnXGrWUawcf": {
+"start": -21420,
+"initializedTickCount": 47
+},
+"6s6FDNQA6V3o9AhNK6AR7qynw1JBYSbXbirpgTdfs71x": {
+"start": -20100,
+"initializedTickCount": 35
+},
+"6vFD34md4ULQuq7k2rrkRsHnCfShX7GdayzPSCQa3iHz": {
+"start": -1080,
+"initializedTickCount": 0
+},
+"6vf5zmGiSZkGAWpVsj6iQ7MkWj6VPxp7WpiSAsmZGZuJ": {
+"start": -14940,
+"initializedTickCount": 23
+},
+"6zhA5gfZ4KvdQGE4NHyFjdsGunVvDcfHMq15HLwnRN5B": {
+"start": -5040,
+"initializedTickCount": 0
+},
+"75WWUwapbTFhgkB6tTecRvSVZTcVygNynzhwHwbDXnji": {
+"start": -31320,
+"initializedTickCount": 1
+},
+"76Mu5HnYSZ6CgrQ9rSq9twZseWM1Dn9t4dfMf7sDjsaX": {
+"start": -10560,
+"initializedTickCount": 0
+},
+"76tYAjPHeDuMiBuaV5Hct4nxc2bvTMDk9NrQHz8nVUcf": {
+"start": -8580,
+"initializedTickCount": 2
+},
+"77PUSkkMGNnoQ3nQ6az9fFJEra2TPJJGBMdPKBShQ8rg": {
+"start": -25620,
+"initializedTickCount": 60
+},
+"77yym6q6BtheSRWqXEDw3Xf1vQVRLkoqTQfhAQj8nYvd": {
+"start": -12240,
+"initializedTickCount": 7
+},
+"7GTwQcuAXcJ8oZTos6uVH92HoHCmvQ1YF9bJzngr1wSt": {
+"start": 42060,
+"initializedTickCount": 0
+},
+"7K96GbhM2jhtVxn5jwUTerg5jajErWHGV2CMfjKL5A9F": {
+"start": -40500,
+"initializedTickCount": 0
+},
+"7KGRHr8gSwVqmJVv3sdnUEmKM3jRC551SMCt9ZxmCXsb": {
+"start": -22920,
+"initializedTickCount": 60
+},
+"7KTTvj3ktXkL235BD6rg89PrLdYndYuXS8igHVZAWHKL": {
+"start": -8880,
+"initializedTickCount": 0
+},
+"7L1K5ztCYvn5wYcAaJ7nh9FZCB7VPaEo7LLWSFM54HYp": {
+"start": -24360,
+"initializedTickCount": 60
+},
+"7MpPZGh2QDehTQZVaP95UFyJonuvwCMH7DLJ9Vnbo9yY": {
+"start": -16140,
+"initializedTickCount": 31
+},
+"7MuimXjs3XRpe8ycCKcGbKEqkoGGa5z2MN8qKTSZR1F1": {
+"start": -37680,
+"initializedTickCount": 0
+},
+"7PeVrmEH6ebniCyoLxXvtQy5tBuSoHRh1pnAm4ZkDt34": {
+"start": -4680,
+"initializedTickCount": 0
+},
+"7QTSWgfHz8m9M4YhUxNcRyYAsYAajMC8vMUBrNNmTawL": {
+"start": -58140,
+"initializedTickCount": 0
+},
+"7RyjNU4Wn137eBcSQfjVfoCY9w6tTGSVxg6iogMa1urQ": {
+"start": -21720,
+"initializedTickCount": 46
+},
+"7SY11TPvywipPkfaMT6VX8dgK9vcPZWeTeneDBJPwyur": {
+"start": -24540,
+"initializedTickCount": 60
+},
+"7VLiqX99wA5SKT2bZNJoUn9Sdiz1mw7HoWEfDpDeBDCX": {
+"start": -21300,
+"initializedTickCount": 42
+},
+"7W9ek6XnUEHPJQ1KCAa9rJbgFAtNRuwiuPKRXzVJVXvx": {
+"start": -21120,
+"initializedTickCount": 46
+},
+"7XD78W3LiYBHdtbapZfe8K5QH2rXFrtQnvBQBFjMZmde": {
+"start": 49620,
+"initializedTickCount": 0
+},
+"7aKzDRgXHpSpBJ3n2D4aUcmx6vJK1F66fnaiWXwFZX9g": {
+"start": -9480,
+"initializedTickCount": 1
+},
+"7bWpwbaqsko2JZfv2iAEdyUEUbxJqSArErqsukAkoqk5": {
+"start": -9300,
+"initializedTickCount": 1
+},
+"7cZqKkGzS1nKWVsHRb7N4kM23MJPC8L2fhSswDbLuvow": {
+"start": -21960,
+"initializedTickCount": 45
+},
+"7cvwLBfXp6fAkwxePWCSYZUy4bqj7eYqmg7Z6ab6Tcc8": {
+"start": -2700,
+"initializedTickCount": 0
+},
+"7fYKG1gCeoX2D3qnEd4VMaC8xDhQeKpbRBYcGkMGd1Rf": {
+"start": -27180,
+"initializedTickCount": 8
+},
+"7fx1TiSW4wVVGphzTBeNroBUKkTn5ZCPFKvBGbksQpKb": {
+"start": -39180,
+"initializedTickCount": 1
+},
+"7hK2jpjpuVpTgkbMcaCA9M4WYzpQ4vBkwNy1JZ4FhS7L": {
+"start": -56760,
+"initializedTickCount": 0
+},
+"7hfp5p5MvnMBnKh1rgAtUVzwTqWhGdMBRgKwjdX6bRkL": {
+"start": -57960,
+"initializedTickCount": 0
+},
+"7i3tVrschaU3vghoATjkEiRFjT4HrUzmoTgNzroSvFvt": {
+"start": -22860,
+"initializedTickCount": 60
+},
+"7mGfppMrozXQoAspK4kTyrw6enhaTbD8HStM3zvL5i3d": {
+"start": -46080,
+"initializedTickCount": 2
+},
+"7ofwqwKNGBX2TiLpHzQeTzV1e5iaQ8tNU3em4GtHLh9S": {
+"start": -9420,
+"initializedTickCount": 0
+},
+"7pmK1veuSNjXgDVkLdL29uEkXUBCkLWazYccane8aYj6": {
+"start": 42480,
+"initializedTickCount": 0
+},
+"7q2GvdrLKwvmBR5gTiCp4TwXxcbfNQFpH4NVysc2LGQt": {
+"start": -23220,
+"initializedTickCount": 60
+},
+"7riSaaRXQheYVN8T4shKNtRrFVwuAKqtHfgXdA6NLQRx": {
+"start": -26340,
+"initializedTickCount": 10
+},
+"7v6MUHYDi5q4rbVS3VYEBUD6QuwY2gmXPuVqSMKD3pZq": {
+"start": -19020,
+"initializedTickCount": 42
+},
+"7vMSTdgkPLUkmJVmL4crELpmECxKtuNFyAcFEh6en5F7": {
+"start": 112620,
+"initializedTickCount": 0
+},
+"7wRgQyHvsNXoLATMZoujjV3QFrqK1wuy1LV2GYhGarDZ": {
+"start": 1560,
+"initializedTickCount": 0
+},
+"7wpGYpxvAt61M7T2TrXpf6uZJ3fW5cEbHcenpPKFH7t6": {
+"start": -16860,
+"initializedTickCount": 30
+},
+"7x793n1zzqzQq8swPhGbLZ4Q2DQoe37mcAU3LNj2PvEJ": {
+"start": -31380,
+"initializedTickCount": 2
+},
+"7xfZDmesFVWDuAfUTwDL2cRheQy8jKx7R212X2cUB2N5": {
+"start": -18900,
+"initializedTickCount": 36
+},
+"81YkhwTkDaHfDDjVB7pk1zpGpeumCa8BvNAEYjVFKBcv": {
+"start": 7200,
+"initializedTickCount": 1
+},
+"82bNhYjhen5CRpoBmMhwY8WYfPsRTmjxup7sS4Lxo5aN": {
+"start": -20460,
+"initializedTickCount": 42
+},
+"82jXBLpmFGnsXTcB4Ei6UH2cBPpZJwynYNVt4jZoiMjb": {
+"start": -10740,
+"initializedTickCount": 1
+},
+"82mciFsAxH2rkad65Ja7J9JtoKqwFAtbX3VK5ZXQDVR9": {
+"start": -18120,
+"initializedTickCount": 38
+},
+"83GkkrPYfzACgKUz6DK9tJe4GQpsLAvmTHnQA5iHfjff": {
+"start": -18840,
+"initializedTickCount": 44
+},
+"83i4VBzK3zycSamCGLvUoQwvm9nE7GLuQ8ysijVuK7dT": {
+"start": 9120,
+"initializedTickCount": 0
+},
+"842LSmwT6Qy6GqB9GER7hu35a3VbmpYTAtTxtbckMps1": {
+"start": 54180,
+"initializedTickCount": 0
+},
+"88UDjJwshizwYhrSxgCD9m6D8q6kc5dxfjEqucgkEv7q": {
+"start": 14100,
+"initializedTickCount": 0
+},
+"88pMQjUcEgCqu14hvGQMNHGWUBcoXUZPuo1x6j7tnYo2": {
+"start": -17100,
+"initializedTickCount": 30
+},
+"89Dm4TrGs78e18jW85mzue14GWZ3PnDLF4am2LEv9y5H": {
+"start": -9660,
+"initializedTickCount": 0
+},
+"89qRjktohyRepm7gQbDrZsaZuRbShnDd3u8Q9xtVbWZP": {
+"start": -19260,
+"initializedTickCount": 38
+},
+"8ANrFXxVXdo7FANb4Wymht51rgB5iDuSrpaMGFR8fJGn": {
+"start": -27060,
+"initializedTickCount": 10
+},
+"8ErcB9Er8t1vrRSuqLJ3EshWWGAz9yjkSaz1vvDMaGsk": {
+"start": 6300,
+"initializedTickCount": 0
+},
+"8LERkHzazz4JfzoDu6gaCkmbM8t4aajcNQaSD7KUqm3M": {
+"start": -3720,
+"initializedTickCount": 0
+},
+"8LScXE6LVYpzoSoeBvqp1Fsgbsh7ZUuKrmRyGC5wtjQG": {
+"start": -28140,
+"initializedTickCount": 6
+},
+"8LyA5wJamrNXg3C4HdCvttZs2PGR5hH8HiDgzdm5fzQz": {
+"start": -28860,
+"initializedTickCount": 0
+},
+"8M7vv6vM9MhnE2MmphQCo1pvLmJiS5pnpP7ymHwoSFTz": {
+"start": 660,
+"initializedTickCount": 0
+},
+"8N4D7RHSkfjoLinsTy4ULVmWLzEu5yZGwU3cUwfciW5o": {
+"start": -15180,
+"initializedTickCount": 26
+},
+"8PjaDLcoc6AfhvssKhH6qbVcEhsJS2jBU1fa888Mn92w": {
+"start": -11700,
+"initializedTickCount": 3
+},
+"8Qh8gykwm49CcNMQGLPXrZZsaQWQUMPFyzdi2cZppbAH": {
+"start": -92160,
+"initializedTickCount": 1
+},
+"8UEYb5ar7gvA3NYdmapcj78HA8Fe3jNCTTu3QePbzM5V": {
+"start": -17220,
+"initializedTickCount": 31
+},
+"8XQ6kdfTWN96HMNAQyRWyoxPBJrev4vYnpqQcBCmXMRK": {
+"start": -19620,
+"initializedTickCount": 40
+},
+"8YLwB5krzY8DjYv94QSFkESXfFZJnoF68e8eQTyFDUb6": {
+"start": -23820,
+"initializedTickCount": 60
+},
+"8ZtyVo1jL3oVgTGLrQ9rFtzzXSxVqqAyKA5kQc3pitBc": {
+"start": -22320,
+"initializedTickCount": 31
+},
+"8bBetR7Y3PNkPasR2PiPV7sRZ74i1aSi8fHmDQEs9h6U": {
+"start": 8700,
+"initializedTickCount": 0
+},
+"8eb14MUj7dAKx4tKFHbSNh1kTL7DZscF3JvVqYr4bmRK": {
+"start": -4320,
+"initializedTickCount": 0
+},
+"8gRwYt4bzCZdbiMvcACmNMWP9yvRXLMhGQJEDan1CNDV": {
+"start": -14460,
+"initializedTickCount": 14
+},
+"8h3KkbPjYYNCeyBVqukYGZwBUG8HnNhPoWkeMFFRR3XC": {
+"start": 31800,
+"initializedTickCount": 0
+},
+"8jiXvkg2A9RA6NCEgGn9dddBnHgAP27H6iqzdqYBrn78": {
+"start": -13140,
+"initializedTickCount": 11
+},
+"8jzrZCr9qYY8HKw4dEZSncXTSR41A4PFNP5PG6TydM8f": {
+"start": -16620,
+"initializedTickCount": 36
+},
+"8mmd9S2YL1JUhYpoPBi2FQe1ZUGgEYg7kNRYsYicPZx5": {
+"start": 0,
+"initializedTickCount": 1
+},
+"8qsHUNUJgRE3HHn6pHVsRes5GX4SLta1V3Jd5mzVH9ov": {
+"start": -240,
+"initializedTickCount": 0
+},
+"8que6FRtBPddMwUaduazwJK78fkQQzP1CQEqRoTVJNAv": {
+"start": -29220,
+"initializedTickCount": 1
+},
+"8r6YQG79vJFzT8FezbwNpJrBGMi89zVChJtsJTKQr2s2": {
+"start": -24840,
+"initializedTickCount": 60
+},
+"8uQkkUtz4hq2QRUbTTXmNX9ry8ye5QuoeqT76TdvAco6": {
+"start": -24600,
+"initializedTickCount": 60
+},
+"8uuAMZAbyaK13RDFjsgwXEE9mLb8DhqVewPGqkppiyZL": {
+"start": -5400,
+"initializedTickCount": 0
+},
+"8xqDCQFmVmxdeUJXakXzuAb9baEbtooCpJTBjzatQnQX": {
+"start": -27960,
+"initializedTickCount": 7
+},
+"8yPSrPsi7h5TsJKwDB5Ly4Z1qNwq7odJKRYA1QC2s3F8": {
+"start": -4860,
+"initializedTickCount": 0
+},
+"8zjBqQZyrH547PZqgAin81XcPzCo4EnBGVTsRwRZGD3T": {
+"start": -28080,
+"initializedTickCount": 6
+},
+"8zz89eUmt6du4XAcXd5QcZUaAp9sHkK7Uum3coNTioSQ": {
+"start": -25860,
+"initializedTickCount": 60
+},
+"8zzAb9A6UU31XXGq3ewAiGCK1dqYQ1ceJvqb8oBtrpMh": {
+"start": -8460,
+"initializedTickCount": 1
+},
+"94WQaMnSUqhPJg5MW8kEyrwHYvegHdCSdWM6uUDmKncf": {
+"start": -44460,
+"initializedTickCount": 0
+},
+"94fcmz4813x7xiy1rSTVaMY9AwXQ7D2N61AdJ41Zw4wR": {
+"start": -27900,
+"initializedTickCount": 3
+},
+"95DQhj3dMP6QgrJUYUXJegLN6ofa5Wu1T47KTCfa584u": {
+"start": -5160,
+"initializedTickCount": 2
+},
+"98P1fCfm2wwUFfPQeTmG5mBUtiJ89Gd2H63YUCimZT1e": {
+"start": -13380,
+"initializedTickCount": 12
+},
+"98PUEDZjgd2b5JUf2GDx95V1j8yWCQuy245rifYSz5Tn": {
+"start": -12420,
+"initializedTickCount": 6
+},
+"99TeAw7JWGurmfF77Fp9qwAansfMCwPQX8jKhKoRRzc7": {
+"start": -28500,
+"initializedTickCount": 2
+},
+"9AnkBXce9wehkpGRRuymZkEwvJTecpZxcG4UMJZTkGhK": {
+"start": -21780,
+"initializedTickCount": 47
+},
+"9BtvHdssRrwpyeqYXM6VM96h1uUEfTeWuH7rrhBNGYjp": {
+"start": -24060,
+"initializedTickCount": 60
+},
+"9D7c13f83xw74CtPDKorUvbJkshFXrj5rwurnsrds41m": {
+"start": -19200,
+"initializedTickCount": 34
+},
+"9HWcLbvwPbXPzRN91JMXLf4G9BksKxW47daEKjfTKoYW": {
+"start": -27720,
+"initializedTickCount": 2
+},
+"9HnaNCz8CrpxA7p8xXAb4JEusZJQ9Rivy5tzLvkDfJTT": {
+"start": 360,
+"initializedTickCount": 0
+},
+"9KcgZN8TNMv5B873SfKZfrbtkaKzhRaZPZUg1UrveS36": {
+"start": -15420,
+"initializedTickCount": 30
+},
+"9KnMQWpQ8bA7fydP4jsZN6s4waqA7GtA3Wt36zJuozav": {
+"start": -22740,
+"initializedTickCount": 43
+},
+"9NTEG8A3C9VLegg7mFuU7GJKvo7LB4mN4S9xYt1LiDGt": {
+"start": 2220,
+"initializedTickCount": 0
+},
+"9NveLnh42kpjVMCN67rD9PmBx6qowHsffggF1Mnxynfy": {
+"start": -660,
+"initializedTickCount": 0
+},
+"9P8TeVYThj3fUCojm4nbHdQLxs3BwDq8kiHkE6zQYJHo": {
+"start": -2580,
+"initializedTickCount": 1
+},
+"9P9HLZ1v4p5XJX7FpeWgi9bY4EU7WVM1RPQCxEcViFWN": {
+"start": -29700,
+"initializedTickCount": 0
+},
+"9PbxB3tGEBuARqjB6C23uoAZpXDAxZN4jmay1Lb1y3Us": {
+"start": -20820,
+"initializedTickCount": 51
+},
+"9ScppcDTDYqmu6qsNtjf2EewYpgzUqXmFnnsp19yRT5m": {
+"start": -4200,
+"initializedTickCount": 0
+},
+"9VYAtEbb5nJuc3zaoDU2KWKZNejMJYgw4gZQ6UbjdAGD": {
+"start": -6840,
+"initializedTickCount": 0
+},
+"9VxrTCsFf4ayab4S3jf8H5S27hSbUTP4LB7onDVW1hhi": {
+"start": -30300,
+"initializedTickCount": 3
+},
+"9ZCkRa8JhxFsEDv59VDiXhnCMMokR6b5f7RbudELT3L3": {
+"start": -16740,
+"initializedTickCount": 26
+},
+"9aWPGULjKD4QAbH5efUaWVy5jxRJ89pACtbQzbZfyvSN": {
+"start": -17580,
+"initializedTickCount": 23
+},
+"9bMn9WdhNBdshVAGrvSVnY3Sb57Qx1WmHuNr38xsZgrk": {
+"start": 118680,
+"initializedTickCount": 0
+},
+"9djpdzcpVJbHH3hjMkqLvpVpBjQZQQzH2MxkFjbFioAP": {
+"start": -117840,
+"initializedTickCount": 0
+},
+"9dtQGudoGQN1GNCED1gdjetowmeyFPhoQMHkfYr3Djde": {
+"start": 45240,
+"initializedTickCount": 0
+},
+"9fznAX9wi4uhKBytKVdQo4fed6ue3UyYYW7qkZZh1kjV": {
+"start": -17640,
+"initializedTickCount": 28
+},
+"9g9GFjLN6yHQFjhN5K5t1VqDsjJCshqt6TZdvhWeNC2o": {
+"start": -11040,
+"initializedTickCount": 1
+},
+"9i8m4vEnvSW83AorveNgfQkpkWRZ8vyJRV5i6s9VyQTy": {
+"start": -13020,
+"initializedTickCount": 11
+},
+"9kpr5v1oUzyxso5UcoN9gjuwsqDPYnWKt1M1mQhAXZjx": {
+"start": -14280,
+"initializedTickCount": 22
+},
+"9nJEVx6GDmRCQ2bXPr8ZDMARc4PnqRDrrrjRqkcZ3WUZ": {
+"start": -31980,
+"initializedTickCount": 1
+},
+"9p3Y1gYhY1vpc5L3cAQKd1uuCJbViRJFVAcZDvSCpvwy": {
+"start": 17940,
+"initializedTickCount": 0
+},
+"9pgPSa6ZChoER8wrSKxHKj7ma5kXWWPABfpvYp3XwvrF": {
+"start": -31200,
+"initializedTickCount": 1
+},
+"9pnSqFvHRHtLDh2ja3zuXbGhESc9PFBF2BodpVA1n92Z": {
+"start": -9840,
+"initializedTickCount": 4
+},
+"9pvuAS3QwLK6mPHpSpcQy4vwKPQPku2QCtNR4MJug3DG": {
+"start": 42720,
+"initializedTickCount": 0
+},
+"9q4xN86AXL2H4vMFUoqN1zjxCLFk6QaeKi9wrvZku5Eb": {
+"start": 43260,
+"initializedTickCount": 0
+},
+"9qMFL3PgEEumsmXCWm5x3snDLnyDQYhLjC2BD2DsWqjz": {
+"start": -26220,
+"initializedTickCount": 12
+},
+"9qZoiWs9FFTi5HKpexiNRFk6q6YLjoQt5QEM6osm5Qnp": {
+"start": -17520,
+"initializedTickCount": 29
+},
+"9sS2QcDPByNdJTeVgEA1h3sNMZAVqe8iJBtBaiut59tg": {
+"start": -69300,
+"initializedTickCount": 0
+},
+"9tX6AoeKKME8GAU9DKMS8HcZmKErMrnoGuk51WH2Q4Kx": {
+"start": 298260,
+"initializedTickCount": 0
+},
+"9uDJwYijebWJ9Dmj7Znwa9At5JHBThhuAgG8jq7sFBbo": {
+"start": -5460,
+"initializedTickCount": 0
+},
+"9wmB1cEifgSXaRJoY3Y1m8DcHU7AcBHJsAUxAwcfo72r": {
+"start": -16200,
+"initializedTickCount": 32
+},
+"9xJF7Gvgjv6nSUFVisYqtzipJKDmmHgDq1dAuHiozFAX": {
+"start": -18600,
+"initializedTickCount": 36
+},
+"9yjBd1yTNRDojtYujMDGHzWeHt3wT965NjMKE2XBvLtV": {
+"start": -9240,
+"initializedTickCount": 2
+},
+"9zUunprG9fS7KXW2kGzABbfv21eoLEZPsrxnpk6eMNUt": {
+"start": 45900,
+"initializedTickCount": 0
+},
+"A3To8eKVuTmoXLnZETJXYpBa7d18Ag21Wn6ZjLV95VZX": {
+"start": -46620,
+"initializedTickCount": 0
+},
+"A3capNFeF2pL1XZz7y8X5Wg6kuAg5EgsvGgTWRdjTjn1": {
+"start": -62160,
+"initializedTickCount": 0
+},
+"A6CSyGHwoHRCo7rdZzjUZcE22VF1Di4uMtuDRMwXP5YC": {
+"start": -51240,
+"initializedTickCount": 0
+},
+"A73L33w4v71Fnx1n9YCuKtjPFzsR4TDUw3qpNRXL5Vac": {
+"start": -28320,
+"initializedTickCount": 8
+},
+"A7c95H2bDAb526KnCvYseK1NZZyWBYKud3kjfUPWMuSu": {
+"start": -11580,
+"initializedTickCount": 2
+},
+"A8w9rbRndifC2rdGjgiovZjFRpdxmfz7BTamzrqaQ3zt": {
+"start": -108240,
+"initializedTickCount": 1
+},
+"AFAGM4bZKaVxfaJk5vY4mskj4p6kUEjDGbHaSf2bKw16": {
+"start": -14760,
+"initializedTickCount": 14
+},
+"AFu1vGbqUSo1PeSRANqq46CLQNs5qN4vSypMgfPzeBLf": {
+"start": -36120,
+"initializedTickCount": 1
+},
+"AG9t7L2Kxj9pMjjNevKwZj46APdaSRUzr6UJLCM6tJva": {
+"start": -10620,
+"initializedTickCount": 1
+},
+"AN2y4cfXNwBq9naTLx4V7rJEh3e6KAxrzZWG75GRQ9XV": {
+"start": -13080,
+"initializedTickCount": 11
+},
+"ANCBQhZbk4xjByBe5kGAiBTfh4kzZnSndGbRU9dvsfnC": {
+"start": -21540,
+"initializedTickCount": 50
+},
+"ANGPcyvmViVJcsEerFf7xJZzamrYqqmK8e57n8R9TR3a": {
+"start": 115080,
+"initializedTickCount": 0
+},
+"ANgzDPdViH7HEM2qbUXWw2PqCaSTg3QDJ9VEvJafdj4T": {
+"start": -14040,
+"initializedTickCount": 16
+},
+"AQKa1GHRiUP4XwzBn8dLUU3Lw84fwn2n34PquNzSLjEW": {
+"start": -89100,
+"initializedTickCount": 0
+},
+"ASTk55REVposu6dLyEWQ129146MySf8A7qHzdADq9hXR": {
+"start": -19500,
+"initializedTickCount": 43
+},
+"AYL5PQzb2fLgDj7AKEbAF7FKUdFAS8Vyi95CGnfMAa55": {
+"start": -43800,
+"initializedTickCount": 1
+},
+"AacJGhe2weymkAvLyyfNr59kWonSf5g6TWSCP69xqiUm": {
+"start": -7860,
+"initializedTickCount": 0
+},
+"AcLfZrrMAf4BHAt6iovqkQffd6BtJCBGNq2dW6F5JRGs": {
+"start": -18540,
+"initializedTickCount": 44
+},
+"AcS94HmHbtYtHFxHf6PBQFTAknYnqGGzzZZjsZK352dn": {
+"start": 8100,
+"initializedTickCount": 0
+},
+"AcjKv6WTfLdF8XaDNUqjK6uaBQV1j33yF6XXUm5ho8M4": {
+"start": 54480,
+"initializedTickCount": 1
+},
+"AeKMKv2sU8NnDn1ukBu6R1cQmYuqKtcTXYM892sNEwep": {
+"start": -28680,
+"initializedTickCount": 1
+},
+"Ah7kormtGasZ3iskCC1d1gTYhF74vMUKNeANhxoJhpjd": {
+"start": -20880,
+"initializedTickCount": 46
+},
+"AhKcWoqiAq67LjDJZb91j4mU7gaeUMAkBTYQvA4VHc8t": {
+"start": 54360,
+"initializedTickCount": 0
+},
+"AijAYpnLGjujZ6f9kXwv93HixLKDUMzrS9RBmr9Lt2NW": {
+"start": 54660,
+"initializedTickCount": 1
+},
+"AjFCKC9HXHkLkUgERcxPTUaEdvcYHxyXdmHmfAEpFHnH": {
+"start": -24420,
+"initializedTickCount": 60
+},
+"AqsjJGMuSaQkHRrUeCcfu7ipGwBMg7qqBHj8ytWNEr1i": {
+"start": -29400,
+"initializedTickCount": 1
+},
+"AsSzgXqYr1tBGNmHbdx32TtJmxsoEfJ2aMaceh2uousW": {
+"start": 180,
+"initializedTickCount": 0
+},
+"AswRofh9oRVwmScNqsMHX7aioE6nVbCAR6ksEc3aMAEP": {
+"start": -29880,
+"initializedTickCount": 1
+},
+"Av7wMQx21sSugTUcU4KzdJTra9kCJgi6bVSfFp5sHo56": {
+"start": 49440,
+"initializedTickCount": 0
+},
+"AyzWvu9GdfMuCKJYDv8oavKsotyAZFwmxsjjiuuRQRAr": {
+"start": -8040,
+"initializedTickCount": 1
+},
+"B1C1vu76rKXxbLYmNGWQQda87a8smf9vGXqB461eitrS": {
+"start": -34440,
+"initializedTickCount": 0
+},
+"B4iLnsyfzrqXmBvNzxSQHjBLGwmgb2pbV7NHq16DhGGR": {
+"start": -26040,
+"initializedTickCount": 49
+},
+"B549oMiBzTTMcnNZ9ZvCa1LMzV1xrNLf4JCLaTZ6DpaV": {
+"start": -26520,
+"initializedTickCount": 9
+},
+"B7UtkebufDnVpc1ce2Do9ZKKuhxQxGp9fwpYcYKNEesP": {
+"start": -30600,
+"initializedTickCount": 1
+},
+"B91BepvpchUqvnnMh96Krk66bw2R8zxcpdu2xbwDH51b": {
+"start": -23400,
+"initializedTickCount": 60
+},
+"BB7gzkEMH8KrpH2n18aBwDGtiBFu6PjjuHufL8E4fWHq": {
+"start": -10860,
+"initializedTickCount": 1
+},
+"BEDhUjZ7LkTa46ukihrtzU5J7pSmbxfDoD7vrVUe815p": {
+"start": -120,
+"initializedTickCount": 0
+},
+"BFECkhejLwgAvN2MwMWdCFW9mU9Y55dibivagLrf1LvV": {
+"start": 1080,
+"initializedTickCount": 0
+},
+"BFmgS47ZrB4tAoNyPutQd1z1W7xAoYB5yUu9DdtqFDwF": {
+"start": 39120,
+"initializedTickCount": 0
+},
+"BHDfRnJMk5RCtpiDcSJUXamyxsmPcf4x6R4ih5PMBVSh": {
+"start": -16500,
+"initializedTickCount": 22
+},
+"BHskjk6JLAr7miPYVixoTBXZgJ4dLTe6P4oJmW9THgXd": {
+"start": -24120,
+"initializedTickCount": 60
+},
+"BHvTVqy9qCGH8nHKUxhboZScBsCrGpMJHPWN4edQchZv": {
+"start": -6660,
+"initializedTickCount": 0
+},
+"BKNCEAtCiYaCLJGc3bQocH5YPSvm9u9mSJD8qGJ2mMjb": {
+"start": -23700,
+"initializedTickCount": 60
+},
+"BMPqv26gXaNcDwzXGFzZEtvngR36vWYRoH25yFpeExsa": {
+"start": -8280,
+"initializedTickCount": 1
+},
+"BMThUfz3xUqFNHS2wVFNTYs7hpu4G4skg1aeSQaF7nkt": {
+"start": -21360,
+"initializedTickCount": 43
+},
+"BMyJyM7UeQxHDX6mon1Lcdm6t9zrtmPB9gB9qRLVDNG3": {
+"start": 69060,
+"initializedTickCount": 0
+},
+"BN1uxz9ySXSL2wFhthAEZtfLDcZGnUZtiWZHQ1evWZod": {
+"start": -22380,
+"initializedTickCount": 44
+},
+"BQHYZvQBm88J4QygHTEf5Yaup8wDWFWJvj9mDg59ZJTY": {
+"start": -26820,
+"initializedTickCount": 7
+},
+"BTtsCuBz9Yfd9EbTPTY1pikFWVhMrmp3UjGXMibrRy7S": {
+"start": -28200,
+"initializedTickCount": 1
+},
+"BVxCioxJSVqGYssU7azfLVtFgw4nbvpMq5mwd1YNntPS": {
+"start": -24960,
+"initializedTickCount": 60
+},
+"BVy79ft2uuGdkbWaFYi5G43LDFPsAWzzLbbvBZ4pFi3Y": {
+"start": -1800,
+"initializedTickCount": 0
+},
+"BXxuHDSHUXmrUoRRJ34ebCFKhmsyLrR18pCZu6Xakvsk": {
+"start": -32160,
+"initializedTickCount": 0
+},
+"BavmCmJsbB9VZW3kfE68bmGwfCKKUk4yLgTpjJuBw86i": {
+"start": -15900,
+"initializedTickCount": 30
+},
+"Bc5Say5AiEgFGR4qX3ERLV5AiuUJLK3AqKBMUnS2ZWWg": {
+"start": -51840,
+"initializedTickCount": 0
+},
+"Bcp1y1NjPDaf4Z4sfz9rJeJRH1fRupeHiRcFdYyhqSAD": {
+"start": -2820,
+"initializedTickCount": 0
+},
+"Bdc2M1e8sVXaXdgvpDNaKCnALRhHHurWq6yfEKjQeKQJ": {
+"start": 50340,
+"initializedTickCount": 0
+},
+"Bf55vZDBj5JySrn2wjicMHfKuVhipe98AB8vCTpPaX54": {
+"start": -33960,
+"initializedTickCount": 0
+},
+"BiEgebDvksmuNPGSmzjQ95jWsNtVQGMU1AwWSpQy5wAB": {
+"start": 49800,
+"initializedTickCount": 0
+},
+"BnjhtJoaTbdM2UdYU6zpt8zUZp7XZCjrutt1wHuV9Mp2": {
+"start": -17280,
+"initializedTickCount": 36
+},
+"BrfqD5reA11nGUK1CCe3qbee4SZJqt8hnYgEBqsBoKGp": {
+"start": 10980,
+"initializedTickCount": 0
+},
+"BtcEwMNm8maXpjfvf4w5k4QoP2uan8jAs8j3howLwRo7": {
+"start": -19560,
+"initializedTickCount": 40
+},
+"Bux75mnd8mLBiMNpc37h4TqXj1m4CTYP36r88bMnr6ZM": {
+"start": -44160,
+"initializedTickCount": 1
+},
+"BxEkg3zmPXBTKYdFwTqYDEBezRBUE2ctsNqciadWwd9X": {
+"start": -14700,
+"initializedTickCount": 24
+},
+"BxFA46CcwEDkxUNgfeLWPVHsLt2RA1uw6x1BnDnTmEck": {
+"start": -60,
+"initializedTickCount": 0
+},
+"Byv2TVA7vpCfamWMxefsWoCHKdN97ENCwuzivSw94n62": {
+"start": -39480,
+"initializedTickCount": 0
+},
+"BzakpZch43kKMmYJjgkLQYrkaYbJXAdrhWzBUKhE8LYP": {
+"start": -30000,
+"initializedTickCount": 5
+},
+"C2ArBZ4YMh7RUY2FLSq6To1egP8dC9ySNNAUsAPXcAJk": {
+"start": -19740,
+"initializedTickCount": 40
+},
+"C2EaQqKrBKZXyM6vnb6YdK5nYcgtXojkpcLK3NijsNEm": {
+"start": -23940,
+"initializedTickCount": 60
+},
+"C2cLXNXfYiSSc5t2bKkq6B6SRiTSS2GVDCnD3RfgHBWv": {
+"start": -30360,
+"initializedTickCount": 0
+},
+"C5tYwQaTkKg6ereJfwYUKmtnhnJUHDdwjU6AeBGeQBsb": {
+"start": 118620,
+"initializedTickCount": 0
+},
+"C7E3TMX6tpqe4zHzeY2sXFzv3SwAmgKg2QnzzSconh7j": {
+"start": 5820,
+"initializedTickCount": 0
+},
+"C8XpHXFa2mBEHjfFKdzirHHtx7Lu34e6Wgi5VEbbUVUN": {
+"start": -13740,
+"initializedTickCount": 17
+},
+"C94PJQzhiGGMk1VKeLLfo9NPdbMxEdzzHjRgEX2kd3dh": {
+"start": -9120,
+"initializedTickCount": 0
+},
+"C9bnZ89cvKxYsAmooQkrrHNYKDm4SzZ6Tuvk6GBP83xc": {
+"start": -27300,
+"initializedTickCount": 6
+},
+"CARZM5mUu6rK9bV59H2wCUPZoJmradLdYgREciSXVq6F": {
+"start": -21660,
+"initializedTickCount": 49
+},
+"CBYL52L3YhHKhdoWJ35C5GZrmYRP5RVG2qZwvnrk2YMd": {
+"start": 54120,
+"initializedTickCount": 0
+},
+"CDsya5uzuJGhZsU4PdC1tezCtJz2faZrD3hejyUDgsvV": {
+"start": -9180,
+"initializedTickCount": 5
+},
+"CF5W7vUjCDdSAQAagu8eEMaW1yt8MCE6aR8bpgZzoQnH": {
+"start": 44100,
+"initializedTickCount": 0
+},
+"CGobfCHdSqzkDhQ8hTwAM92a1Z7msucXjF6gURPGpXUz": {
+"start": -14580,
+"initializedTickCount": 19
+},
+"CHmdMDR7eq6BiQ42mD9CkrJd3VnmSbEg4zT2Qpi1FJHR": {
+"start": -29340,
+"initializedTickCount": 1
+},
+"CJ4cGMKZqc1KB1GaTwwxsLm3c6cuSJ1WBLTSgpP2ZZdB": {
+"start": -42720,
+"initializedTickCount": 0
+},
+"CLAjyL8cvi2T8zp5LSmG3ZVKmH1G7VDkTfrKcvMTvhZF": {
+"start": -2280,
+"initializedTickCount": 1
+},
+"CLt8EDmeR5YDBe8dG6Feo1h6oZ5hQJPBZkoprwbjSzYR": {
+"start": -16020,
+"initializedTickCount": 22
+},
+"CM4iqfdzUi3jU8st1DPBhJB1oHEeKBjTQdi3U2JCsk8j": {
+"start": -7080,
+"initializedTickCount": 0
+},
+"CP7GVRDttKwS3gaWK4yMQi2fMw2hmzjHCr9rYr2BwW6z": {
+"start": -18420,
+"initializedTickCount": 40
+},
+"CPGf1EkSfopfTwS8EP1VfgvNnGX9MRkoXpTPpb4qAgub": {
+"start": -42000,
+"initializedTickCount": 0
+},
+"CQyrWqT9rq69UmAoLyRUP8MtbV6fZHDFqbFcwWEzF6PE": {
+"start": -11820,
+"initializedTickCount": 1
+},
+"CRDiS25jv2sTZuhhG7xDFZwJbvPLNvgboyNJpmqxq3kB": {
+"start": -30480,
+"initializedTickCount": 1
+},
+"CRH2mjtHSHrGEJGgLsRBqLm6nvhSbVtkG4q62qhm3i6h": {
+"start": -24480,
+"initializedTickCount": 60
+},
+"CRKgtmXXdGh4ip24mPsmXGWsRSYXWg44TsSb4dRfXm2w": {
+"start": 240,
+"initializedTickCount": 1
+},
+"CVfUy6mnKXZfcadDowE6LcjekmPUcW3j5vrig6azHCt6": {
+"start": -10800,
+"initializedTickCount": 1
+},
+"CXwMrq8zYrvfQT525dGYmoLsyryhFqQ35jWRh1Mn4Bx9": {
+"start": 42180,
+"initializedTickCount": 0
+},
+"CYHCbSssBYTbQQ1QwgiY94Np3TiTKuH8VWp3bsUEzYqo": {
+"start": -30180,
+"initializedTickCount": 1
+},
+"CbBMsWaKNZJS7Ekv6CuqEdhMRnzTmu7uhmXyxGCWwz6e": {
+"start": -17940,
+"initializedTickCount": 31
+},
+"CbdvsiamanCqq7X1rLgr1JMiLdbQ99MFf7enRQN7p56n": {
+"start": -15840,
+"initializedTickCount": 26
+},
+"Cd2LzacocZbXoCHCbQpBowCX7bxcD8BWqF8uEPmq3MLW": {
+"start": -27120,
+"initializedTickCount": 5
+},
+"CeWWvpFzgYiXgyLDQVTZeSfpjfkgQkDcJQUkYygP4uxu": {
+"start": -120180,
+"initializedTickCount": 0
+},
+"CfNUse6UmwJMG1RUDVVJcC3GjMHRedDaPZTh2eNbCj5a": {
+"start": 116700,
+"initializedTickCount": 0
+},
+"CgV4c4ofJPxaRaxkoNxws9rxmQSQ7wYbpo7tzzKiHtdJ": {
+"start": 112860,
+"initializedTickCount": 0
+},
+"CiUntncrxEPqxK4eZK11AJir7R7mfAe2oMdvEkZWqXg1": {
+"start": -19380,
+"initializedTickCount": 47
+},
+"CimMRswnbZ2FbUhFGown1xQab98Taom4tncKxkTURzrm": {
+"start": -22440,
+"initializedTickCount": 37
+},
+"CivPhJPfAn5zni8o16JZHzTT73T3W8AZRBkG3LxMrAdx": {
+"start": -69540,
+"initializedTickCount": 0
+},
+"Ciz1cQqTuUgrNAKkFiSR8QbUtsugzYWBrKqXdwvmfRpJ": {
+"start": -25020,
+"initializedTickCount": 60
+},
+"CkhzY84XyVCSodBvcts8U5TjuQ6CVNUKzwAZof53PbVR": {
+"start": -3060,
+"initializedTickCount": 0
+},
+"Cm3Yx8V146Z4mnS6stm77b6QyjoraBWUsjc7bSp6DPx4": {
+"start": 5100,
+"initializedTickCount": 0
+},
+"Cp38e6ymbNvfXBQ6QtPzd4q2yivkvcRs3f98WPPwQE6Y": {
+"start": 443580,
+"initializedTickCount": 1
+},
+"CriBNUaT7hTuFmEMZhD6XFYmcFRnJxV8Q5fnt21PnV8C": {
+"start": -13560,
+"initializedTickCount": 16
+},
+"CuEwPui3Dk1GifmBPQzoVYbJzF52mjQA5GdJvBp9Ka66": {
+"start": 5760,
+"initializedTickCount": 0
+},
+"Cvzufzz78QGuTQ8QUHtoVLZM9MYPkJeEXACXS7DUmM3A": {
+"start": 43500,
+"initializedTickCount": 0
+},
+"CxdzWJFSQqtxw8c7b4Vg75ko1ztAr5Vwd5HSsoZu8Hda": {
+"start": 54540,
+"initializedTickCount": 1
+},
+"CzD6p5hSuHYipm3hrroNggi8p5QXgznyWxqABFUaNzrB": {
+"start": -118140,
+"initializedTickCount": 0
+},
+"D6UxBBubDcRb2XEDiQkWiKmM4XwPMDcR2cwjNUTei3Tg": {
+"start": -45120,
+"initializedTickCount": 0
+},
+"D7X8b3aS9JnWxDqYrXdibHEgzMfCdfwHCzuqdJHVqD83": {
+"start": -11340,
+"initializedTickCount": 2
+},
+"D9SU3G5WFwVEABoptgeVBjuMJw2kbaeGHu5VyBygt2NR": {
+"start": -26160,
+"initializedTickCount": 13
+},
+"DA1EoFyKaWT5jiqYs2r4pPGEwBEJZ8JA4EneFVZgBkVD": {
+"start": -1320,
+"initializedTickCount": 0
+},
+"DAEZtwm3HNvZqy33kTcZmQ9WqXo4oFoZibnHkApiMDC4": {
+"start": -26400,
+"initializedTickCount": 5
+},
+"DBiLtfN8tmZNRr3mdUFuubvLP8CFUHaDQcUctbcpzyNM": {
+"start": 55680,
+"initializedTickCount": 0
+},
+"DJoEq6BPQW9K1jXdqCAeLeh4SRbiEY5mRUvz2MmkpS6B": {
+"start": -14340,
+"initializedTickCount": 12
+},
+"DJvWR4sHpFLEhfRPR6VCKVeYcS5WQKm8giCmY4E1dq8D": {
+"start": -32220,
+"initializedTickCount": 2
+},
+"DK22bEvUTb4s5aChBJpx4XArhd6GJXeP7XvugKREAatQ": {
+"start": -13680,
+"initializedTickCount": 23
+},
+"DLt63Y4A4S2jm8W3Qd2hnWCZ6LiRMngpQ4Bv6tuu8RLV": {
+"start": 3360,
+"initializedTickCount": 0
+},
+"DRfCFRUzLVTSPeggnzZpR2BG6RWYvtTkZi2vEwrcezie": {
+"start": -13320,
+"initializedTickCount": 17
+},
+"DUFASaWRDHwD5KMJp8Acs4eqcCVHuVjwUrJwxT9AXnWH": {
+"start": -36900,
+"initializedTickCount": 1
+},
+"DWCDrwhGsFj8Qq1LqXjFed1mB16CMHswM2176YAkC482": {
+"start": -21060,
+"initializedTickCount": 46
+},
+"DWRzEEkvYAGPmwQcG8CgeLizMY3khHNHd4Q9N28XqWw6": {
+"start": -24240,
+"initializedTickCount": 60
+},
+"DXMYoubRuvvqeTGNeDpSv1hRJrsz8zyDe7v7eH4DYDvs": {
+"start": -29940,
+"initializedTickCount": 0
+},
+"DXZrptz6sgagYNfgUNcCmVpk8oefbLAbH8iPnY81BvtF": {
+"start": -10980,
+"initializedTickCount": 0
+},
+"DZLsT7q47EgzoDWZBfLzZqwVCxsPBDQ2z2iPmvo48NJa": {
+"start": -13200,
+"initializedTickCount": 10
+},
+"DZNqTz5pnf1rK9N542YR1heJdGsUW9Z9JwBDgJ3firfi": {
+"start": -21240,
+"initializedTickCount": 36
+},
+"DbEW32iuwJDYSgpmCDMYE8waCqXW2Z2BAXS4HNFx6vg9": {
+"start": -32340,
+"initializedTickCount": 1
+},
+"Df3ivnUMc9MyHn2XoNk8hmry8f6t5YaAsMVn91BA3V5o": {
+"start": -26700,
+"initializedTickCount": 10
+},
+"DieXHCL9ymogu7yaKuLQVMkGgsjLpbRc2yh5UnxUcn4U": {
+"start": -31860,
+"initializedTickCount": 2
+},
+"DjLruvtm784isZSJ8L7wkYWy4cGuFChk3ZyKKY3QbZ1B": {
+"start": -48480,
+"initializedTickCount": 1
+},
+"DjP23TchHyuernHBaxwccxkJj9XCKVVfpFHZSofy78Gn": {
+"start": -30420,
+"initializedTickCount": 1
+},
+"Dm2fz8xtj8CyTZ8cZ55ubVVQpPcpnAbBm91yFyambEqF": {
+"start": -276360,
+"initializedTickCount": 2
+},
+"DnVjawSKKLg5zMJMSuuxx5tF3ZbpfSqFcHbb9K7LeUHQ": {
+"start": -23100,
+"initializedTickCount": 60
+},
+"Dqg7bVouHeeEPCYZMek2i3Qc3Y7Ja3wDrVyAvnuvTsFm": {
+"start": -35100,
+"initializedTickCount": 2
+},
+"DsWmiZngGe3a8CgBNxRr6cpW34LQJKWQS1BvThvRHvT2": {
+"start": -7020,
+"initializedTickCount": 0
+},
+"DvsEwgMt2mh4bdzDNsqKVmtJdQ1MHgBuBocJiGB7wV3S": {
+"start": -12120,
+"initializedTickCount": 6
+},
+"Dx7u93Y7Zo5hGSa9fXCTMWSwAi9PiBi2hkSgq9Le3x2A": {
+"start": -25380,
+"initializedTickCount": 60
+},
+"DxsQGCF9GxGnZAkrS8fe2DvAsVQwUsXcWHiN47H8mbui": {
+"start": -15120,
+"initializedTickCount": 27
+},
+"E33N1jaRJuJAubsTTJDfVYQUKwYJ6T8DMxLcC19XR41R": {
+"start": -23640,
+"initializedTickCount": 60
+},
+"E4uF2gSJqbAKdTxEkM6STPCbS9PLGey8yME74UQCHcT3": {
+"start": -23880,
+"initializedTickCount": 60
+},
+"E5f4PrpzzrHnsTg3mC7HdyKQjMCwDUq4ebyh5DMmruMH": {
+"start": -26760,
+"initializedTickCount": 9
+},
+"E6HE962aWQ4hae1NcW9mJh51bUCMiHr7mtMyvjbcwQTP": {
+"start": -77040,
+"initializedTickCount": 1
+},
+"E6LBY5NcryNqn8DVCeCYRjGk3sp3VnY3gPwRGNowvz8v": {
+"start": -24780,
+"initializedTickCount": 60
+},
+"EA49fLfMmpQs7DRr2pJvFdKgj5VDbBXJmBZ9S6p8KnPN": {
+"start": -58320,
+"initializedTickCount": 0
+},
+"EBoyW5JS2acrvBRgQdCfzuXqvh4xaSyEuy5g8ppyLggA": {
+"start": -14520,
+"initializedTickCount": 17
+},
+"ECiyVMnZvzzjZXkKBk79fNUpV66zFbcJJLuXW7i3qouf": {
+"start": -20400,
+"initializedTickCount": 51
+},
+"EEktaovVnPe2ocKHHzo2njzSNBezj1h7gQ6CCtvgfh7B": {
+"start": 53640,
+"initializedTickCount": 0
+},
+"EKfqz6WF3SWfRsxJ9a4QF2Yi43V7zMYiW8inBY8XbJBt": {
+"start": -6360,
+"initializedTickCount": 0
+},
+"ELZLWBmFVcDDb1koNfqLxjcmEj6aJ7uMAEZj7Mmm8YFS": {
+"start": -33540,
+"initializedTickCount": 1
+},
+"ENyCVkKSqfEJQ6TKDjPnkEjNhEBEmLLS3pG5pRcjBYRN": {
+"start": -6000,
+"initializedTickCount": 0
+},
+"EQkz4SkVvMBHzUgr91Ko8rg6xqFzE7fkSQDdo68Ae2PK": {
+"start": 112680,
+"initializedTickCount": 0
+},
+"ERNMyDdepwef45LvMy5hhJH8qvJsmS5UYsPoXt8zjeKb": {
+"start": -5580,
+"initializedTickCount": 1
+},
+"ESNYmXUT197brsedje1VQEq1FUiP54HRM52UciuhVkMb": {
+"start": -27000,
+"initializedTickCount": 7
+},
+"ET5ciHwQP9obobR7XX8Kysvu85sHJzWvdnSc7PC8iS1o": {
+"start": 22980,
+"initializedTickCount": 0
+},
+"ETKU7BtwKU2dKvGzNKodJoRWj1mdNefms6YiojQ6BFo2": {
+"start": -7680,
+"initializedTickCount": 0
+},
+"EWUkSMVBYmBDwUEdXpoY1y9fzwT5QcBCuJu9MGTYDZKQ": {
+"start": -22620,
+"initializedTickCount": 43
+},
+"EWsVBEKstrW2egtvDqLzJDA9t6j2CnzKo2aZTsiKPFR1": {
+"start": -15600,
+"initializedTickCount": 30
+},
+"EXUnbj6DDtr9QGbpDSeHBSk8ginVGG72qmZF1S5TkbUJ": {
+"start": -116100,
+"initializedTickCount": 0
+},
+"EY35YrwLA2EeAWyziPKdsXUPN3QWw33hZDFgBaZ1fqE8": {
+"start": -7560,
+"initializedTickCount": 0
+},
+"EYBFzWWDtFhBggaNGLpRV1eXZAbHTzF666LdeoyXYJxL": {
+"start": -33060,
+"initializedTickCount": 0
+},
+"EYtmRpmPAdbDv3kBSyYGBT7smp9xCRac2g5zSkqVxgT7": {
+"start": -12300,
+"initializedTickCount": 5
+},
+"EbtE4reQNYrsnss9zgxsw8GxYJjnS6q3Smzh3Cam9o8X": {
+"start": -1200,
+"initializedTickCount": 1
+},
+"Ec2xXsQmMTFSLqxa2D8CZpnY5G3Cv6Lu3DvWNRAfGRmD": {
+"start": 27960,
+"initializedTickCount": 0
+},
+"Ee5Z4MGvqBJ4iXyKn5hbkcdv5DL7AsSmQ5MpzyBbPnEo": {
+"start": 1020,
+"initializedTickCount": 0
+},
+"EfizSZLAWcFbSMbce4pvz27W6trmsR2EK5RoEngPCbSp": {
+"start": -10500,
+"initializedTickCount": 2
+},
+"EgLwEjYBpeBZEqmPoVxCA5xPRFh1ZgAVz16NYfrCjxZV": {
+"start": -20640,
+"initializedTickCount": 46
+},
+"EmgBhMCWFwjVoLoYM5GTLaZYxQjT6F7uDLDg2Sb9HX8T": {
+"start": -12540,
+"initializedTickCount": 4
+},
+"EnHms2rnDjQcBwdUQJbrPfbMeESLd8qNmKzH8ZfqohVs": {
+"start": -12480,
+"initializedTickCount": 5
+},
+"EpZdFLNpsAqfa9ZXmjbMpbsdTjcdwGvK7iJxbwAExTMH": {
+"start": -25920,
+"initializedTickCount": 60
+},
+"EszuBtcjU8qvqPtnf8yBuiG2mV7b3XBJHZDPQThT2QUK": {
+"start": 21360,
+"initializedTickCount": 0
+},
+"EtBfVNkpcFrVhKAhMhess7LpHnVt9Hrm8zHLYEwQrV1S": {
+"start": -2220,
+"initializedTickCount": 0
+},
+"EvK1cFeWkrTBccpWV1afMy7dsmip3URN5Jy9wP2Ga8u1": {
+"start": -15060,
+"initializedTickCount": 25
+},
+"ExExWTX6cvUnm6hQw3nShtkYeW6HHGXfG2um4ZCQvXZa": {
+"start": -10140,
+"initializedTickCount": 4
+},
+"ExTJvNUsiHHAtPLBuqUsKJzqBkGxku745FSnXW996WSn": {
+"start": -23460,
+"initializedTickCount": 60
+},
+"Eys2rXLsfauuTu5FRiAZ9nrygMm5uau9DGqJGVjGUTG8": {
+"start": -9900,
+"initializedTickCount": 0
+},
+"EzBLk9jR7cHEhCXVths865CKMfAfTEFUFAgfzTvmBo6x": {
+"start": -34860,
+"initializedTickCount": 1
+},
+"EzLkQr2vuwcbaJJcraHa3xXHZ2nTe8SgHNgxnhNuP2rT": {
+"start": -24300,
+"initializedTickCount": 60
+},
+"EzoXZmtxovJRGr8jjgMu4ZZekYARq9Wqu6koesLfeLAT": {
+"start": -28740,
+"initializedTickCount": 2
+},
+"F1zV3MmDkaKDZvuehYK74356o6uavRxJDH3EqRXPTbng": {
+"start": -31620,
+"initializedTickCount": 0
+},
+"F2KNSe2agHZpjU3WiPhWUdr99gEDf8aSq8fMd7qT7u1V": {
+"start": -7800,
+"initializedTickCount": 0
+},
+"F2Px6xSqczgx7XypDtfK5CdSUX4GXeQf39swxyyyfZr1": {
+"start": 45540,
+"initializedTickCount": 0
+},
+"F2r5iTbe1szjCH9gY4GQaq2vNsbfugXPNi3bwDMTxb2o": {
+"start": -4560,
+"initializedTickCount": 0
+},
+"F5R9bENxUDRLVhF4FjtbVznyiR6MsFBBNN4hVAvvVG4B": {
+"start": -30840,
+"initializedTickCount": 1
+},
+"F5xkhUgrSV11DNYFHrxCd7rHPLSSP7irW6AqSosKvkmF": {
+"start": -11460,
+"initializedTickCount": 2
+},
+"F9M9a7bzie2BjSCPDJYmPywzDKwsMfcL31MUrfV1xnPY": {
+"start": 52440,
+"initializedTickCount": 0
+},
+"F9ov49t4zm3ZzXn2B2VJuqA1SAEnYfw9pFx8mSFnDRNd": {
+"start": -31680,
+"initializedTickCount": 0
+},
+"FA42doycAmrpuXmVx4sXeAio8Xi7SzqxK7guQYproFMB": {
+"start": -18360,
+"initializedTickCount": 46
+},
+"FB43QQUfLzjsY3n4gv3PeGHmhE6tdVXfRSEz4zgTyHPT": {
+"start": 1860,
+"initializedTickCount": 0
+},
+"FBMvXe689es3j1qKXpQYPLAhyUs2ABf8Fvv89hJWddnR": {
+"start": 4020,
+"initializedTickCount": 0
+},
+"FDU9fNtTVep8DqnYiMw9sQWWGb1j6r1FJriTGtstTfu3": {
+"start": -3420,
+"initializedTickCount": 1
+},
+"FEY4BKcBzUDN3EnU7EWD4ozovTYcoAWghF8stkSzQLKR": {
+"start": 28440,
+"initializedTickCount": 0
+},
+"FHVvE5P4CVxuzhcFXQFCgJAXtvehw8XXYMpQoYetK65k": {
+"start": -5700,
+"initializedTickCount": 0
+},
+"FP5LPamba5zkF6WbU6qfsnYMmvHFJ8WsM6UeqpQEjAC4": {
+"start": 53460,
+"initializedTickCount": 0
+},
+"FPgKdPCeETaHvukpqGa55m5XmrCmDSrC8xVrYsHgSqjJ": {
+"start": -20760,
+"initializedTickCount": 47
+},
+"FRXEFGPQqVg2kzdFdWYmeyyiKMgCBudwCkQWWpnv4kQi": {
+"start": -14160,
+"initializedTickCount": 16
+},
+"FRrLtZjTAh43iCkKih3ZzYFPwTvkcjqMQFj2pG2nKcLP": {
+"start": 52320,
+"initializedTickCount": 0
+},
+"FS1kvUCAsnBvQco1WSU6SAakJd98o5fC5SyVggzFNjKJ": {
+"start": -10680,
+"initializedTickCount": 3
+},
+"FTHhWfk8jykZUgLVwd3sKXhmViU3iv3YSZs7t9FjeqKm": {
+"start": 14160,
+"initializedTickCount": 0
+},
+"FTJQyabu28wgbzxKkokVZLsx3715YCX6G9oahPBxNVFf": {
+"start": -11280,
+"initializedTickCount": 1
+},
+"FTKwA4UG8nKg5X7DV2ueMEE2AFSgMHvQSY8zbB3bAWjc": {
+"start": -12360,
+"initializedTickCount": 7
+},
+"FTcSxG4RAsg7CPi5rYX5CEMCUyaTHykubSnHr8JLSo4x": {
+"start": -29760,
+"initializedTickCount": 2
+},
+"FTo1JFUFgDWPw259Q6CFZBfxQdcF6qeULQ4CNRmLKAsZ": {
+"start": -26100,
+"initializedTickCount": 13
+},
+"FTqc3tHjsSjU7ZgFFwdP8DtSRC8RRq6qcD5TobMLUjpK": {
+"start": 44640,
+"initializedTickCount": 0
+},
+"FVGpZaheYCfMD17pAsMzWX5uVuDzbkmMLtTHmzz2ykgi": {
+"start": -22800,
+"initializedTickCount": 56
+},
+"FZu7385zVSA7ZkC54a9p1anKXuLcHUga1g9RYqncsHir": {
+"start": 43140,
+"initializedTickCount": 0
+},
+"Fa7VEzfBX4NHti44uSoafnM8KZoG9r8qVcMPJGHND6m6": {
+"start": -2520,
+"initializedTickCount": 0
+},
+"FajZPWbtTpEABBpGoWMMRsfWV9UYnULvT9dqM4BKcZ5n": {
+"start": -72000,
+"initializedTickCount": 0
+},
+"FbCfCfqMawjHNAk2dLjTQqpENVMwXWxqyG3usXjpvC1B": {
+"start": -34320,
+"initializedTickCount": 1
+},
+"FbaZMpDvprCE427gh1K2Xc6Df55KRnFY98NvuVr8mzzA": {
+"start": -21600,
+"initializedTickCount": 43
+},
+"Fbc3ZLMNu1XyPZrnrZTjEzboi9Yq2oE3giQxCN7tSigT": {
+"start": -540,
+"initializedTickCount": 0
+},
+"FbdEHasBNGFGcHTPPGJsy5DbE26ojJ16QYBC4pr2BesE": {
+"start": -20940,
+"initializedTickCount": 37
+},
+"FecSxnqMihfSmmXwMT9E1qJKjTcCzWvck5miT2K1BU8d": {
+"start": -31020,
+"initializedTickCount": 0
+},
+"FgjF14aoWhKVBYgEgEjnKbo3BGjmzSBAUn5sY9qfBnAj": {
+"start": 52500,
+"initializedTickCount": 0
+},
+"FhgDkFaZDCg2xB6G8pG8eQZP3VUvprrr3tCC1ZUqZmUt": {
+"start": -31800,
+"initializedTickCount": 1
+},
+"Fisf3fMngxsauWFnUPbTSGh5AmvMQ7kQQ2VdWAYGkSQu": {
+"start": -2760,
+"initializedTickCount": 0
+},
+"FjTqys8541zuyY68CMFaVDkMQdQQSnEtWppzRnSX4i9p": {
+"start": -131220,
+"initializedTickCount": 0
+},
+"Fnn1Gj9DgAHUqxXPe4pxMfFMnyK7z5g6BT1C3anVWcac": {
+"start": 1320,
+"initializedTickCount": 0
+},
+"FqqLTne7xboxEGHbeCzvwZjgHBebFh62G8PuWptHzL9R": {
+"start": -32280,
+"initializedTickCount": 0
+},
+"FryFrud4ir18FPx8yMPaZWnXuwyMpEymqpUSoqSsLG53": {
+"start": -12180,
+"initializedTickCount": 3
+},
+"Fs6dvg4JN2kGvVmnLy8upR2fBCXApLzuaJTfg6KRZEtH": {
+"start": -20520,
+"initializedTickCount": 39
+},
+"FyQb3XtiD25XW8UN2o8EZNH7AzRf8dnT4uoQdNXWqn85": {
+"start": -116940,
+"initializedTickCount": 0
+},
+"G2B3234WNM8peCZ9KKpyW1WyB8xALg9YG1Bv9KHhBsKU": {
+"start": -31260,
+"initializedTickCount": 2
+},
+"G5ZFL7CzPrfff64qt2v5zkU7Zc62SDB6AkXUYfZAi91T": {
+"start": 60,
+"initializedTickCount": 1
+},
+"GAuEPKuoEXgeLRcH8U6HSEvctPpKAjJ5tAzJXNKkPRdF": {
+"start": -12000,
+"initializedTickCount": 5
+},
+"GBEghaNmJbtRAUNNYj7WahbGZH9p82PB5cfzF3cHrZym": {
+"start": 55620,
+"initializedTickCount": 0
+},
+"GCC8e5Ptr9V4pQbzZpXHvutZcNmyBaTs19se2FCwpLrg": {
+"start": -28980,
+"initializedTickCount": 2
+},
+"GEUK8qFL7ezDpbsGKTc4eywBq6EzUWA4SudRwKxuafcD": {
+"start": -5940,
+"initializedTickCount": 0
+},
+"GF1qWGxdQ7S3iZSZErRoJoGzrBaSrjMPfeNfVHJziRwr": {
+"start": -4740,
+"initializedTickCount": 0
+},
+"GFPNnVK8s8BAS8tYd67k5kjpy3bT19x8j7vMYS8FE11G": {
+"start": -16440,
+"initializedTickCount": 32
+},
+"GFdxMGQutULdktSJx3gnGrbL2QCJkKugGYivMvV3LNYt": {
+"start": -36180,
+"initializedTickCount": 1
+},
+"GGC1rDHMToZs5rBNRsYdXdKDmZjwZn41DktdnHtKRTyX": {
+"start": -20040,
+"initializedTickCount": 39
+},
+"GLyVH8Ls7thcEKZ5wvAoUcCVP4eYAfADZVzpWu8agXWr": {
+"start": -11880,
+"initializedTickCount": 4
+},
+"GP15EVtskjYjVkHiSVuA83GcFs7HJzGQNPU5TqJ6pkAB": {
+"start": -26880,
+"initializedTickCount": 7
+},
+"GQDrbr16kCqKhQ211Ry6KLMcQ1KSWz4ufo6EtAkdX4LA": {
+"start": -6540,
+"initializedTickCount": 0
+},
+"GRviqywonuXJMi1hcHhsSfy1rCJhmi7KhQgL2jn72Zpv": {
+"start": -28020,
+"initializedTickCount": 9
+},
+"GTHq6oRPjhsZfdMG5PDxMwnuCm5gzc1ujYvoigTGpTmz": {
+"start": -18720,
+"initializedTickCount": 34
+},
+"GTtRJKNBGCVEM22qLggEWVHm7ajtqYAsDaBoMk8xgKm7": {
+"start": -7620,
+"initializedTickCount": 0
+},
+"GW23pxgfUjJAME5cYhSCv6SqTJ7pfUCqcadjNMqc6SbE": {
+"start": -24180,
+"initializedTickCount": 60
+},
+"GW4ycg9Ss2waUuzHzm8f2kDzZH4ChN8goXwJ6zK9xG39": {
+"start": -12900,
+"initializedTickCount": 6
+},
+"GZHsYyUS2au9y6PMvAio29KwCZmNh4wrH1wUoovnqwgG": {
+"start": 52380,
+"initializedTickCount": 0
+},
+"GamghVsuRYt6yuHQyapXxx6wXYNvRTKiVUpr9FimGLKK": {
+"start": -21180,
+"initializedTickCount": 43
+},
+"GbhR1Knntex3auFYaiWgz658TKD5zadFeVv3efQ6Viy2": {
+"start": -6180,
+"initializedTickCount": 0
+},
+"GcczxoNbkfR6ufUJ657LujZNEqzzWhXhLRcYGboAtDiS": {
+"start": -8220,
+"initializedTickCount": 1
+},
+"Gcj4pAg5iCscfti6kWzzat9KLRRLUi4bq3LceyF6haMD": {
+"start": -35760,
+"initializedTickCount": 0
+},
+"GfSix1MvKPN8gc2msiAgX1BLinCEPznCG5MwgabmqUot": {
+"start": -30780,
+"initializedTickCount": 0
+},
+"GfrgBkgXP2ARBydbLChMbsoDNAQA3H9p26UTQSdXxqpA": {
+"start": -43440,
+"initializedTickCount": 0
+},
+"Gfu2N7wxziw33pYJ5SMLx6fzgWUK8m1cBDFAFwjr5Gnx": {
+"start": -28560,
+"initializedTickCount": 3
+},
+"GhGf4xRPRPQ7QzGsRRew7xwFjK7CTrX2XckXBktunPjK": {
+"start": -23760,
+"initializedTickCount": 60
+},
+"GhUpugGqrWY6TC9LTWdqojitMJCwXeTfU1p4Wua9a6n8": {
+"start": -27420,
+"initializedTickCount": 7
+},
+"Gia6V7bQ7ZxEUbeEECfrHqN64JbQoXZvzpyn9nr2vs4k": {
+"start": -5100,
+"initializedTickCount": 1
+},
+"GjBttmasvmeF7rdRQDjgLSYkxkSGmUYgD7hrtQrCrKKz": {
+"start": -25320,
+"initializedTickCount": 60
+},
+"Gm69LoSYSjRRAEaFYwV37pKeYUqpk8JjDFprxsVs8MDD": {
+"start": -27840,
+"initializedTickCount": 4
+},
+"Gmx3pdxJ4gFeDJVNvsHBnwdzQW98jyfwEocKuMoWyUta": {
+"start": -23340,
+"initializedTickCount": 60
+},
+"GppCmQmtCfJfduaGZdFeBmJxMoAdAjwCpqjrZfBKAqWj": {
+"start": -12720,
+"initializedTickCount": 7
+},
+"GrvBMzugyHmKscjZQgy3PzuZaJ6RwYbEvrGNDskHCfyW": {
+"start": -18780,
+"initializedTickCount": 33
+},
+"GsMHDaqRmofaSy41RJ8yhW2QUdFc4LJA2DYNBASfkjJd": {
+"start": -25200,
+"initializedTickCount": 60
+},
+"GsNziEtensKCpUp4gBq2w5CLZYyTgzMXHgEisB1kcx2B": {
+"start": 113220,
+"initializedTickCount": 0
+},
+"GsSTAq6mVM18rL3VfTkj1VvPJZikT5BBmnRgSbURQGBc": {
+"start": -22080,
+"initializedTickCount": 43
+},
+"GvKvVsZSESWNKFGoVaLUrQhoag8dQLp5RXGKJZwogjCX": {
+"start": -17820,
+"initializedTickCount": 29
+},
+"GwFcjJYjZ56W7jRRTPf9Piu7xRB4S3qnZaDPuzbzrH5y": {
+"start": 50280,
+"initializedTickCount": 0
+},
+"GzadeUdgDTjuori7zi792mJJhuaMwRe8aULJ7RKhiNK6": {
+"start": -13980,
+"initializedTickCount": 15
+},
+"H1BFfyq3E7MLcyDVhVVw2nuaR2VLycbUxPRETUpSYoH5": {
+"start": -26640,
+"initializedTickCount": 7
+},
+"H35EVma7D3a26WfwdmW4LQUKkpruszuMrgK9eRtJCqpj": {
+"start": -34740,
+"initializedTickCount": 0
+},
+"H3BK2KAonPNHB1Kp5wnohh4oaVUpHirUetopnZPbnhbb": {
+"start": -32760,
+"initializedTickCount": 1
+},
+"H77JMJXMFbCAHLWxafKbUYs3Ln76vC44fGyS2F85uWfd": {
+"start": -15720,
+"initializedTickCount": 22
+},
+"H83KafpebaTj6MzD2r3YEEnHEH8dJJMr66nHCk9z355c": {
+"start": -25980,
+"initializedTickCount": 60
+},
+"H8JCzoPFBo2jd9f3dCGcy2oprpjzGaS2FhQixJEKW8FT": {
+"start": 112920,
+"initializedTickCount": 0
+},
+"HASTJffvoABdCpxS7UjgVvi4VzujQ5TcugTD3zLwFnxe": {
+"start": 27000,
+"initializedTickCount": 0
+},
+"HBrnupkdxdNjKU5qazDbpxRYaCAydBxUM2zeR22NVd1c": {
+"start": 43200,
+"initializedTickCount": 0
+},
+"HBu8VNpTdpNynQGoKxK77dM93yT5YperXjyc89wXZHuP": {
+"start": 26040,
+"initializedTickCount": 0
+},
+"HCm2qj8NEs48ND6h1Ln7qKYGqzhBgLtiUcwMenG3UQtV": {
+"start": -19440,
+"initializedTickCount": 36
+},
+"HDC1uiopZSB1cEW2MG61dmdJAxs9P4XcxYwmUZP6ujS9": {
+"start": -14640,
+"initializedTickCount": 21
+},
+"HEewsAx2PABtH9JLPC3RTE8natbv3i14D4kqucKi81gm": {
+"start": -13500,
+"initializedTickCount": 19
+},
+"HGQzfqsre5TmZ4vDPfhPWVNBs6bdERqUbSUXMGU2WRyg": {
+"start": -16800,
+"initializedTickCount": 32
+},
+"HGRrGY46aHydTwdBkMphGnryAz3QYRv72PkLRwC1E2Eg": {
+"start": -118200,
+"initializedTickCount": 0
+},
+"HGcV9zqGpbXvykMeTdHhVryaggytBENZ284NeHiq6neB": {
+"start": -23280,
+"initializedTickCount": 60
+},
+"HJ8a7advdXTYBuYtV5tnPteu6rFCZvVANmtVDKzQZKB8": {
+"start": -121560,
+"initializedTickCount": 0
+},
+"HKaVLqFcXjqpufraqXYX3xEAro2fTwk7WRDMvizdfos2": {
+"start": -207300,
+"initializedTickCount": 4
+},
+"HKgyeU1AKDck5HRZVxc5RX1p9LiuTNixm8gvN9bM8MNX": {
+"start": -12960,
+"initializedTickCount": 8
+},
+"HLSQ6TdPjGoD7z2TQX9Ut9KAfDKi7nUfAeS1YFS9xbcA": {
+"start": -13860,
+"initializedTickCount": 20
+},
+"HNjt1F2yiYmzDq4QH3RWs6CYfSKdzDoEFXGH8gpaU9Fe": {
+"start": -9960,
+"initializedTickCount": 2
+},
+"HVfrwPyUmRi7B5KuJi7A8FxcgriKeEnMJ6bJH7UmHWNw": {
+"start": -25500,
+"initializedTickCount": 60
+},
+"HWJmeYDcLDsgx527FjvDz2Vsmrc2ELzTczP1sRG11yJT": {
+"start": -8760,
+"initializedTickCount": 0
+},
+"HXh51YEDAiertwRXQGXWqUzeF2KBsDDJheL2o443nS8C": {
+"start": -18180,
+"initializedTickCount": 33
+},
+"HY2A1tbNCnNabF2cQ3uRKHJVT2nWwgziEHTmGBZmZv5i": {
+"start": -32520,
+"initializedTickCount": 1
+},
+"HaMV8RZxLjWKkWAgcqJXrendkt5tbKAyNy4pyTeNq3cb": {
+"start": -10260,
+"initializedTickCount": 1
+},
+"HajikNWeiZ22g7yKA7F3ruHr2rAU3Ac1xecV2kgYkezC": {
+"start": -13800,
+"initializedTickCount": 19
+},
+"Hbasb8d9kTXgkALUpDr9RE5Yn9A21Uid2YV4HheYJBKM": {
+"start": -8700,
+"initializedTickCount": 0
+},
+"HctMefLrhJnwwWadqG5Lbi2hzciy3A9ixdT9f837zvZB": {
+"start": -26940,
+"initializedTickCount": 12
+},
+"HdPUCrpKaW5w17jYdhRgnCgBjj2baz6mQrQgRoSzq4Hv": {
+"start": -11760,
+"initializedTickCount": 4
+},
+"Het6TRPoNQkJaH3frAunijFwijtLd7KBqsjv7DRjLJ5s": {
+"start": -17760,
+"initializedTickCount": 28
+},
+"HfbfupHk98Ef1QQuUbuqzvtQaMwUKg2eRfu4WRnknVEW": {
+"start": -19320,
+"initializedTickCount": 42
+},
+"HopKrWdfmCWViSJ79P3sbKDWcxrKwfcpKYMEMfHMtR6X": {
+"start": 6900,
+"initializedTickCount": 0
+},
+"Hp4Hpw9LcfQQuUKoWG7jQYLtNVAMbh92PWnQ9MCmfvHw": {
+"start": 7260,
+"initializedTickCount": 1
+},
+"HpExFVDvsZ9qLiGPzw9Vps8ENzBmsFytyFN7XxPhDmvZ": {
+"start": -9540,
+"initializedTickCount": 1
+},
+"HqXmFaFp46j6KtApxYBPLyQdbXPXMJCFU17C2V3BfVeo": {
+"start": -23040,
+"initializedTickCount": 60
+},
+"HrZUP4eboVP8EvwQzgaW7sDrth2h8MPLu1y6fUwciTGz": {
+"start": 31080,
+"initializedTickCount": 0
+},
+"HtXU16s2qhj71Nu7AYWv44Dpn5DjiBJv36pYpmvcLbtK": {
+"start": 48540,
+"initializedTickCount": 0
+},
+"HuvvaJSCmFg8F6YBpwyrDshzTi3wb2tvLQBNdXdTFqFm": {
+"start": 120,
+"initializedTickCount": 0
+},
+"HwBbd2xNv34tX2SiyGhTwwPrfguZHbSgM9gvgUzgqmfg": {
+"start": -33120,
+"initializedTickCount": 1
+},
+"HzLGCv2ZgFTKPz6cX5Rpqg9iTzeS5jM84Dt7FREkAm34": {
+"start": 54780,
+"initializedTickCount": 0
+},
+"J16JE3oEhapDrCLA88snNR1xryQ1pN2yvpthWqEmtTzM": {
+"start": -29280,
+"initializedTickCount": 1
+},
+"J99LrLSvvvina6RWTcPu88ZN7MdcaV8WD91WL4i3dQHU": {
+"start": -20220,
+"initializedTickCount": 35
+},
+"J9K5CMB7MKnDa8EVaEEkFCd7pDw5g7fV3Q2ywZmCSxsL": {
+"start": -28920,
+"initializedTickCount": 1
+},
+"JBEY3V7B7zSDRe9gMd6dKQSpwfe8j8y8mx42UJWLoJZc": {
+"start": -30660,
+"initializedTickCount": 1
+},
+"JCQwkxWu53UDXBVnfKk99D7GZPM6PoEhNgMPNb4HgWdi": {
+"start": -25080,
+"initializedTickCount": 60
+},
+"JDmXwvhY5m2gVL1YsJjrfi38iLG9KUNfteqTEpYpSJoT": {
+"start": -22140,
+"initializedTickCount": 46
+}
+}
+}

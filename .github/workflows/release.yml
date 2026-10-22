@@ -29,6 +29,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The UI is a Vite build embedded into the binary, so every job that
+      # compiles a binary for use needs Node and the locked dependencies.
+      # pnpm comes from the packageManager field in ui/package.json.
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ui/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
       # GoReleaser normally looks for the nearest reachable tag. If published
       # history was rewritten, that can silently skip several versions and put
       # every commit since an old tag into the changelog. Select the previous

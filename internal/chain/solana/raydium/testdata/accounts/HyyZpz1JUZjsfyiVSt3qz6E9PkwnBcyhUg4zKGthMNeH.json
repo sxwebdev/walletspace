@@ -1,0 +1,12 @@
+{
+ "source": "https://api.mainnet.solana.com getMultipleAccounts (base64, confirmed)",
+ "captured": "2026-10-22T11:45:31Z",
+ "slot": 460023197,
+ "pubkey": "HyyZpz1JUZjsfyiVSt3qz6E9PkwnBcyhUg4zKGthMNeH",
+ "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+ "lamports": 2039281,
+ "executable": false,
+ "space": 165,
+ "data": "xvp6877brTo9ZfNqq8l0MbG75MLS9uDkfKYCA0UvXWFBV7BYDzHF/ORKYlgtvPnXjudZQ6CEo5OzUDaNIomTCKzPm0UHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+ "label": "vault USDC of amm v4 7TbG"
+}

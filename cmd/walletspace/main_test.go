@@ -1,12 +1,19 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sxwebdev/walletspace/internal/chain"
+	"github.com/sxwebdev/walletspace/internal/chain/chaintest"
+	"github.com/sxwebdev/walletspace/internal/network"
 )
 
 func TestParseCommand(t *testing.T) {
@@ -191,5 +198,106 @@ func TestBrowserEntryPointKeepsTheTokenOutOfArgv(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("cleanup left the entry point behind: %v", err)
+	}
+}
+
+type headersStub struct {
+	asked int
+	err   error
+}
+
+// Headers answers with a credential that names the endpoint, so a test can
+// tell the probe got this endpoint's credential and not some other.
+func (h *headersStub) Headers(_ network.Network, endpoint string) (http.Header, error) {
+	h.asked++
+	return endpointCredential(endpoint), h.err
+}
+
+func endpointCredential(endpoint string) http.Header {
+	return http.Header{"Authorization": {"Bearer key-for " + endpoint}}
+}
+
+// The Node Doctor probes each endpoint with its own family's adapter. A family
+// without one fails the probe — it is not probed as Tron, which used to be the
+// fallback for anything that was not EVM — and its credentials are not even
+// resolved.
+func TestDoctorVerifierProbesWithTheOwnFamily(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		family    network.Family
+		wantErr   error
+		wantTron  int
+		wantEVM   int
+		wantAsked int
+	}{
+		{name: "tron", family: network.FamilyTron, wantTron: 1, wantAsked: 1},
+		{name: "evm", family: network.FamilyEVM, wantEVM: 1, wantAsked: 1},
+		{name: "unknown family", family: "bogus", wantErr: chain.ErrUnsupportedFamily},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tron, evm := &chaintest.Adapter{}, &chaintest.Adapter{}
+			chains, err := chain.NewAdapters(map[network.Family]chain.Adapter{
+				network.FamilyTron: tron, network.FamilyEVM: evm,
+			})
+			if err != nil {
+				t.Fatalf("chain.NewAdapters() error = %v", err)
+			}
+			credentials := &headersStub{}
+			verify := doctorVerifier(chains, credentials)
+			item := network.Network{ID: "net", Family: tt.family}
+			if err := verify(t.Context(), item, "https://rpc.example"); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("verify() error = %v, want %v", err, tt.wantErr)
+			}
+			if got := len(tron.Calls()); got != tt.wantTron {
+				t.Errorf("tron adapter calls = %v, want %d probe(s)", tron.Calls(), tt.wantTron)
+			}
+			if got := len(evm.Calls()); got != tt.wantEVM {
+				t.Errorf("evm adapter calls = %v, want %d probe(s)", evm.Calls(), tt.wantEVM)
+			}
+			for _, call := range append(tron.Calls(), evm.Calls()...) {
+				if call.Method != "ProbeEndpoint" {
+					t.Errorf("adapter call %v, want ProbeEndpoint", call)
+				}
+			}
+			if credentials.asked != tt.wantAsked {
+				t.Errorf("credentials resolved %d times, want %d", credentials.asked, tt.wantAsked)
+			}
+			// The credential resolved for the endpoint reaches the probe
+			// unchanged; without it every keyed node would fail as unauthorised.
+			for _, probed := range append(tron.Headers(), evm.Headers()...) {
+				if want := endpointCredential("https://rpc.example"); !reflect.DeepEqual(probed, want) {
+					t.Errorf("probe headers = %v, want %v", probed, want)
+				}
+			}
+			if got := len(tron.Headers()) + len(evm.Headers()); got != tt.wantTron+tt.wantEVM {
+				t.Errorf("probes that received headers = %d, want %d", got, tt.wantTron+tt.wantEVM)
+			}
+		})
+	}
+}
+
+// A credential that cannot be resolved fails the probe before the node is
+// contacted without it.
+func TestDoctorVerifierStopsOnACredentialError(t *testing.T) {
+	t.Parallel()
+
+	tron := &chaintest.Adapter{}
+	chains, err := chain.NewAdapters(map[network.Family]chain.Adapter{network.FamilyTron: tron})
+	if err != nil {
+		t.Fatalf("chain.NewAdapters() error = %v", err)
+	}
+	unresolved := errors.New("WALLETSPACE_KEY is not set")
+	verify := doctorVerifier(chains, &headersStub{err: unresolved})
+	err = verify(t.Context(), network.Network{ID: "tron-nile", Family: network.FamilyTron}, "https://rpc.example")
+	if !errors.Is(err, unresolved) {
+		t.Fatalf("verify() error = %v, want %v", err, unresolved)
+	}
+	if calls := tron.Calls(); len(calls) != 0 {
+		t.Errorf("the node was probed without its credentials: %v", calls)
 	}
 }

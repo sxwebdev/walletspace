@@ -1,0 +1,12 @@
+{
+ "source": "https://api.mainnet.solana.com getMultipleAccounts (base64, confirmed)",
+ "captured": "2026-10-22T11:32:13Z",
+ "slot": 460019441,
+ "pubkey": "9iFER3bpjf1PTTCQCfTRu17EJgvsxo9pVyA9QWwEuX4x",
+ "owner": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+ "lamports": 1804445,
+ "executable": false,
+ "space": 117,
+ "data": "2vQhaMvLK2/5BAAMQp0XD//kFvH0bshXTH95CgVQFr7cVCJx/Cp2eMCy6cDUAQBkAAAAAQBAnAAAAAAAAN2JaHqSiXZJS7Te58XKrpNlU2qJ9oFAfTjo+MajHRPDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+ "label": "clmm amm config index 4 (pools BZtg, 3nMF)"
+}

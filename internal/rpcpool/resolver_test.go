@@ -3,6 +3,7 @@ package rpcpool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,10 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/config"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/storage"
@@ -458,6 +461,80 @@ func TestPublicIPRejectsIPv6FormsOfPrivateAddresses(t *testing.T) {
 			}
 			if got := publicIP(ip); got != tt.want {
 				t.Errorf("publicIP(%s) = %v, want %v", tt.address, got, tt.want)
+			}
+		})
+	}
+}
+
+// Discovery asks the service under the family's own path. A family the
+// service has no path for is refused before anything is sent: under the Tron
+// path, which used to be the fallback, the same chain id would name some other
+// network's nodes.
+func TestDiscoveryPathFollowsTheFamily(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		item     network.Network
+		wantPath string
+		wantErr  error
+	}{
+		{
+			name:     "evm",
+			item:     network.Network{ID: "ethereum-mainnet", Family: network.FamilyEVM, ChainID: "1"},
+			wantPath: "/api/v1/nodes/1",
+		},
+		{
+			name:     "tron",
+			item:     network.Network{ID: "tron-nile", Family: network.FamilyTron, ChainID: "nile"},
+			wantPath: "/api/v1/tron/nodes/nile",
+		},
+		{
+			name:    "unknown family",
+			item:    network.Network{ID: "bogus-mainnet", Family: "bogus", ChainID: "mainnet"},
+			wantErr: chain.ErrUnsupportedFamily,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var mu sync.Mutex
+			var paths []string
+			service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths = append(paths, r.URL.Path)
+				mu.Unlock()
+				_, _ = w.Write([]byte(`{"nodes":[{"url":"https://public.example"}]}`))
+			}))
+			t.Cleanup(service.Close)
+
+			settings := settingsStub{}
+			settings.snapshot.Config.NodeDiscovery.AllowInsecureRPC = true
+			resolver := New(settings)
+			resolver.lookupIP = func(_ context.Context, host string) ([]net.IP, error) {
+				if host == "public.example" {
+					return []net.IP{net.ParseIP("8.8.8.8")}, nil
+				}
+				return []net.IP{net.ParseIP("127.0.0.1")}, nil
+			}
+			discovery := config.DiscoverySettings{
+				Enabled: true, URL: service.URL, RequestTimeout: 5 * time.Second, AllowInsecureRPC: true,
+			}
+			endpoints, err := resolver.discover(t.Context(), discovery, tt.item)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("discover() error = %v, want %v", err, tt.wantErr)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if tt.wantErr != nil {
+				if len(paths) != 0 || endpoints != nil {
+					t.Errorf("discover() = %v after asking %v, want nothing asked", endpoints, paths)
+				}
+				return
+			}
+			if len(paths) != 1 || paths[0] != tt.wantPath {
+				t.Errorf("discovery asked %v, want [%s]", paths, tt.wantPath)
 			}
 		})
 	}

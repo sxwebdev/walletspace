@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/sxwebdev/walletspace/internal/account"
 	"github.com/sxwebdev/walletspace/internal/asset"
 	"github.com/sxwebdev/walletspace/internal/chain"
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
@@ -37,6 +38,7 @@ type platformFixture struct {
 	// settings is the same home manager the handler writes through, so a test
 	// can put a value in config.yaml the way a person editing the file would.
 	settings *config.HomeManager
+	chains   *chain.Adapters
 	evm      *evmchain.Adapter
 	tron     *tronchain.Adapter
 	doctor   *doctor.Doctor
@@ -89,7 +91,7 @@ func (f *priceFake) Requested() []string {
 	return append([]string(nil), f.requested...)
 }
 
-func newPlatformFixture(t *testing.T) platformFixture {
+func newPlatformFixture(t *testing.T, options ...httpapi.PlatformOption) platformFixture {
 	t.Helper()
 	home := t.TempDir()
 	settings, err := config.NewHomeManager(home)
@@ -117,6 +119,12 @@ func newPlatformFixture(t *testing.T) platformFixture {
 	if err != nil {
 		t.Fatalf("tron.New() error = %v", err)
 	}
+	chains, err := chain.NewAdapters(map[network.Family]chain.Adapter{
+		network.FamilyEVM: evm, network.FamilyTron: tron,
+	})
+	if err != nil {
+		t.Fatalf("chain.NewAdapters() error = %v", err)
+	}
 	nodeDoctor, err := doctor.New(
 		t.Context(), registry, rpcpool.New(settings),
 		func(context.Context, network.Network, string) error { return nil },
@@ -128,9 +136,9 @@ func newPlatformFixture(t *testing.T) platformFixture {
 	prices := &priceFake{}
 	assets := mustAssetStore(t, home)
 	handler, err := httpapi.NewPlatform(
-		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor,
+		spaces, settings, registry, operation.New(home), assets, chains, evm, tron, nodeDoctor,
 		prices, testAccess(),
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.NewTextHandler(io.Discard, nil)), options...,
 	)
 	if err != nil {
 		t.Fatalf("httpapi.NewPlatform() error = %v", err)
@@ -143,7 +151,7 @@ func newPlatformFixture(t *testing.T) platformFixture {
 	})
 	return platformFixture{
 		handler: handler, spaces: spaces, settings: settings,
-		evm: evm, tron: tron, doctor: nodeDoctor, prices: prices, assets: assets,
+		chains: chains, evm: evm, tron: tron, doctor: nodeDoctor, prices: prices, assets: assets,
 	}
 }
 
@@ -449,7 +457,7 @@ func TestPlatformSettingsUseETagAndServeClientRoute(t *testing.T) {
 		t.Fatalf("PATCH discovery = %d %s", updated.Code, updated.Body.String())
 	}
 	page := platformRequest(t, fixture.handler, http.MethodGet, "/settings", nil)
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="app"`) {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="root"`) {
 		t.Fatalf("GET /settings = %d %s", page.Code, page.Body.String())
 	}
 }
@@ -837,5 +845,51 @@ func TestPlatformRejectsShortPasswordAsClientError(t *testing.T) {
 	})
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("POST /api/spaces status = %d, want 400; body = %s", response.Code, response.Body)
+	}
+}
+
+// Deleting an imported wallet destroys its key, so the endpoint wants the
+// space password even from a tab that unlocked the space, like an export.
+func TestPlatformDeleteAccountNeedsThePassword(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPlatformFixture(t)
+	created, err := fixture.spaces.Create(space.CreateRequest{
+		Password: "test-vault-password", ImportedOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("spaces.Create() error = %v", err)
+	}
+	imported, err := fixture.spaces.Import(
+		created.Space.ID, "ethereum-mainnet", account.FamilyEVM, "Hot",
+		"0000000000000000000000000000000000000000000000000000000000000001",
+	)
+	if err != nil {
+		t.Fatalf("spaces.Import() error = %v", err)
+	}
+	path := "/api/spaces/" + created.Space.ID + "/accounts/" + imported.Account.ID
+
+	if response := platformRequest(t, fixture.handler, http.MethodDelete, path, map[string]string{}); response.Code != http.StatusUnauthorized {
+		t.Fatalf("delete without a password = %d %s", response.Code, response.Body)
+	}
+	if response := platformRequest(t, fixture.handler, http.MethodDelete, path,
+		map[string]string{"password": "not-the-password"}); response.Code != http.StatusUnauthorized {
+		t.Fatalf("delete with a wrong password = %d %s", response.Code, response.Body)
+	}
+	if accounts, _ := fixture.spaces.Accounts(created.Space.ID); len(accounts) != 1 {
+		t.Fatalf("a refused delete removed the wallet: %+v", accounts)
+	}
+
+	deleted := platformRequest(t, fixture.handler, http.MethodDelete, path,
+		map[string]string{"password": "test-vault-password"})
+	if deleted.Code != http.StatusOK || !strings.Contains(deleted.Body.String(), `"deleted":true`) {
+		t.Fatalf("delete = %d %s", deleted.Code, deleted.Body)
+	}
+	if accounts, _ := fixture.spaces.Accounts(created.Space.ID); len(accounts) != 0 {
+		t.Fatalf("accounts after delete = %+v", accounts)
+	}
+	if again := platformRequest(t, fixture.handler, http.MethodDelete, path,
+		map[string]string{"password": "test-vault-password"}); again.Code != http.StatusNotFound {
+		t.Fatalf("second delete = %d %s, want 404", again.Code, again.Body)
 	}
 }

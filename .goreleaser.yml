@@ -2,6 +2,12 @@ version: 2
 
 project_name: walletspace
 
+# The UI is embedded with go:embed, so it is built once before any target is
+# compiled; a release without it would serve the placeholder page instead.
+before:
+  hooks:
+    - make ui
+
 builds:
   - main: ./cmd/walletspace
     binary: walletspace

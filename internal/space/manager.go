@@ -4,6 +4,7 @@ package space
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/hex"
@@ -715,8 +716,8 @@ func (m *Manager) Derive(
 	if networkID == "" {
 		return account.Account{}, errors.New("network is required")
 	}
-	if family != account.FamilyTron && family != account.FamilyEVM {
-		return account.Account{}, fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	if _, err := account.CurveOf(family); err != nil {
+		return account.Account{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -802,22 +803,15 @@ func (m *Manager) Import(
 	if networkID == "" {
 		return ImportResult{}, errors.New("network is required")
 	}
-	if family != account.FamilyTron && family != account.FamilyEVM {
-		return ImportResult{}, fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	curve, err := account.CurveOf(family)
+	if err != nil {
+		return ImportResult{}, err
 	}
-	key, raw, err := account.ParsePrivateKey(privateKey)
+	raw, fingerprint, addresses, err := parseImportedKey(curve, privateKey)
 	if err != nil {
 		return ImportResult{}, err
 	}
 	defer clear(raw)
-	fingerprint, err := account.Fingerprint(key)
-	if err != nil {
-		return ImportResult{}, err
-	}
-	addresses, err := account.ImportedAddresses(key)
-	if err != nil {
-		return ImportResult{}, err
-	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -864,7 +858,7 @@ func (m *Manager) Import(
 		CreatedAt: now, UpdatedAt: now,
 	}
 	payload.ImportedKeys[keyRef] = KeyEntry{
-		Curve: "secp256k1", PrivateKey: append([]byte(nil), raw...), ImportedAt: now,
+		Curve: string(curve), PrivateKey: append([]byte(nil), raw...), ImportedAt: now,
 	}
 	file.Accounts = append(file.Accounts, created)
 	file.UpdatedAt = now
@@ -881,8 +875,8 @@ func (m *Manager) Import(
 func (m *Manager) ExportPrivateKey(
 	id, accountID string, family account.Family, password string,
 ) (string, error) {
-	if family != account.FamilyTron && family != account.FamilyEVM {
-		return "", fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	if _, err := account.CurveOf(family); err != nil {
+		return "", err
 	}
 	unlockSpace := m.lockSpace(id)
 	defer unlockSpace()
@@ -899,33 +893,18 @@ func (m *Manager) ExportPrivateKey(
 	if err != nil {
 		return "", err
 	}
-	var keyBytes []byte
-	switch item.Kind {
-	case account.KindDerived:
-		if item.Index == nil {
-			return "", errors.New("derived account has no index")
-		}
-		if item.Family != "" && item.Family != family {
-			return "", ErrNetworkBinding
-		}
-		key, err := account.DerivePrivateKey(string(payload.Mnemonic), string(payload.BIP39Passphrase), family, *item.Index)
-		if err != nil {
-			return "", err
-		}
-		keyBytes = crypto.FromECDSA(key)
-	case account.KindImported:
-		entry, ok := payload.ImportedKeys[item.KeyRef]
-		if !ok {
-			return "", errors.New("imported key is missing from vault")
-		}
-		keyBytes = append([]byte(nil), entry.PrivateKey...)
-	default:
-		return "", errors.New("unknown account kind")
+	key, err := privateKeyFor(item, payload, family)
+	if err != nil {
+		return "", err
 	}
-	defer clear(keyBytes)
-	return hex.EncodeToString(keyBytes), nil
+	defer key.clear()
+	return key.export()
 }
 
+// WithSigner lends fn a secp256k1 digest signer for the account on a Tron or
+// EVM network. The key never leaves the manager: it is derived or decrypted
+// for the call and cleared when fn returns. A family whose keys are ed25519
+// is refused with chain.ErrSignerMismatch; see WithMessageSigner.
 func (m *Manager) WithSigner(
 	ctx context.Context,
 	id, accountID, networkID string,
@@ -934,6 +913,74 @@ func (m *Manager) WithSigner(
 ) error {
 	if fn == nil {
 		return errors.New("signer callback is required")
+	}
+	return m.withKey(id, accountID, networkID, family, account.CurveSecp256k1, func(key signingKey) error {
+		signer := &localSigner{key: key.secp256k1, family: family}
+		defer signer.clear()
+		return fn(signer)
+	})
+}
+
+// WithMessageSigner lends fn an ed25519 message signer for the account on a
+// network whose family signs whole messages (Solana), under the same rules as
+// WithSigner. A secp256k1 family is refused with chain.ErrSignerMismatch.
+func (m *Manager) WithMessageSigner(
+	ctx context.Context,
+	id, accountID, networkID string,
+	family account.Family,
+	fn func(chain.MessageSigner) error,
+) error {
+	if fn == nil {
+		return errors.New("signer callback is required")
+	}
+	return m.withKey(id, accountID, networkID, family, account.CurveEd25519, func(key signingKey) error {
+		signer := &ed25519Signer{key: key.ed25519, family: family}
+		defer signer.clear()
+		return fn(signer)
+	})
+}
+
+// WithKey lends fn the signer the family's curve calls for — a digest signer
+// for secp256k1, a message signer for ed25519 — under the same rules as
+// WithSigner. The generic send path uses it; an adapter asserts the kind of
+// signer it needs.
+func (m *Manager) WithKey(
+	ctx context.Context,
+	id, accountID, networkID string,
+	family account.Family,
+	fn func(chain.Key) error,
+) error {
+	if fn == nil {
+		return errors.New("signer callback is required")
+	}
+	curve, err := account.CurveOf(family)
+	if err != nil {
+		return err
+	}
+	if curve == account.CurveEd25519 {
+		return m.WithMessageSigner(ctx, id, accountID, networkID, family, func(signer chain.MessageSigner) error {
+			return fn(signer)
+		})
+	}
+	return m.WithSigner(ctx, id, accountID, networkID, family, func(signer chain.Signer) error {
+		return fn(signer)
+	})
+}
+
+// withKey resolves the account's key for family, which must be on curve want,
+// and hands it to fn. The key is cleared when fn returns.
+func (m *Manager) withKey(
+	id, accountID, networkID string,
+	family account.Family,
+	want account.Curve,
+	fn func(signingKey) error,
+) error {
+	curve, err := account.CurveOf(family)
+	if err != nil {
+		return err
+	}
+	if curve != want {
+		return fmt.Errorf("%w: %s keys are %s", chain.ErrSignerMismatch, family, curve)
 	}
 	m.mu.Lock()
 	file, payload, err := m.unlockedLocked(id)
@@ -955,9 +1002,8 @@ func (m *Manager) WithSigner(
 	if err != nil {
 		return err
 	}
-	signer := &localSigner{key: key, family: family}
-	defer signer.clear()
-	return fn(signer)
+	defer key.clear()
+	return fn(key)
 }
 
 // Mnemonic reveals the seed every account in the space derives from, so it
@@ -1142,8 +1188,8 @@ func (m *Manager) BindNetwork(
 	if networkID == "" {
 		return account.Account{}, errors.New("network is required")
 	}
-	if family != account.FamilyTron && family != account.FamilyEVM {
-		return account.Account{}, fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+	if _, err := account.CurveOf(family); err != nil {
+		return account.Account{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1208,6 +1254,54 @@ func (m *Manager) RenameAccount(id, accountID, label string) (account.Account, e
 		return cloneAccount(file.Accounts[i]), nil
 	}
 	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
+}
+
+// DeleteAccount removes a wallet from the space. For an imported wallet that
+// also takes its private key out of the vault, which nothing can undo, so the
+// space password is asked for again rather than trusting the open session —
+// the same bar as exporting the key. A derived wallet only loses its record:
+// deriving again on the same network hands back the same lowest free index.
+func (m *Manager) DeleteAccount(id, accountID, password string) error {
+	unlockSpace := m.lockSpace(id)
+	defer unlockSpace()
+	if err := m.confirmPassword(id, password); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	file, payload, err := m.unlockedLocked(id)
+	if err != nil {
+		return err
+	}
+	index := slices.IndexFunc(file.Accounts, func(item account.Account) bool { return item.ID == accountID })
+	if index < 0 {
+		return fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
+	}
+	removed := file.Accounts[index]
+	file.Accounts = slices.Delete(file.Accounts, index, index+1)
+	file.UpdatedAt = m.now()
+
+	if removed.Kind != account.KindImported {
+		if err := m.saveLocked(file); err != nil {
+			return err
+		}
+		m.files[id] = file
+		return nil
+	}
+
+	// The key leaves the payload before the vault is resealed, and comes back
+	// if the write fails: the session must keep matching what is on disk.
+	entry, hadKey := payload.ImportedKeys[removed.KeyRef]
+	delete(payload.ImportedKeys, removed.KeyRef)
+	if err := m.resealAndSaveLocked(&file, payload, id); err != nil {
+		if hadKey {
+			payload.ImportedKeys[removed.KeyRef] = entry
+		}
+		return err
+	}
+	clear(entry.PrivateKey)
+	m.files[id] = file
+	return nil
 }
 
 // confirmPassword re-derives the vault key from a password the caller just
@@ -1430,13 +1524,8 @@ func verifyPayload(file File, payload Payload) error {
 			if !ok {
 				return errors.New("imported account key is missing")
 			}
-			key, err := crypto.ToECDSA(entry.PrivateKey)
-			if err != nil {
-				return errors.New("imported account key is invalid")
-			}
-			fingerprint, err := account.Fingerprint(key)
-			if err != nil || fingerprint != item.Fingerprint {
-				return errors.New("imported account fingerprint does not match vault")
+			if err := verifyImportedKey(item, entry); err != nil {
+				return err
 			}
 		default:
 			return errors.New("unknown account kind")
@@ -1454,35 +1543,216 @@ func findAccount(items []account.Account, id string) (account.Account, error) {
 	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, id)
 }
 
-func privateKeyFor(item account.Account, payload *Payload, family account.Family) (*ecdsa.PrivateKey, error) {
-	switch item.Kind {
-	case account.KindDerived:
-		if item.Index == nil {
-			return nil, errors.New("derived account has no index")
-		}
-		if item.Family != "" && item.Family != family {
-			return nil, ErrNetworkBinding
-		}
-		return account.DerivePrivateKey(
-			string(payload.Mnemonic), string(payload.BIP39Passphrase), family, *item.Index,
-		)
-	case account.KindImported:
-		entry, ok := payload.ImportedKeys[item.KeyRef]
-		if !ok {
-			return nil, errors.New("imported key is missing from vault")
-		}
-		keyBytes := append([]byte(nil), entry.PrivateKey...)
+// signingKey is an account's private key on whichever curve its family uses.
+// Exactly one field is set.
+type signingKey struct {
+	secp256k1 *ecdsa.PrivateKey
+	ed25519   ed25519.PrivateKey
+}
+
+func (k signingKey) clear() {
+	if k.secp256k1 != nil && k.secp256k1.D != nil {
+		k.secp256k1.D.SetInt64(0)
+	}
+	clear(k.ed25519)
+}
+
+// export is the private-key export format of the key's curve: 32-byte hex
+// for secp256k1, the base58 Solana keypair for ed25519.
+func (k signingKey) export() (string, error) {
+	switch {
+	case k.secp256k1 != nil:
+		keyBytes := crypto.FromECDSA(k.secp256k1)
 		defer clear(keyBytes)
-		key, err := crypto.ToECDSA(keyBytes)
-		if err != nil {
-			return nil, errors.New("imported key is invalid")
-		}
-		return key, nil
+		return hex.EncodeToString(keyBytes), nil
+	case k.ed25519 != nil:
+		return account.Ed25519KeypairBase58(k.ed25519)
 	default:
-		return nil, errors.New("unknown account kind")
+		return "", errors.New("signer is cleared")
 	}
 }
 
+// entryCurve is the curve of an imported key. Every entry written so far
+// says secp256k1; an empty value is read the same way, because before ed25519
+// existed the field was informational and nothing checked it.
+func entryCurve(entry KeyEntry) (account.Curve, error) {
+	switch account.Curve(entry.Curve) {
+	case account.CurveSecp256k1, "":
+		return account.CurveSecp256k1, nil
+	case account.CurveEd25519:
+		return account.CurveEd25519, nil
+	default:
+		return "", fmt.Errorf("imported key has unknown curve %q", entry.Curve)
+	}
+}
+
+// parseImportedKey reads a private key offered for import on curve and
+// returns what the vault stores (the secp256k1 scalar or the ed25519 seed),
+// the key's fingerprint and its addresses. The caller clears raw.
+func parseImportedKey(
+	curve account.Curve, value string,
+) (raw []byte, fingerprint string, addresses map[account.Family]string, err error) {
+	switch curve {
+	case account.CurveSecp256k1:
+		key, raw, err := account.ParsePrivateKey(value)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		fingerprint, err := account.Fingerprint(key)
+		if err != nil {
+			clear(raw)
+			return nil, "", nil, err
+		}
+		addresses, err := account.ImportedAddresses(key)
+		if err != nil {
+			clear(raw)
+			return nil, "", nil, err
+		}
+		return raw, fingerprint, addresses, nil
+	case account.CurveEd25519:
+		key, err := account.ParseEd25519PrivateKey(value)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		defer clear(key)
+		fingerprint, err := account.Ed25519Fingerprint(key)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		addresses, err := account.ImportedEd25519Addresses(key)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return append([]byte(nil), key.Seed()...), fingerprint, addresses, nil
+	default:
+		return nil, "", nil, fmt.Errorf("%w: curve %s", account.ErrUnsupportedFamily, curve)
+	}
+}
+
+// verifyImportedKey checks an imported account against its vault entry on
+// unlock: the key has to match the account's fingerprint and produce exactly
+// the account's addresses, because those addresses are where funds are
+// received. A secp256k1 key has its Tron and EVM addresses and nothing else,
+// as every import has stored since the first release; an ed25519 key has its
+// one Solana address.
+func verifyImportedKey(item account.Account, entry KeyEntry) error {
+	curve, err := entryCurve(entry)
+	if err != nil {
+		return err
+	}
+	switch curve {
+	case account.CurveSecp256k1:
+		key, err := crypto.ToECDSA(entry.PrivateKey)
+		if err != nil {
+			return errors.New("imported account key is invalid")
+		}
+		defer key.D.SetInt64(0)
+		fingerprint, err := account.Fingerprint(key)
+		if err != nil || fingerprint != item.Fingerprint {
+			return errors.New("imported account fingerprint does not match vault")
+		}
+		addresses, err := account.ImportedAddresses(key)
+		if err != nil || !maps.Equal(addresses, item.Addresses) {
+			return errors.New("imported account address does not match vault")
+		}
+		return nil
+	case account.CurveEd25519:
+		if len(entry.PrivateKey) != ed25519.SeedSize {
+			return errors.New("imported account key is invalid")
+		}
+		key := ed25519.NewKeyFromSeed(entry.PrivateKey)
+		defer clear(key)
+		fingerprint, err := account.Ed25519Fingerprint(key)
+		if err != nil || fingerprint != item.Fingerprint {
+			return errors.New("imported account fingerprint does not match vault")
+		}
+		addresses, err := account.ImportedEd25519Addresses(key)
+		if err != nil || !maps.Equal(addresses, item.Addresses) {
+			return errors.New("imported account address does not match vault")
+		}
+		return nil
+	default:
+		// Unreachable: entryCurve returns one of the two curves above.
+		return fmt.Errorf("imported key has unknown curve %q", entry.Curve)
+	}
+}
+
+// privateKeyFor resolves the account's key for family. A derived account is
+// derived along its family's path; an imported key is used only for a family
+// on its own curve, so an ed25519 key is never offered to Tron or EVM, nor a
+// secp256k1 key to Solana.
+func privateKeyFor(item account.Account, payload *Payload, family account.Family) (signingKey, error) {
+	curve, err := account.CurveOf(family)
+	if err != nil {
+		return signingKey{}, err
+	}
+	switch item.Kind {
+	case account.KindDerived:
+		if item.Index == nil {
+			return signingKey{}, errors.New("derived account has no index")
+		}
+		// A pre-binding record has no family, only the Tron and EVM addresses
+		// it was created with. Its key is offered for those and nothing else:
+		// any other family's derivation would be an address the wallet never
+		// showed and unlock never verified.
+		if (item.Family == "" && item.Addresses[family] == "") ||
+			(item.Family != "" && item.Family != family) {
+			return signingKey{}, ErrNetworkBinding
+		}
+		mnemonic, passphrase := string(payload.Mnemonic), string(payload.BIP39Passphrase)
+		switch curve {
+		case account.CurveSecp256k1:
+			key, err := account.DerivePrivateKey(mnemonic, passphrase, family, *item.Index)
+			if err != nil {
+				return signingKey{}, err
+			}
+			return signingKey{secp256k1: key}, nil
+		case account.CurveEd25519:
+			key, err := account.DeriveEd25519PrivateKey(mnemonic, passphrase, family, *item.Index)
+			if err != nil {
+				return signingKey{}, err
+			}
+			return signingKey{ed25519: key}, nil
+		default:
+			// Unreachable: CurveOf returns one of the two curves above.
+			return signingKey{}, fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
+		}
+	case account.KindImported:
+		entry, ok := payload.ImportedKeys[item.KeyRef]
+		if !ok {
+			return signingKey{}, errors.New("imported key is missing from vault")
+		}
+		stored, err := entryCurve(entry)
+		if err != nil {
+			return signingKey{}, err
+		}
+		if stored != curve {
+			return signingKey{}, ErrNetworkBinding
+		}
+		switch stored {
+		case account.CurveSecp256k1:
+			keyBytes := append([]byte(nil), entry.PrivateKey...)
+			defer clear(keyBytes)
+			key, err := crypto.ToECDSA(keyBytes)
+			if err != nil {
+				return signingKey{}, errors.New("imported key is invalid")
+			}
+			return signingKey{secp256k1: key}, nil
+		case account.CurveEd25519:
+			if len(entry.PrivateKey) != ed25519.SeedSize {
+				return signingKey{}, errors.New("imported key is invalid")
+			}
+			return signingKey{ed25519: ed25519.NewKeyFromSeed(entry.PrivateKey)}, nil
+		default:
+			// Unreachable: entryCurve returns one of the two curves above.
+			return signingKey{}, fmt.Errorf("imported key has unknown curve %q", entry.Curve)
+		}
+	default:
+		return signingKey{}, errors.New("unknown account kind")
+	}
+}
+
+// localSigner is the secp256k1 chain.DigestSigner.
 type localSigner struct {
 	key    *ecdsa.PrivateKey
 	family account.Family
@@ -1521,6 +1791,43 @@ func (s *localSigner) clear() {
 		return
 	}
 	s.key.D.SetInt64(0)
+	s.key = nil
+}
+
+// ed25519Signer is the chain.MessageSigner.
+type ed25519Signer struct {
+	key    ed25519.PrivateKey
+	family account.Family
+}
+
+func (s *ed25519Signer) Family() chain.Family {
+	return chain.Family(s.family)
+}
+
+func (s *ed25519Signer) PublicKey() []byte {
+	if s == nil || len(s.key) != ed25519.PrivateKeySize {
+		return nil
+	}
+	return append([]byte(nil), s.key[ed25519.SeedSize:]...)
+}
+
+func (s *ed25519Signer) SignMessage(ctx context.Context, message []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s == nil || len(s.key) != ed25519.PrivateKeySize {
+		return nil, errors.New("signer is cleared")
+	}
+	// No transaction serialises to nothing; an empty message is a caller
+	// that lost what it meant to sign.
+	if len(message) == 0 {
+		return nil, errors.New("message is empty")
+	}
+	return ed25519.Sign(s.key, message), nil
+}
+
+func (s *ed25519Signer) clear() {
+	clear(s.key)
 	s.key = nil
 }
 

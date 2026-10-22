@@ -14,6 +14,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/decred/base58"
 	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/storage"
@@ -95,8 +96,11 @@ func (s *Store) Add(token chain.Asset) error {
 	if token.ID == "" || token.NetworkID == "" || token.Contract == "" || token.Symbol == "" {
 		return errors.New("token metadata is incomplete")
 	}
-	if token.Kind != "erc20" && token.Kind != "trc20" {
-		return errors.New("only ERC20 and TRC20 assets can be configured")
+	if token.Kind != "erc20" && token.Kind != "trc20" && token.Kind != "spl" {
+		return errors.New("only ERC20, TRC20 and SPL assets can be configured")
+	}
+	if token.Kind == "spl" && !validMint(token.Contract) {
+		return fmt.Errorf("%w: SPL mint is not a base58 32-byte address", ErrInvalidMetadata)
 	}
 	if !ValidID(token.ID) {
 		return fmt.Errorf("%w: identifier contains unexpected characters", ErrInvalidMetadata)
@@ -165,6 +169,13 @@ func defaults(item network.Network) []chain.Asset {
 		Name: nativeAssetName(item.Native.Symbol), Symbol: item.Native.Symbol,
 		Decimals: item.Native.Decimals,
 	}}
+	if wrapper := item.WrappedNative; wrapper != nil {
+		out = append(out, chain.Asset{
+			ID: ID(item.ID, "erc20", wrapper.Contract), NetworkID: item.ID, Kind: "erc20",
+			Name: "Wrapped " + nativeAssetName(item.Native.Symbol), Symbol: wrapper.Symbol,
+			Contract: wrapper.Contract, Decimals: item.Native.Decimals,
+		})
+	}
 	for _, token := range builtinTokens[item.ID] {
 		out = append(out, chain.Asset{
 			ID: ID(item.ID, token.kind, token.contract), NetworkID: item.ID, Kind: token.kind,
@@ -191,6 +202,18 @@ func trc20(name, symbol, contract string, decimals uint8) builtinToken {
 	return builtinToken{kind: "trc20", name: name, symbol: symbol, contract: contract, decimals: decimals}
 }
 
+func spl(name, symbol, mint string, decimals uint8) builtinToken {
+	return builtinToken{kind: "spl", name: name, symbol: symbol, contract: mint, decimals: decimals}
+}
+
+// validMint reports whether a mint is a 32-byte key in base58. The decoder
+// refuses any character outside the alphabet, whitespace included, and a key
+// has exactly one base58 spelling, so the mint can be stored and compared
+// exactly as written — base58 is case-sensitive.
+func validMint(mint string) bool {
+	return len(base58.Decode(mint)) == 32
+}
+
 var builtinTokens = map[string][]builtinToken{
 	"tron-mainnet": {
 		trc20("Tether USD", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", 6),
@@ -199,7 +222,6 @@ var builtinTokens = map[string][]builtinToken{
 		trc20("Tether USD", "USDT", "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf", 6),
 	},
 	"bsc-mainnet": {
-		erc20("Wrapped BNB", "WBNB", "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", 18),
 		erc20("Tether USD", "USDT", "0x55d398326f99059ff775485246999027b3197955", 18),
 		erc20("USD Coin", "USDC", "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", 18),
 		erc20("Binance Bitcoin", "BTCB", "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c", 18),
@@ -218,7 +240,6 @@ var builtinTokens = map[string][]builtinToken{
 		erc20("Tether USD", "USDT", "0xdac17f958d2ee523a2206206994597c13d831ec7", 6),
 		erc20("USD Coin", "USDC", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 6),
 		erc20("Wrapped Bitcoin", "WBTC", "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", 8),
-		erc20("Wrapped Ether", "WETH", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", 18),
 		erc20("Wrapped XRP", "WXRP", "0x39fbbabf11738317a448031930706cd3e612e1b9", 18),
 		erc20("POL", "POL", "0x455e53cbb86018ac2b8092fdcd39d8444affc3f6", 18),
 		erc20("Chainlink", "LINK", "0x514910771af9ca656af840dff83e8264ecf986ca", 18),
@@ -243,13 +264,11 @@ var builtinTokens = map[string][]builtinToken{
 	"base-mainnet": {
 		erc20("USD Coin", "USDC", "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", 6),
 		erc20("Coinbase Wrapped Bitcoin", "cbBTC", "0x0555e30da8f98308edb960aa94c0db47230d2b9c", 8),
-		erc20("Wrapped Ether", "WETH", "0x4200000000000000000000000000000000000006", 18),
 		erc20("Bridged Tether USD", "USDT", "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2", 6),
 	},
 	"arbitrum-mainnet": {
 		erc20("USD Coin", "USDC", "0xaf88d065e77c8cc2239327c5edb3a432268e5831", 6),
 		erc20("Wrapped Bitcoin", "WBTC", "0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f", 8),
-		erc20("Wrapped Ether", "WETH", "0x82af49447d8a07e3bd95bd0d56f35241523fbab1", 18),
 		erc20("Tether USD", "USDT", "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", 6),
 		erc20("Arbitrum", "ARB", "0x912ce59144191c1204e64559fe8253a0e49e6548", 18),
 	},
@@ -259,6 +278,14 @@ var builtinTokens = map[string][]builtinToken{
 	},
 	"robinhood-mainnet": {
 		erc20("Robinhood Wrapped ETH", "WETH", "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", 18),
+	},
+	// Classic SPL token program mints only; Token-2022 is not supported.
+	"solana-mainnet": {
+		spl("USD Coin", "USDC", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 6),
+		spl("Tether USD", "USDT", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", 6),
+	},
+	"solana-devnet": {
+		spl("USD Coin", "USDC", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", 6),
 	},
 }
 
@@ -274,6 +301,8 @@ func nativeAssetName(symbol string) string {
 		return "Avalanche"
 	case "TRX":
 		return "TRON"
+	case "SOL":
+		return "Solana"
 	default:
 		return symbol
 	}

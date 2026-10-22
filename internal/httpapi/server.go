@@ -18,7 +18,10 @@ import (
 	"github.com/sxwebdev/xutils/randutil"
 )
 
-//go:embed ui
+// The pattern takes the whole directory, dotfiles included, so the build
+// output and the placeholder both land in the binary; see static.go.
+//
+//go:embed all:ui
 var uiFS embed.FS
 
 const (
@@ -62,15 +65,17 @@ func bodyLimit(path string) int64 {
 // TokenHeader carries the capability token on every API request.
 const TokenHeader = "X-Walletspace-Token" //nolint:gosec // header name, not a credential
 
-// contentSecurityPolicy is a second barrier behind contextual escaping. On-chain
+// contentSecurityPolicy is a second barrier behind React's escaping. On-chain
 // metadata (a token symbol, a contract name) is attacker-controlled text that
-// reaches the DOM, and both fragment sinks in the UI go through
-// createContextualFragment, which — unlike innerHTML — executes a <script> it
-// parses. An escaping regression would therefore be code execution in the
-// wallet's own origin, so the policy denies everything the UI does not need.
+// reaches the DOM, and an escaping regression — a dangerouslySetInnerHTML, a
+// javascript: href — would be code execution in the wallet's own origin, so
+// the policy denies everything the UI does not need. The bundle is built to
+// fit it: no inline script or <style> element, fonts and images served from
+// the binary itself (see ui/vite.config.ts and ui/src/main.tsx).
 const contentSecurityPolicy = "default-src 'none'; " +
 	"script-src 'self'; " +
 	"style-src 'self'; " +
+	"font-src 'self'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"base-uri 'none'; " +

@@ -6,18 +6,32 @@ BINARY  := walletspace
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS = -ldflags "-s -w -X main.version=$(VERSION)"
 
-.PHONY: start build install test lint vuln fmt clean snapshot release
+.PHONY: start build install ui ui-deps ui-lint test lint vuln fmt clean snapshot release
 
 ## Run from source, with the same version stamp `make build` produces
 start:
 	go run $(LDFLAGS) ./cmd/walletspace
 
+## Install the frontend's dependencies exactly as locked
+ui-deps:
+	cd ui && pnpm install --frozen-lockfile
+
+## Build the React UI into internal/httpapi/ui/dist, which the binary embeds
+# Without it the binary still builds, but serves a placeholder page instead of
+# the wallet; every target that produces a binary for use therefore runs it.
+ui: ui-deps
+	cd ui && pnpm build
+
+## Type-check and lint the frontend
+ui-lint: ui-deps
+	cd ui && pnpm typecheck && pnpm lint
+
 ## Build ./bin/walletspace with the version stamped in
-build:
+build: ui
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/walletspace
 
 ## Install walletspace into $(GOBIN)
-install:
+install: ui
 	go install $(LDFLAGS) ./cmd/walletspace
 
 test:
@@ -47,7 +61,7 @@ fmt:
 	gofumpt -l -w .
 
 clean:
-	rm -rf bin/ dist/
+	rm -rf bin/ dist/ internal/httpapi/ui/dist/
 
 ## Build every release artifact and the cask into ./dist without publishing
 # Useful for looking at what a tag would produce, including Casks/walletspace.rb,

@@ -20,6 +20,9 @@ import (
 type (
 	Kind   string
 	Family string
+	// Curve names the signature scheme of a key. Its values are the ones the
+	// vault stores in KeyEntry.Curve.
+	Curve string
 )
 
 const (
@@ -27,13 +30,36 @@ const (
 	KindImported Kind   = "imported"
 	FamilyTron   Family = "tron"
 	FamilyEVM    Family = "evm"
+	FamilySolana Family = "solana"
+
+	CurveSecp256k1 Curve = "secp256k1"
+	CurveEd25519   Curve = "ed25519"
 )
 
 var (
 	ErrInvalidPrivateKey = errors.New("invalid private key")
 	ErrInvalidMnemonic   = errors.New("invalid mnemonic")
 	ErrUnsupportedFamily = errors.New("unsupported address family")
+	// ErrCurveMismatch reports a key of one curve offered to a family that
+	// uses the other: a secp256k1 key has no Solana address, an ed25519 key
+	// no Tron or EVM one.
+	ErrCurveMismatch = errors.New("key curve does not match the address family")
 )
+
+// CurveOf reports the curve family's keys are on. It is the one place that
+// knows which families exist: every other switch over families starts here,
+// so a family added without a curve is refused rather than treated as one of
+// the others.
+func CurveOf(family Family) (Curve, error) {
+	switch family {
+	case FamilyTron, FamilyEVM:
+		return CurveSecp256k1, nil
+	case FamilySolana:
+		return CurveEd25519, nil
+	default:
+		return "", fmt.Errorf("%w: %s", ErrUnsupportedFamily, family)
+	}
+}
 
 type Account struct {
 	ID                string            `json:"id"`
@@ -98,6 +124,8 @@ func DerivePrivateKey(mnemonic, passphrase string, family Family, index uint32) 
 		coinType = 195
 	case FamilyEVM:
 		coinType = 60
+	case FamilySolana:
+		return nil, fmt.Errorf("%w: %s keys are ed25519", ErrCurveMismatch, family)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFamily, family)
 	}
@@ -131,6 +159,10 @@ func DerivePrivateKey(mnemonic, passphrase string, family Family, index uint32) 
 	return privateKey, nil
 }
 
+// DerivedAddresses is the Tron and EVM projection of one BIP44 index, the shape
+// of records written before wallets were bound to a family. It deliberately
+// has no Solana entry: no such record ever had one, and a Solana wallet is
+// always created for its family by DerivedAddress.
 func DerivedAddresses(mnemonic, passphrase string, index uint32) (map[Family]string, error) {
 	out := make(map[Family]string, 2)
 	for _, family := range []Family{FamilyTron, FamilyEVM} {
@@ -148,11 +180,28 @@ func DerivedAddresses(mnemonic, passphrase string, index uint32) (map[Family]str
 }
 
 func DerivedAddress(mnemonic, passphrase string, family Family, index uint32) (string, error) {
-	key, err := DerivePrivateKey(mnemonic, passphrase, family, index)
+	curve, err := CurveOf(family)
 	if err != nil {
 		return "", err
 	}
-	return AddressFromPrivateKey(key, family)
+	switch curve {
+	case CurveEd25519:
+		key, err := DeriveEd25519PrivateKey(mnemonic, passphrase, family, index)
+		if err != nil {
+			return "", err
+		}
+		defer clear(key)
+		return AddressFromEd25519Key(key, family)
+	case CurveSecp256k1:
+		key, err := DerivePrivateKey(mnemonic, passphrase, family, index)
+		if err != nil {
+			return "", err
+		}
+		return AddressFromPrivateKey(key, family)
+	default:
+		// Unreachable: CurveOf returns one of the two curves above.
+		return "", fmt.Errorf("%w: %s", ErrUnsupportedFamily, family)
+	}
 }
 
 func ParsePrivateKey(value string) (*ecdsa.PrivateKey, []byte, error) {
@@ -204,6 +253,8 @@ func AddressFromPrivateKey(key *ecdsa.PrivateKey, family Family) (string, error)
 			return "", fmt.Errorf("derive Tron address: %w", err)
 		}
 		return item.Address, nil
+	case FamilySolana:
+		return "", fmt.Errorf("%w: %s", ErrCurveMismatch, family)
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedFamily, family)
 	}
