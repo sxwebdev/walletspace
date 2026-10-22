@@ -20,7 +20,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/shopspring/decimal"
-	"github.com/sxwebdev/walletspace/internal/hostpolicy"
 )
 
 const DepositAddress = "0x391E7C679d29bD940d63be94AD22A25d25b5A604"
@@ -61,7 +60,12 @@ type Delivery struct {
 type Options struct {
 	BaseURL string
 	Client  *http.Client
-	Now     func() time.Time
+	// Dial is the guarded dialer every connection to the provider goes
+	// through — the RPC resolver's: it pins the address it judged, and refuses
+	// private and loopback addresses unless the user allowed insecure RPC.
+	// Without it (and without Client) every request is refused.
+	Dial func(ctx context.Context, network, address string) (net.Conn, error)
+	Now  func() time.Time
 }
 type GasZip struct {
 	base        string
@@ -80,24 +84,19 @@ func New(options Options) *GasZip {
 		options.Now = time.Now
 	}
 	if options.Client == nil {
-		// Pin DNS answers at dial time and never send through a proxy or redirect.
-		transport := &http.Transport{TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 8 * time.Second,
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				host, port, err := net.SplitHostPort(address)
-				if err != nil {
-					return nil, err
-				}
-				ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-				if err != nil {
-					return nil, err
-				}
-				for _, ip := range ips {
-					if hostpolicy.PublicIP(ip) {
-						return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-					}
-				}
-				return nil, errors.New("gas provider resolved to a private address")
-			},
+		dial := options.Dial
+		if dial == nil {
+			dial = func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("gas provider has no guarded dialer")
+			}
+		}
+		// Never through a proxy, which would be dialled in place of the
+		// provider and so escape the address check, and never redirected.
+		transport := &http.Transport{
+			Proxy:                 nil,
+			DialContext:           dial,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: 8 * time.Second,
 		}
 		options.Client = &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("gas provider redirects disabled") }}
 	}

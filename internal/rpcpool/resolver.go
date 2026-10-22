@@ -94,9 +94,7 @@ func New(settings Settings) *Resolver {
 			// Built per dial, not captured once: whether a private address is
 			// allowed is a setting, and a setting can change while this client
 			// lives for the whole process.
-			DialContext: func(ctx context.Context, networkName, address string) (net.Conn, error) {
-				return resolver.DialContext(network.Network{})(ctx, networkName, address)
-			},
+			DialContext:           resolver.Dial,
 			TLSHandshakeTimeout:   5 * time.Second,
 			ResponseHeaderTimeout: 5 * time.Second,
 		},
@@ -317,6 +315,14 @@ func (r *Resolver) DialContext(_ network.Network) func(context.Context, string, 
 		}
 		return nil, errors.New("RPC resolved only to private or unsafe addresses")
 	}
+}
+
+// Dial is DialContext for a connection that is not to a network's node, made
+// by a client that lives for the whole process — node discovery, the gas
+// top-up provider. Whether a private address is allowed is read on every dial,
+// not once, because that setting can change while such a client lives.
+func (r *Resolver) Dial(ctx context.Context, networkName, address string) (net.Conn, error) {
+	return r.DialContext(network.Network{})(ctx, networkName, address)
 }
 
 // GRPCDialContext adapts DialContext to grpc.WithContextDialer, which passes

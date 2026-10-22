@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/sxwebdev/walletspace/internal/config"
 	"github.com/sxwebdev/walletspace/internal/refuel"
+	"github.com/sxwebdev/walletspace/internal/rpcpool"
 )
 
 const from = "0x1111111111111111111111111111111111111111"
@@ -153,5 +156,61 @@ func TestGasZipDeliveryMatchesRecipientAndChain(t *testing.T) {
 				t.Fatalf("delivery = %+v, %v", result, err)
 			}
 		})
+	}
+}
+
+type resolverSettings struct{ snapshot config.SettingsSnapshot }
+
+func (s resolverSettings) Snapshot() config.SettingsSnapshot { return s.snapshot }
+func (resolverSettings) Home() string                        { return "" }
+func (resolverSettings) NetworkOverride(string) (config.NetworkOverride, bool) {
+	return config.NetworkOverride{}, false
+}
+
+// Gas.zip is dialled through the RPC resolver's guard: a provider address that
+// is private or loopback is refused before any request leaves, unless the user
+// allowed insecure RPC — which is what proves the refusal came from that guard.
+func TestGasZipDialsThroughTheResolverGuard(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		fmt.Fprint(w, `{"deposit":{"status":"CONFIRMED"},"txs":[]}`)
+	}))
+	t.Cleanup(server.Close)
+	hash := "0x" + strings.Repeat("1", 64)
+
+	guarded := refuel.New(refuel.Options{BaseURL: server.URL, Dial: rpcpool.New(resolverSettings{}).Dial})
+	if _, err := guarded.Delivery(t.Context(), hash, 8217, recipient); err == nil {
+		t.Fatal("Delivery() from a loopback provider error = nil, want a refused dial")
+	}
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("the loopback provider was reached %d times, want 0", got)
+	}
+
+	var permissive resolverSettings
+	permissive.snapshot.Config.NodeDiscovery.AllowInsecureRPC = true
+	allowed := refuel.New(refuel.Options{BaseURL: server.URL, Dial: rpcpool.New(permissive).Dial})
+	if _, err := allowed.Delivery(t.Context(), hash, 8217, recipient); err != nil {
+		t.Fatalf("Delivery() with private addresses allowed error = %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("provider requests = %d, want 1", got)
+	}
+}
+
+// Without a guarded dialer the provider refuses every request rather than
+// falling back to a dialer of its own.
+func TestGasZipWithoutDialerRefusesToConnect(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	t.Cleanup(server.Close)
+	provider := refuel.New(refuel.Options{BaseURL: server.URL})
+	if _, err := provider.Delivery(t.Context(), "0x"+strings.Repeat("1", 64), 8217, recipient); err == nil {
+		t.Fatal("Delivery() without a dialer error = nil, want a refusal")
+	}
+	if got := hits.Load(); got != 0 {
+		t.Errorf("provider requests = %d, want 0", got)
 	}
 }

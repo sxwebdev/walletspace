@@ -35,6 +35,7 @@ import (
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
 	"github.com/sxwebdev/walletspace/internal/price"
+	"github.com/sxwebdev/walletspace/internal/refuel"
 	"github.com/sxwebdev/walletspace/internal/rpcpool"
 	"github.com/sxwebdev/walletspace/internal/space"
 	"github.com/sxwebdev/walletspace/internal/storage"
@@ -239,6 +240,8 @@ func run(log *slog.Logger) error {
 	handler, err := httpapi.NewPlatform(
 		spaces, settings, registry, operation.New(home), assets, chains, evm, tron, nodeDoctor,
 		price.New(price.Options{}), access, log,
+		// Gas.zip is dialled through the same guard as every RPC node.
+		httpapi.WithRefuelProvider(refuel.New(refuel.Options{Dial: resolver.Dial})),
 	)
 	if err != nil {
 		return err
