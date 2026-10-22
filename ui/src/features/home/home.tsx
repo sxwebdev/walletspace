@@ -22,16 +22,9 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { NetworkPicker } from "@/components/common/network-picker"
 import { Screen } from "@/components/layout/widget"
 import { useSession } from "@/features/session/session"
 import {
@@ -99,30 +92,15 @@ export function Home() {
           </TabsList>
         </Tabs>
         {usedNetworks.length > 1 && (
-          <Select
+          <NetworkPicker
+            networks={usedNetworks}
             value={activeFilter}
-            onValueChange={(value) => setFilter(String(value))}
-          >
-            <SelectTrigger size="sm" className="max-w-40">
-              <SelectValue>
-                {(value: string) =>
-                  value === "all"
-                    ? "All networks"
-                    : networkById.get(value)?.name
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent align="end">
-              <SelectGroup>
-                <SelectItem value="all">All networks</SelectItem>
-                {usedNetworks.map((network) => (
-                  <SelectItem key={network.id} value={network.id}>
-                    {network.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+            onChange={setFilter}
+            allLabel="All networks"
+            size="sm"
+            align="end"
+            className="max-w-44"
+          />
         )}
       </div>
       <div className="px-3 pb-5">
