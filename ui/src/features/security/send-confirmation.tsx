@@ -20,6 +20,12 @@ import { spacesApi } from "@/lib/api/spaces"
 
 const NOT_CONFIRMED = "The transfer was not confirmed, so nothing was signed."
 
+// wasNotConfirmed reports a request the user declined to confirm: it never
+// reached the signer, so its idempotency key was never used.
+export function wasNotConfirmed(error: unknown) {
+  return error instanceof Error && error.message === NOT_CONFIRMED
+}
+
 type Pending = { resolve: () => void; reject: (error: Error) => void }
 
 type Confirm = <T>(run: () => Promise<T>) => Promise<T>
@@ -28,14 +34,16 @@ const ConfirmContext = React.createContext<Confirm | null>(null)
 
 export function useSendConfirmation() {
   const context = React.useContext(ConfirmContext)
-  if (!context) throw new Error("useSendConfirmation needs SendConfirmationProvider")
+  if (!context)
+    throw new Error("useSendConfirmation needs SendConfirmationProvider")
   return context
 }
 
 function needsConfirmation(error: unknown) {
   return (
     error instanceof APIError &&
-    (error.payload as { code?: string } | null)?.code === "send_confirmation_required"
+    (error.payload as { code?: string } | null)?.code ===
+      "send_confirmation_required"
   )
 }
 
@@ -43,13 +51,20 @@ function needsConfirmation(error: unknown) {
 // the server refuses a spend until the password is given again. This runs the
 // request, asks for the password when refused, and re-runs the identical
 // request (same body, same Idempotency-Key) exactly once.
-export function SendConfirmationProvider({ children }: { children: React.ReactNode }) {
+export function SendConfirmationProvider({
+  children,
+}: {
+  children: React.ReactNode
+}) {
   const { space } = useSession()
   const [pending, setPending] = React.useState<Pending | null>(null)
   const [password, setPassword] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
-  const inflight = React.useRef<{ controller: AbortController; done: Promise<boolean> } | null>(null)
+  const inflight = React.useRef<{
+    controller: AbortController
+    done: Promise<boolean>
+  } | null>(null)
 
   const ask = React.useCallback(
     () =>
@@ -118,9 +133,16 @@ export function SendConfirmationProvider({ children }: { children: React.ReactNo
   return (
     <ConfirmContext.Provider value={confirm}>
       {children}
-      <Dialog open={pending !== null} onOpenChange={(open) => !open && void close()}>
+      <Dialog
+        open={pending !== null}
+        onOpenChange={(open) => !open && void close()}
+      >
         <DialogContent className="sm:max-w-sm">
-          <form onSubmit={submit} className="flex flex-col gap-5" autoComplete="off">
+          <form
+            onSubmit={submit}
+            className="flex flex-col gap-5"
+            autoComplete="off"
+          >
             <DialogHeader>
               <div className="mb-2 flex size-10 items-center justify-center rounded-full bg-muted">
                 <ShieldCheckIcon className="size-5" />
@@ -133,7 +155,9 @@ export function SendConfirmationProvider({ children }: { children: React.ReactNo
             </DialogHeader>
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="confirm-password">Space password</FieldLabel>
+                <FieldLabel htmlFor="confirm-password">
+                  Space password
+                </FieldLabel>
                 <PasswordInput
                   id="confirm-password"
                   value={password}
@@ -145,7 +169,11 @@ export function SendConfirmationProvider({ children }: { children: React.ReactNo
               <FormError message={error} />
             </FieldGroup>
             <DialogFooter>
-              <Button type="submit" disabled={busy || !password} className="w-full">
+              <Button
+                type="submit"
+                disabled={busy || !password}
+                className="w-full"
+              >
                 {busy && <Spinner data-icon="inline-start" />}
                 Confirm and send
               </Button>

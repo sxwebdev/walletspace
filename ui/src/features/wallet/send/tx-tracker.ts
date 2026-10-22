@@ -9,7 +9,7 @@ export const inFlight = (status: OperationStatus | undefined) =>
   status === "broadcast_unknown" || status === "broadcasting"
 
 // Polls a transaction every 3 s, at most 60 times (about three minutes).
-// Tron never reports "failed", so a failed Tron transaction ends in "timeout".
+// Both families report "failed" for a transaction that was mined and reverted.
 export function useTxTracker(
   spaceId: string,
   networkId: string,

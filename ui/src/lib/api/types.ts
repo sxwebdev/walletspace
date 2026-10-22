@@ -26,6 +26,7 @@ export type Network = {
     token_transfer: boolean
     tron_resources: boolean
     tron_deploy: boolean
+    tron_swap: boolean
   }
   wrapped_native?: { symbol: string; contract: string }
 }
@@ -51,7 +52,11 @@ export type Account = {
 export type Settings = {
   schema_version: number
   server: { addr: string; open_browser: boolean }
-  security: { auto_lock: string; confirm_sends: boolean; send_grant_ttl: string }
+  security: {
+    auto_lock: string
+    confirm_sends: boolean
+    send_grant_ttl: string
+  }
   node_discovery: {
     enabled: boolean
     url: string
@@ -148,7 +153,9 @@ export type DoctorNetwork = {
   healthy: number
   total: number
   last_checked: string
-  nodes: { label: string; status: "healthy" | "unhealthy"; last_checked: string }[] | null
+  nodes:
+    | { label: string; status: "healthy" | "unhealthy"; last_checked: string }[]
+    | null
 }
 
 export type DoctorSnapshot = {
@@ -235,7 +242,12 @@ export type TronResources = {
   // The Go structs carry no json tags, so these keys are PascalCase.
   pending: { Resource: TronResource; Amount: string; ExpireAt: string }[] | null
   delegations:
-    | { To: string; Resource: TronResource; Amount: string; LockedUntil: string }[]
+    | {
+        To: string
+        Resource: TronResource
+        Amount: string
+        LockedUntil: string
+      }[]
     | null
 }
 
@@ -273,4 +285,58 @@ export type TronDeployResult = {
   energy_used?: number
   fee?: string
   status?: OperationStatus
+}
+
+export type SwapAsset = "trx" | "usdt"
+
+export type SwapRoute = {
+  protocol: "v2" | "v3" | "v4"
+  // Pool fee in millionths: 3000 is 0.3%.
+  fee: number
+  tick_spacing?: number
+}
+
+export type SwapStepKind = "approve" | "permit2" | "swap"
+
+export type SwapStep = {
+  kind: SwapStepKind
+  contract: string
+  energy: number
+  // False when the energy is a typical figure: the swap cannot be simulated
+  // before its approvals are on chain.
+  measured: boolean
+  fee: string
+}
+
+export type SwapQuote = {
+  route: SwapRoute
+  amount_out: string
+  steps: SwapStep[]
+  fee: string
+  // amount_out less fee, both in the asset bought.
+  value: string
+}
+
+export type SwapQuotes = {
+  in: SwapAsset
+  out: SwapAsset
+  amount_in: string
+  quotes: SwapQuote[] | null
+  unavailable?: string[] | null
+  shortfall: string
+}
+
+export type SwapQuoteBody = {
+  in: SwapAsset
+  amount: string
+  unlimited: boolean
+}
+
+export type SwapBody = {
+  in: SwapAsset
+  amount: string
+  min_out: string
+  route: SwapRoute
+  step: SwapStepKind
+  unlimited: boolean
 }

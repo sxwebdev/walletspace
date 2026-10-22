@@ -38,6 +38,7 @@ import { PickWallet } from "@/features/wallet/pick-wallet"
 import { ReceiveScreen } from "@/features/wallet/receive"
 import { SendScreen } from "@/features/wallet/send/send"
 import { DeployScreen } from "@/features/wallet/tron/deploy"
+import { SwapScreen } from "@/features/wallet/tron/swap"
 import { TronResourcesScreen } from "@/features/wallet/tron/resources"
 import { WalletProvider } from "@/features/wallet/wallet-data"
 import { WalletScreen } from "@/features/wallet/wallet-screen"
@@ -198,6 +199,10 @@ function Shell({ wide }: { wide: boolean }) {
                   <Route
                     path="/wallet/:accountId/:networkId/deploy"
                     element={<DeployScreen />}
+                  />
+                  <Route
+                    path="/wallet/:accountId/:networkId/swap"
+                    element={<SwapScreen />}
                   />
                   <Route path="/space" element={<SpaceSettings />} />
                   <Route path="/spaces/new" element={<NewSpaceChoice />} />

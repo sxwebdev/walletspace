@@ -23,6 +23,16 @@ and are never sent to an RPC provider.
   **Wrap / Unwrap** beside the wallet, choose a direction and amount (or MAX),
   estimate the fee, then sign. Both directions require native coins for gas.
   Supported pairs are defined per network; bridged tokens are not native wrappers.
+- TRX ↔ USDT swaps on Tron through SunSwap V2, V3 and V4, mainnet and Nile.
+  Use **Swap** beside a Tron wallet: every pool is quoted — V2 and V3 by the
+  routers' own quoters, V4 by repeating the pool's arithmetic locally, since
+  SunSwap publishes no V4 quoter on Tron — and the routes are ranked by what
+  is left after network fees, because an approval costs several TRX. Selling
+  USDT approves exactly the amount sold unless you opt into an unlimited
+  approval; V4 adds a Permit2 grant to the universal router that expires
+  after an hour. All calldata is built locally, the minimum you approve is
+  what is signed, and each step is checked against the current price and
+  simulated before signing, so a swap the pool would revert costs nothing.
 - Native and token amounts with a USD estimate beside each wallet balance;
   unavailable prices and cached values are labelled, and testnets have no USD value.
 - Progressive background balance loading, a mainnet USD total and a 24h price

@@ -10,6 +10,9 @@ import type {
   RefuelQuotes,
   RefuelState,
   Settings,
+  SwapBody,
+  SwapQuoteBody,
+  SwapQuotes,
   Transaction,
   TransferBody,
   TransferEstimate,
@@ -68,10 +71,13 @@ type Approved = Pick<
 
 export const transfersApi = {
   estimate: (spaceId: string, networkId: string, body: TransferBody) =>
-    request<TransferEstimate>(`${scoped(spaceId, networkId)}/transfers/estimate`, {
-      method: "POST",
-      body,
-    }),
+    request<TransferEstimate>(
+      `${scoped(spaceId, networkId)}/transfers/estimate`,
+      {
+        method: "POST",
+        body,
+      }
+    ),
   send: (
     spaceId: string,
     networkId: string,
@@ -105,10 +111,13 @@ export const transfersApi = {
     )
   },
   refuelSend: (spaceId: string, networkId: string, planId: string) =>
-    request<Operation>(`${scoped(spaceId, networkId)}/gas-refuel/${enc(planId)}`, {
-      method: "POST",
-      body: {},
-    }),
+    request<Operation>(
+      `${scoped(spaceId, networkId)}/gas-refuel/${enc(planId)}`,
+      {
+        method: "POST",
+        body: {},
+      }
+    ),
   refuelStatus: (spaceId: string, networkId: string, planId: string) =>
     request<RefuelState>(
       `${scoped(spaceId, networkId)}/gas-refuel/${enc(planId)}`
@@ -116,12 +125,7 @@ export const transfersApi = {
 }
 
 export type TronAction =
-  | "stake"
-  | "unstake"
-  | "delegate"
-  | "reclaim"
-  | "withdraw"
-  | "cancel-unstakes"
+  "stake" | "unstake" | "delegate" | "reclaim" | "withdraw" | "cancel-unstakes"
 
 export type TronActionBody =
   | Record<string, never>
@@ -164,6 +168,28 @@ export const tronApi = {
   ) =>
     request<TronDeployResult>(
       `${scoped(spaceId, networkId)}/accounts/${enc(accountId)}/deploy`,
+      { method: "POST", body, headers: { "Idempotency-Key": idempotencyKey } }
+    ),
+  swapQuote: (
+    spaceId: string,
+    networkId: string,
+    accountId: string,
+    body: SwapQuoteBody,
+    signal?: AbortSignal
+  ) =>
+    request<SwapQuotes>(
+      `${scoped(spaceId, networkId)}/accounts/${enc(accountId)}/swap-quote`,
+      { method: "POST", body, signal }
+    ),
+  swap: (
+    spaceId: string,
+    networkId: string,
+    accountId: string,
+    body: SwapBody,
+    idempotencyKey: string
+  ) =>
+    request<TronOperationResult>(
+      `${scoped(spaceId, networkId)}/accounts/${enc(accountId)}/swap`,
       { method: "POST", body, headers: { "Idempotency-Key": idempotencyKey } }
     ),
 }

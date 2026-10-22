@@ -81,6 +81,12 @@ type FeeApproval struct {
 // caller has to show the new numbers and ask again.
 var ErrFeeChanged = errors.New("fee estimate changed since it was approved")
 
+// ErrStateChanged reports that what the user approved was computed from chain
+// state that no longer holds — a swap price that moved past the approved
+// minimum, an approval that is already in place or not yet confirmed. Nothing
+// was signed; the caller has to read the chain again and show the result.
+var ErrStateChanged = errors.New("chain state changed since it was read")
+
 type TransferEstimate struct {
 	NetworkID            string `json:"network_id"`
 	Amount               string `json:"amount"`

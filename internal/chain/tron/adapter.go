@@ -78,11 +78,26 @@ type (
 	Deployment = legacy.Deployment
 	DeployCost = legacy.DeployCost
 	Deployed   = legacy.Deployed
+
+	SwapQuoteRequest = legacy.SwapQuoteRequest
+	SwapQuotes       = legacy.SwapQuotes
+	SwapRequest      = legacy.SwapRequest
+	SwapRoute        = legacy.SwapRoute
+	SwapStepKind     = legacy.SwapStepKind
+	SwapProtocol     = legacy.SwapProtocol
+	Asset            = legacy.Asset
 )
 
 const (
 	ResourceBandwidth = legacy.ResourceBandwidth
 	ResourceEnergy    = legacy.ResourceEnergy
+
+	AssetTRX  = legacy.AssetTRX
+	AssetUSDT = legacy.AssetUSDT
+
+	SwapStepApprove = legacy.SwapStepApprove
+	SwapStepPermit2 = legacy.SwapStepPermit2
+	SwapStepSwap    = legacy.SwapStepSwap
 )
 
 type Adapter struct {
@@ -501,13 +516,9 @@ func (a *Adapter) Transaction(ctx context.Context, networkID, txID string) (chai
 	if err != nil {
 		return chain.Transaction{}, err
 	}
-	confirmed, err := service.TransactionConfirmed(ctx, txID)
+	status, err := service.TransactionStatus(ctx, txID)
 	if err != nil {
 		return chain.Transaction{}, err
-	}
-	status := "pending"
-	if confirmed {
-		status = "confirmed"
 	}
 	return chain.Transaction{NetworkID: networkID, Hash: txID, Status: status}, nil
 }
@@ -625,6 +636,28 @@ func (a *Adapter) Deploy(
 		return Deployed{}, err
 	}
 	return service.DeployWithSigner(ctx, from, deployment, signer)
+}
+
+// QuoteSwap prices a TRX/USDT swap on every SunSwap route of the network.
+func (a *Adapter) QuoteSwap(
+	ctx context.Context, networkID, from string, req SwapQuoteRequest,
+) (SwapQuotes, error) {
+	service, err := a.service(networkID)
+	if err != nil {
+		return SwapQuotes{}, err
+	}
+	return service.QuoteSwap(ctx, from, req)
+}
+
+// Swap signs and broadcasts the next step of a swap.
+func (a *Adapter) Swap(
+	ctx context.Context, networkID, from string, req SwapRequest, signer chain.Signer,
+) (string, error) {
+	service, err := a.service(networkID)
+	if err != nil {
+		return "", err
+	}
+	return service.SwapWithSigner(ctx, from, req, signer)
 }
 
 func (a *Adapter) service(networkID string) (*legacy.Service, error) {

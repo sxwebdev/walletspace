@@ -325,14 +325,14 @@ func TestBalanceFetchesAreDeduplicatedByAddress(t *testing.T) {
 	})
 }
 
-func TestTransactionConfirmedRejectsMalformedID(t *testing.T) {
+func TestTransactionStatusRejectsMalformedID(t *testing.T) {
 	t.Parallel()
 
 	s := newTestService(func(_ context.Context, addr string) (Balance, error) {
 		return Balance{}, nil
 	})
 
-	_, err := s.TransactionConfirmed(t.Context(), "not-a-txid")
+	_, err := s.TransactionStatus(t.Context(), "not-a-txid")
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Errorf("error = %v, want ErrInvalidRequest", err)
 	}

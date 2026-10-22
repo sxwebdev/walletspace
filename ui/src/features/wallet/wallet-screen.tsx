@@ -2,6 +2,7 @@ import * as React from "react"
 import { motion } from "motion/react"
 import {
   ArrowDownLeftIcon,
+  ArrowDownUpIcon,
   ArrowLeftRightIcon,
   ArrowUpRightIcon,
   BatteryChargingIcon,
@@ -117,6 +118,9 @@ export function WalletScreen() {
         { label: "Receive", icon: ArrowDownLeftIcon, to: `${base}/receive` },
         ...(network.wrapped_native
           ? [{ label: "Wrap", icon: ArrowLeftRightIcon, to: `${base}/wrap` }]
+          : []),
+        ...(network.capabilities.tron_swap
+          ? [{ label: "Swap", icon: ArrowDownUpIcon, to: `${base}/swap` }]
           : []),
         ...(network.family === "tron"
           ? [

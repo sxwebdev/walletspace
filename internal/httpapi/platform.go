@@ -140,6 +140,8 @@ func NewPlatform(
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/cancel-unstakes", p.tronCancelUnstakes)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/deploy-estimate", p.tronDeployEstimate)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/deploy", p.tronDeploy)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/swap-quote", p.tronSwapQuote)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/swap", p.tronSwap)
 
 	return access.guard(mux), nil
 }
@@ -331,6 +333,14 @@ func (p *Platform) requireSendConfirmation(w http.ResponseWriter, r *http.Reques
 // prompt in the UI. Matching on the message text would be a string comparison
 // that breaks the moment the wording improves.
 const codeSendConfirmationRequired = "send_confirmation_required"
+
+// codeNotBroadcast promises that the operation behind this idempotency key was
+// recorded as never broadcast, so the caller may sign a fresh request under a
+// new key. Every other failure — a key already in use, a record that could
+// not be written after a broadcast, an answer that never arrived — leaves that
+// question open, and a client that cannot tell them apart would sign the same
+// swap twice.
+const codeNotBroadcast = "not_broadcast"
 
 // statusClientClosedRequest is 499, which the standard library has no name for
 // because it is not in the RFC. It says what happened when a caller goes away
@@ -1565,7 +1575,11 @@ func (p *Platform) finishTronOperation(
 			})
 			return
 		}
-		p.writePlatformError(w, err)
+		if updateErr != nil {
+			p.writePlatformError(w, err)
+			return
+		}
+		p.writeCodedPlatformError(w, err, codeNotBroadcast)
 		return
 	}
 	if _, err := p.operations.Update(spaceID, key, txID, operation.StatusPending); err != nil {
@@ -1877,6 +1891,12 @@ func (p *Platform) chainTransaction(ctx context.Context, item network.Network, t
 }
 
 func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
+	p.writeCodedPlatformError(w, err, platformErrorCode(err))
+}
+
+// writeCodedPlatformError answers with err classified as writePlatformError
+// does, labelled with code when it is not empty.
+func (p *Platform) writeCodedPlatformError(w http.ResponseWriter, err error, code string) {
 	status := http.StatusBadRequest
 	switch {
 	case errors.Is(err, space.ErrNotFound), errors.Is(err, space.ErrAccountNotFound),
@@ -1895,7 +1915,8 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 		// space is being asked for its password before it will spend.
 		status = http.StatusForbidden
 	case errors.Is(err, space.ErrDuplicateKey), errors.Is(err, space.ErrFirstSpaceExists),
-		errors.Is(err, operation.ErrConflict), errors.Is(err, chain.ErrFeeChanged):
+		errors.Is(err, operation.ErrConflict), errors.Is(err, chain.ErrFeeChanged),
+		errors.Is(err, chain.ErrStateChanged):
 		// A stale fee approval is a conflict, not a bad request: nothing the
 		// caller sent was wrong, the network simply moved and the user has to
 		// see the new numbers before anything is signed.
@@ -1933,7 +1954,7 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 	// against an RPC endpoint quotes it, and by that point the ${ENV} reference
 	// in the configuration has been expanded into the real credential.
 	message := config.RedactError(err).Error()
-	if code := platformErrorCode(err); code != "" {
+	if code != "" {
 		writeJSON(w, status, map[string]string{"error": message, "code": code})
 		return
 	}
@@ -1943,12 +1964,13 @@ func (p *Platform) writePlatformError(w http.ResponseWriter, err error) {
 // platformErrorCode labels the refusals the browser has to act on rather than
 // merely display.
 //
-// Exactly one error has a code, and that is the point: a code is a promise that
-// the UI has a remedy for this particular refusal — here, ask the person at the
-// keyboard for the space password and repeat the identical request, idempotency
-// key and approved fee included. Handing one to every error would turn a
-// contract into decoration, and leaving it at the call site is what let the
-// contract depend on where the check happened to be raised from.
+// Exactly one error is coded by its kind, and that is the point: a code is a
+// promise that the UI has a remedy for this particular refusal — here, ask the
+// person at the keyboard for the space password and repeat the identical
+// request, idempotency key and approved fee included. Handing one to every error
+// would turn a contract into decoration. The one other code, codeNotBroadcast,
+// is not about the error at all but about what was recorded for it, so only
+// finishTronOperation, which does the recording, can attach it.
 func platformErrorCode(err error) string {
 	if errors.Is(err, space.ErrSendConfirmationRequired) {
 		return codeSendConfirmationRequired

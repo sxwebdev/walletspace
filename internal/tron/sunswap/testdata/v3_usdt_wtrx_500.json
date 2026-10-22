@@ -1,0 +1,37 @@
+{
+	"pool": "TSUUVjysXV8YqHytSNjfkNXnnB49QDvZpx",
+	"sqrt_price_x96": "45553216903016974817197371656",
+	"tick": -11070,
+	"liquidity": "1796031207317518",
+	"tick_spacing": 10,
+	"fee_pips": 500,
+	"words": {
+		"-5": "3666658075319518769600822416029343450034653935067676178090052969079937"
+	},
+	"ticks": {
+		"-11080": "-11899038370",
+		"-11100": "1165544687946"
+	},
+	"cases": [
+		{
+			"amount_in": "10000000",
+			"zero_for_one": true,
+			"amount_out": "3304165"
+		},
+		{
+			"amount_in": "5000000000000",
+			"zero_for_one": true,
+			"amount_out": "1649443676184"
+		},
+		{
+			"amount_in": "10000000",
+			"zero_for_one": false,
+			"amount_out": "30234574"
+		},
+		{
+			"amount_in": "2000000000000",
+			"zero_for_one": false,
+			"amount_out": "6035231948366"
+		}
+	]
+}

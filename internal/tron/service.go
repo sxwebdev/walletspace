@@ -19,6 +19,7 @@ import (
 	"github.com/sxwebdev/gotron/pkg/address"
 	"github.com/sxwebdev/gotron/pkg/client"
 	"github.com/sxwebdev/gotron/schema/pb/api"
+	"github.com/sxwebdev/gotron/schema/pb/core"
 	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/config"
 	"golang.org/x/sync/singleflight"
@@ -208,6 +209,8 @@ type Service struct {
 	cache        *ttlcache.Cache[string, Balance]
 	balanceTimes sync.Map // address -> time.Time of the last successful fetch
 	estimates    *ttlcache.Cache[string, Estimate]
+	// swap is SunSwap on this network, nil where swapping is not available.
+	swap *swapper
 	// balanceSlots is shared by every HTTP request. A per-request errgroup limit
 	// would let two overlapping refreshes double the load on public TronGrid.
 	balanceSlots chan struct{}
@@ -339,6 +342,7 @@ func New(ctx context.Context, cfg *config.Config, nodes []config.Node, log *slog
 		c.Close()
 		return nil, err
 	}
+	s.swap = newSwapper(cfg.Network, s.token.Contract)
 
 	// Started only once the Service is going to be returned. Starting earlier
 	// would leak the janitor goroutine on the error path above, with no handle
@@ -1013,25 +1017,41 @@ func (s *Service) SendWithSigner(
 	return txid, nil
 }
 
-// TransactionConfirmed reports whether a broadcast transaction has appeared
-// in a block. A missing receipt is the normal pending state, not an error.
-func (s *Service) TransactionConfirmed(ctx context.Context, txid string) (bool, error) {
+// Transaction outcomes reported by TransactionStatus.
+const (
+	TxPending   = "pending"
+	TxConfirmed = "confirmed"
+	TxFailed    = "failed"
+)
+
+// TransactionStatus reports whether a broadcast transaction has appeared in a
+// block and how it fared there. A missing receipt is the normal pending state,
+// not an error.
+//
+// Being in a block is not success. A contract call that reverts or runs out of
+// energy is mined, charged for and did nothing — a swap whose price moved past
+// its minimum ends exactly like that — and calling it confirmed would tell the
+// user a trade happened that did not.
+func (s *Service) TransactionStatus(ctx context.Context, txid string) (string, error) {
 	if len(txid) != 64 {
-		return false, fmt.Errorf("%w: transaction id must contain 64 hex characters", ErrInvalidRequest)
+		return "", fmt.Errorf("%w: transaction id must contain 64 hex characters", ErrInvalidRequest)
 	}
 	if _, err := hex.DecodeString(txid); err != nil {
-		return false, fmt.Errorf("%w: invalid transaction id: %s", ErrInvalidRequest, err)
+		return "", fmt.Errorf("%w: invalid transaction id: %s", ErrInvalidRequest, err)
 	}
 
-	_, err := s.client.GetTransactionInfoByHash(ctx, txid)
+	info, err := s.client.GetTransactionInfoByHash(ctx, txid)
 	if errors.Is(err, client.ErrTransactionInfoNotFound) {
-		return false, nil
+		return TxPending, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read transaction receipt: %w", err)
+		return "", fmt.Errorf("read transaction receipt: %w", err)
+	}
+	if info.GetResult() == core.TransactionInfo_FAILED || deployFailure(info) != "" {
+		return TxFailed, nil
 	}
 
-	return true, nil
+	return TxConfirmed, nil
 }
 
 // healthLogger bridges the client's health checker to slog.
