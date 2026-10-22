@@ -2,17 +2,19 @@ import * as React from "react"
 import { ChevronLeftIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
+import { HeaderBar } from "@/components/layout/header-bar"
 import { Button } from "@/components/ui/button"
 
-// A sub-screen's title bar: back on the left, the title centered, an optional
-// action on the right — the layout every wallet popup uses.
+// A sub-screen's header: back, title, an optional action. back={false} is for
+// screens that must not be left sideways, such as the recovery phrase that has
+// to be acknowledged.
 export function ScreenHeader({
   title,
   back,
   action,
 }: {
   title: React.ReactNode
-  back?: string | (() => void)
+  back?: string | (() => void) | false
   action?: React.ReactNode
 }) {
   const navigate = useNavigate()
@@ -22,12 +24,21 @@ export function ScreenHeader({
     else navigate(-1)
   }
   return (
-    <div className="grid h-14 shrink-0 grid-cols-[2.5rem_1fr_2.5rem] items-center px-3">
-      <Button variant="ghost" size="icon-sm" onClick={onBack} aria-label="Back">
-        <ChevronLeftIcon />
-      </Button>
-      <div className="truncate text-center text-sm font-medium">{title}</div>
-      <div className="flex justify-end">{action}</div>
-    </div>
+    <HeaderBar
+      left={
+        back === false ? null : (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onBack}
+            aria-label="Back"
+          >
+            <ChevronLeftIcon />
+          </Button>
+        )
+      }
+      center={title}
+      right={action}
+    />
   )
 }

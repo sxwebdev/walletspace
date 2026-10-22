@@ -7,6 +7,8 @@ import { useNavigate } from "react-router"
 import { FormError } from "@/components/common/form-error"
 import { easeOut } from "@/components/common/motion"
 import { PasswordInput } from "@/components/common/password-input"
+import { ThemeMenu } from "@/components/common/theme-menu"
+import { AppBar } from "@/components/layout/widget"
 import { Button } from "@/components/ui/button"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
@@ -21,7 +23,6 @@ import { spacesApi } from "@/lib/api/spaces"
 export function LockScreen() {
   const { space } = useSession()
   const queryClient = useQueryClient()
-  const navigate = useNavigate()
   const shake = useAnimationControls()
   const [password, setPassword] = React.useState("")
   const input = React.useRef<HTMLInputElement>(null)
@@ -33,7 +34,10 @@ export function LockScreen() {
       setSpaceLocked(queryClient, space!.id, false)
     },
     onError: () => {
-      void shake.start({ x: [0, -10, 10, -6, 6, 0], transition: { duration: 0.4 } })
+      void shake.start({
+        x: [0, -10, 10, -6, 6, 0],
+        transition: { duration: 0.4 },
+      })
       input.current?.select()
     },
   })
@@ -42,16 +46,6 @@ export function LockScreen() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <div className="flex h-14 items-center justify-end px-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => navigate("/settings")}
-          aria-label="Settings"
-        >
-          <SettingsIcon />
-        </Button>
-      </div>
       <div className="flex flex-1 flex-col items-center justify-center gap-8 px-8 pb-16">
         <motion.div
           initial={{ scale: 0.8, opacity: 0 }}
@@ -98,14 +92,42 @@ export function LockScreen() {
                 autoFocus
               />
             </Field>
-            <FormError message={unlock.isError ? errorMessage(unlock.error) : null} />
+            <FormError
+              message={unlock.isError ? errorMessage(unlock.error) : null}
+            />
           </FieldGroup>
-          <Button type="submit" size="lg" disabled={!password || unlock.isPending}>
+          <Button
+            type="submit"
+            size="lg"
+            disabled={!password || unlock.isPending}
+          >
             {unlock.isPending && <Spinner data-icon="inline-start" />}
             {unlock.isPending ? "Unlocking…" : "Unlock"}
           </Button>
         </motion.form>
       </div>
     </div>
+  )
+}
+
+// The bar while no space is open: theme and settings, nothing of a space.
+export function LockedHeader() {
+  const navigate = useNavigate()
+  return (
+    <AppBar
+      right={
+        <>
+          <ThemeMenu />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => navigate("/settings")}
+            aria-label="Settings"
+          >
+            <SettingsIcon />
+          </Button>
+        </>
+      }
+    />
   )
 }

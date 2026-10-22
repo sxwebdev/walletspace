@@ -71,7 +71,7 @@ export function TronResourcesScreen() {
 
   if (result) {
     return (
-      <Screen header={<div className="h-14" />}>
+      <Screen header={<div className="h-14 sm:hidden" />}>
         <TxResult
           network={network}
           txId={result.tx_id}

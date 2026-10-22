@@ -323,7 +323,7 @@ function SavePhrase({ phrase, onDone }: { phrase: string; onDone: () => void }) 
   const words = phrase.split(/\s+/)
   return (
     <Screen
-      header={<div className="flex h-14 items-center justify-center text-sm font-medium">Recovery phrase</div>}
+      header={<ScreenHeader title="Recovery phrase" back={false} />}
       footer={
         <div className="flex flex-col gap-4">
           <Field orientation="horizontal">

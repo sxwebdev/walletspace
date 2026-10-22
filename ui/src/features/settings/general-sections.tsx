@@ -28,7 +28,11 @@ export function GeneralSection({ settings }: { settings: Settings }) {
   const adopt = useAdoptRevision()
   const [addr, setAddr] = React.useState(settings.server.addr)
   const [openBrowser, setOpenBrowser] = React.useState(settings.server.open_browser)
-  const [lastSpace, setLastSpace] = React.useState(settings.ui.last_space_id)
+  // config.yaml can name a space that was since removed; the wallet already
+  // ignores it, so the form starts from "Not set" and saving clears it.
+  const savedSpace = settings.ui.last_space_id
+  const savedSpaceMissing = savedSpace !== "" && !spaces.some((s) => s.id === savedSpace)
+  const [lastSpace, setLastSpace] = React.useState(savedSpaceMissing ? "" : savedSpace)
   const save = useSettingsMutation(
     () =>
       settingsApi.patchGeneral(settings.revision, {
@@ -62,7 +66,7 @@ export function GeneralSection({ settings }: { settings: Settings }) {
           <FieldLabel>Default space</FieldLabel>
           <Select value={lastSpace} onValueChange={(v) => setLastSpace(String(v ?? ""))}>
             <SelectTrigger className="w-full">
-              <SelectValue>{(v: string) => (v ? spaceName.get(v) ?? v : "Not set")}</SelectValue>
+              <SelectValue>{(v: string) => (v ? (spaceName.get(v) ?? "Not set") : "Not set")}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectGroup>
@@ -75,6 +79,11 @@ export function GeneralSection({ settings }: { settings: Settings }) {
               </SelectGroup>
             </SelectContent>
           </Select>
+          {savedSpaceMissing && lastSpace === "" && (
+            <FieldDescription>
+              The saved default space no longer exists. Pick one, or save to clear it.
+            </FieldDescription>
+          )}
         </Field>
         <FormError message={save.isError ? settingsErrorMessage(save.error) : null} />
       </FieldGroup>

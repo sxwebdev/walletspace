@@ -17,12 +17,21 @@ import {
 } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { Home } from "@/features/home/home"
+import { AppHeader } from "@/features/home/home-header"
 import { NodesScreen } from "@/features/nodes/nodes"
 import { SendConfirmationProvider } from "@/features/security/send-confirmation"
-import { SessionProvider, useSession, useSessionQueries } from "@/features/session/session"
+import {
+  SessionProvider,
+  useSession,
+  useSessionQueries,
+} from "@/features/session/session"
 import { SettingsScreen } from "@/features/settings/settings"
-import { CreateSpace, NewSpaceChoice, Welcome } from "@/features/spaces/create-space"
-import { LockScreen } from "@/features/spaces/lock-screen"
+import {
+  CreateSpace,
+  NewSpaceChoice,
+  Welcome,
+} from "@/features/spaces/create-space"
+import { LockedHeader, LockScreen } from "@/features/spaces/lock-screen"
 import { SpaceSettings } from "@/features/spaces/space-settings"
 import { AddWallet } from "@/features/wallet/add-wallet"
 import { PickWallet } from "@/features/wallet/pick-wallet"
@@ -38,7 +47,11 @@ export function App() {
   if (!hasToken) {
     return (
       <Widget>
-        <Problem icon={LinkIcon} title="Open Walletspace from its link" description={NO_TOKEN_MESSAGE} />
+        <Problem
+          icon={LinkIcon}
+          title="Open Walletspace from its link"
+          description={NO_TOKEN_MESSAGE}
+        />
       </Widget>
     )
   }
@@ -75,7 +88,9 @@ function Session() {
           icon={TriangleAlertIcon}
           title="Walletspace did not load"
           description={errorMessage(failure ?? "No response")}
-          action={<Button onClick={() => window.location.reload()}>Try again</Button>}
+          action={
+            <Button onClick={() => window.location.reload()}>Try again</Button>
+          }
         />
       </Widget>
     )
@@ -87,9 +102,7 @@ function Session() {
       networks={networks.data.networks}
       settings={settings.data}
     >
-      <Widget wide={wide}>
-        <Shell />
-      </Widget>
+      <Shell wide={wide} />
     </SessionProvider>
   )
 }
@@ -97,7 +110,7 @@ function Session() {
 // Routes reachable without an unlocked space: nothing in them reads the vault.
 const openRoutes = ["/settings", "/spaces/new", "/create"]
 
-function Shell() {
+function Shell({ wide }: { wide: boolean }) {
   const { spaces, space } = useSession()
   const location = useLocation()
   const open = openRoutes.some((prefix) => location.pathname.startsWith(prefix))
@@ -107,59 +120,101 @@ function Shell() {
   else if (space?.locked) stage = open ? "open" : "locked"
   else stage = "unlocked"
 
-  return (
+  // The app bar belongs to the stage, not to a screen: it stays put while the
+  // screens below it slide, and changes only on lock, unlock or a new space.
+  const top = (
     <AnimatePresence mode="wait" initial={false}>
       <motion.div
-        key={stage === "unlocked" ? `unlocked:${space?.id}` : stage}
-        className="flex min-h-0 flex-1 flex-col"
-        initial={{ opacity: 0, scale: 0.98 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.98 }}
-        transition={{ duration: 0.25, ease: easeOut }}
+        key={stage === "unlocked" ? "app" : "locked"}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
       >
-        {stage === "welcome" && (
-          <Animated>
-            <Route path="/" element={<Welcome />} />
-            <Route path="/create" element={<CreateSpace first />} />
-            <Route path="/settings/*" element={<SettingsScreen />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Animated>
-        )}
-        {stage === "locked" && <LockScreen key={space?.id} />}
-        {stage === "open" && (
-          <Animated>
-            <Route path="/settings/*" element={<SettingsScreen />} />
-            <Route path="/spaces/new" element={<NewSpaceChoice />} />
-            <Route path="/create" element={<CreateSpace first={false} />} />
-          </Animated>
-        )}
-        {stage === "unlocked" && (
-          <WalletProvider>
-            <SendConfirmationProvider>
-              <Animated>
-                <Route path="/" element={<Home />} />
-                <Route path="/send" element={<PickWallet mode="send" />} />
-                <Route path="/receive" element={<PickWallet mode="receive" />} />
-                <Route path="/add-wallet" element={<AddWallet />} />
-                <Route path="/wallet/:accountId" element={<WalletScreen />} />
-                <Route path="/wallet/:accountId/:networkId" element={<WalletScreen />} />
-                <Route path="/wallet/:accountId/:networkId/send" element={<SendScreen mode="send" />} />
-                <Route path="/wallet/:accountId/:networkId/wrap" element={<SendScreen mode="wrap" />} />
-                <Route path="/wallet/:accountId/:networkId/receive" element={<ReceiveScreen />} />
-                <Route path="/wallet/:accountId/:networkId/resources" element={<TronResourcesScreen />} />
-                <Route path="/wallet/:accountId/:networkId/deploy" element={<DeployScreen />} />
-                <Route path="/space" element={<SpaceSettings />} />
-                <Route path="/spaces/new" element={<NewSpaceChoice />} />
-                <Route path="/create" element={<CreateSpace first={false} />} />
-                <Route path="/nodes" element={<NodesScreen />} />
-                <Route path="/settings/*" element={<SettingsScreen />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Animated>
-            </SendConfirmationProvider>
-          </WalletProvider>
-        )}
+        {stage === "unlocked" ? <AppHeader /> : <LockedHeader />}
       </motion.div>
     </AnimatePresence>
+  )
+
+  return (
+    <Widget wide={wide} top={top}>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={stage === "unlocked" ? `unlocked:${space?.id}` : stage}
+          className="flex min-h-0 flex-1 flex-col"
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.98 }}
+          transition={{ duration: 0.25, ease: easeOut }}
+        >
+          {stage === "welcome" && (
+            <Animated>
+              <Route path="/" element={<Welcome />} />
+              <Route path="/create" element={<CreateSpace first />} />
+              <Route path="/settings/*" element={<SettingsScreen />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Animated>
+          )}
+          {stage === "locked" && <LockScreen key={space?.id} />}
+          {stage === "open" && (
+            <Animated>
+              <Route path="/settings/*" element={<SettingsScreen />} />
+              <Route path="/spaces/new" element={<NewSpaceChoice />} />
+              <Route path="/create" element={<CreateSpace first={false} />} />
+            </Animated>
+          )}
+          {stage === "unlocked" && (
+            <WalletProvider>
+              <SendConfirmationProvider>
+                <Animated>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/send" element={<PickWallet mode="send" />} />
+                  <Route
+                    path="/receive"
+                    element={<PickWallet mode="receive" />}
+                  />
+                  <Route path="/add-wallet" element={<AddWallet />} />
+                  <Route path="/wallet/:accountId" element={<WalletScreen />} />
+                  <Route
+                    path="/wallet/:accountId/:networkId"
+                    element={<WalletScreen />}
+                  />
+                  <Route
+                    path="/wallet/:accountId/:networkId/send"
+                    element={<SendScreen mode="send" />}
+                  />
+                  <Route
+                    path="/wallet/:accountId/:networkId/wrap"
+                    element={<SendScreen mode="wrap" />}
+                  />
+                  <Route
+                    path="/wallet/:accountId/:networkId/receive"
+                    element={<ReceiveScreen />}
+                  />
+                  <Route
+                    path="/wallet/:accountId/:networkId/resources"
+                    element={<TronResourcesScreen />}
+                  />
+                  <Route
+                    path="/wallet/:accountId/:networkId/deploy"
+                    element={<DeployScreen />}
+                  />
+                  <Route path="/space" element={<SpaceSettings />} />
+                  <Route path="/spaces/new" element={<NewSpaceChoice />} />
+                  <Route
+                    path="/create"
+                    element={<CreateSpace first={false} />}
+                  />
+                  <Route path="/nodes" element={<NodesScreen />} />
+                  <Route path="/settings/*" element={<SettingsScreen />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Animated>
+              </SendConfirmationProvider>
+            </WalletProvider>
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </Widget>
   )
 }
 
@@ -178,7 +233,9 @@ function Animated({ children }: { children: React.ReactNode }) {
     setPrevious(location.pathname)
   }
   // Settings sections change inside one screen; they are not a new layer.
-  const key = location.pathname.startsWith("/settings") ? "/settings" : location.pathname
+  const key = location.pathname.startsWith("/settings")
+    ? "/settings"
+    : location.pathname
   // Both screens are absolutely positioned in one frame while they cross, so
   // the outgoing one never pushes the incoming one down.
   return (

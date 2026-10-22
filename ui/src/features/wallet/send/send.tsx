@@ -236,7 +236,7 @@ function SendFlow({
 
   if (step === "result" && operation && approved) {
     return (
-      <Screen header={<div className="h-14" />}>
+      <Screen header={<div className="h-14 sm:hidden" />}>
         <TxResult
           network={network}
           txId={txId}
