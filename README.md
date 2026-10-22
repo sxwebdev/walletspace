@@ -1,23 +1,48 @@
 # Walletspace
 
 Local multichain wallet manager: several isolated spaces, derived and imported
-accounts, Tron and EVM networks in one loopback UI. Private keys are used locally
-and are never sent to an RPC provider.
+accounts, Tron, EVM and Solana networks in one loopback UI. Private keys are used
+locally and are never sent to an RPC provider.
 
 ## Features
 
 - Independent spaces, each with its own password and encrypted vault.
 - A new BIP39 recovery phrase or recovery of an existing one, with BIP44
-  derivation for Tron (`m/44'/195'/0'/0/i`) and EVM (`m/44'/60'/0'/0/i`).
+  derivation for Tron (`m/44'/195'/0'/0/i`) and EVM (`m/44'/60'/0'/0/i`), and
+  SLIP-0010 ed25519 derivation for Solana (`m/44'/501'/i'/0'`, the path Phantom
+  and Solflare use, so the same phrase shows the same addresses there).
 - Explicit network bindings: a wallet exists only in the networks it was created
   or connected in, the derivation index starts at `0` separately in each network,
   and a compatible key is not duplicated.
-- Import of a secp256k1 private key, marked `Imported` in the UI; export of a
-  private key or a recovery phrase only from an unlocked space.
-- 18 networks at once: Tron, Ethereum, BSC, Polygon PoS, OP, Arbitrum, Robinhood
-  Chain and Avalanche C-Chain, each with its testnet, plus Base and Kaia mainnets.
-- Native, ERC20 and TRC20 balances and transfers; Tron resources, staking,
+- Import of a secp256k1 private key, or of a Solana keypair as base58 or as the
+  JSON byte array `solana-keygen` writes, marked `Imported` in the UI; export of
+  a private key (a Solana keypair as base58) or a recovery phrase only from an
+  unlocked space.
+- 20 networks at once: Tron, Ethereum, BSC, Polygon PoS, OP, Arbitrum, Robinhood
+  Chain and Avalanche C-Chain, each with its testnet, Base and Kaia mainnets,
+  and Solana Mainnet and Devnet.
+- Native, ERC20, TRC20 and SPL balances and transfers; Tron resources, staking,
   delegation and contract deployment.
+- Solana: SOL and classic SPL tokens, with USDC and USDT built in and any other
+  token added by its mint; a mint needs Metaplex metadata to be added, and
+  Token-2022 tokens are not supported. The fee is the base fee plus a priority
+  fee at a recent price, at least 1,000 micro-lamports per compute unit; a
+  recipient's token account is opened when it is missing, and its rent is shown
+  before you confirm. The exact transaction is simulated before signing and the
+  runtime's answer decides — a refusal is shown in plain words and nothing is
+  signed. **Close empty accounts** closes the wallet's empty token accounts and
+  returns their rent; frozen accounts are left alone.
+- Solana swaps on mainnet, through Raydium pools only (AMM v4, CPMM and CLMM).
+  Routes come from Raydium's keyless Trade API; when it is down or its route
+  cannot be used, the pools are found on chain instead. The wallet builds every
+  instruction itself from the pools' on-chain state, simulates the swap to learn
+  exactly what it pays, and checks the transaction it signs against that plan.
+  Routes have one pool, or two through SOL, USDC or USDT; slippage is up to 3%.
+  Swap data powered by Raydium.
+- Solana uses the public Solana RPC by default, which is rate-limited; set your
+  own node in the network's settings for heavier use. Not supported on Solana
+  yet: Token-2022 tokens, swaps on devnet, Gas.zip top-ups and on-chain
+  transaction history.
 - On-chain wrap/unwrap at 1:1 through native wrapper contracts: ETH/WETH on
   Ethereum, Base, OP and Arbitrum; BNB/WBNB on BSC mainnet and testnet. Use
   **Wrap / Unwrap** beside the wallet, choose a direction and amount (or MAX),
@@ -82,6 +107,13 @@ and are never sent to an RPC provider.
   signed and then keep it valid for a day to broadcast when it suits. The
   transaction id is computed from the bytes that were signed rather than read
   back from the node.
+- A Solana transaction is built locally — transfers, account closes and every
+  instruction of a Raydium swap, from the pools' on-chain state — then decoded
+  on its own and compared with what was asked before it is signed: programs,
+  accounts, amounts, the signer and which accounts may be written. Addresses a
+  swap loads from lookup tables are checked against those tables' contents on
+  chain. The approved compute limit, priority price and swap minimum are what
+  get signed.
 - The EVM fee the user confirms is what gets signed. The sender does not re-ask
   the node at signing time; if the network has moved past the approved ceiling
   the transfer is refused and has to be confirmed again.
@@ -119,8 +151,8 @@ and are never sent to an RPC provider.
   The resolver falls through to the official fallbacks when a node stops
   answering, and node discovery can add more; none of them are sent a secret
   that was typed next to a different URL.
-- Every outbound request — each RPC connection and the node-discovery poll —
-  goes through a dialer that resolves the host itself and refuses loopback,
+- Every outbound request — each RPC connection, the node-discovery poll and the
+  Raydium API — goes through a dialer that resolves the host itself and refuses loopback,
   private and special-use addresses, including the IPv6 spellings of them, so
   the answer that was checked is the one that is dialled. No proxy is consulted,
   because a proxy would be dialled in place of the host.
