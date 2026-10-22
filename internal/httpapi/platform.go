@@ -102,6 +102,7 @@ func NewPlatform(
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/derive", p.deriveAccount)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/import", p.importAccount)
 	mux.HandleFunc("PATCH /api/spaces/{space_id}/accounts/{account_id}", p.renameAccount)
+	mux.HandleFunc("DELETE /api/spaces/{space_id}/accounts/{account_id}", p.deleteAccount)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/{account_id}/networks", p.bindAccountNetwork)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/{account_id}/private-key", p.exportPrivateKey)
 
@@ -417,6 +418,25 @@ func (p *Platform) renameAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// deleteAccount removes a wallet. The body carries the space password: for an
+// imported wallet this destroys the only copy of its key the space holds.
+func (p *Platform) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	err := p.spaces.DeleteAccount(r.PathValue("space_id"), r.PathValue("account_id"), request.Password)
+	request.Password = ""
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
 func (p *Platform) bindAccountNetwork(w http.ResponseWriter, r *http.Request) {

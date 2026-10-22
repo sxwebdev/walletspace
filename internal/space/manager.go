@@ -1210,6 +1210,54 @@ func (m *Manager) RenameAccount(id, accountID, label string) (account.Account, e
 	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
 }
 
+// DeleteAccount removes a wallet from the space. For an imported wallet that
+// also takes its private key out of the vault, which nothing can undo, so the
+// space password is asked for again rather than trusting the open session —
+// the same bar as exporting the key. A derived wallet only loses its record:
+// deriving again on the same network hands back the same lowest free index.
+func (m *Manager) DeleteAccount(id, accountID, password string) error {
+	unlockSpace := m.lockSpace(id)
+	defer unlockSpace()
+	if err := m.confirmPassword(id, password); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	file, payload, err := m.unlockedLocked(id)
+	if err != nil {
+		return err
+	}
+	index := slices.IndexFunc(file.Accounts, func(item account.Account) bool { return item.ID == accountID })
+	if index < 0 {
+		return fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
+	}
+	removed := file.Accounts[index]
+	file.Accounts = slices.Delete(file.Accounts, index, index+1)
+	file.UpdatedAt = m.now()
+
+	if removed.Kind != account.KindImported {
+		if err := m.saveLocked(file); err != nil {
+			return err
+		}
+		m.files[id] = file
+		return nil
+	}
+
+	// The key leaves the payload before the vault is resealed, and comes back
+	// if the write fails: the session must keep matching what is on disk.
+	entry, hadKey := payload.ImportedKeys[removed.KeyRef]
+	delete(payload.ImportedKeys, removed.KeyRef)
+	if err := m.resealAndSaveLocked(&file, payload, id); err != nil {
+		if hadKey {
+			payload.ImportedKeys[removed.KeyRef] = entry
+		}
+		return err
+	}
+	clear(entry.PrivateKey)
+	m.files[id] = file
+	return nil
+}
+
 // confirmPassword re-derives the vault key from a password the caller just
 // supplied, without disturbing the open session.
 //

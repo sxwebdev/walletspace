@@ -11,6 +11,7 @@ import {
   KeyRoundIcon,
   PencilIcon,
   PlusIcon,
+  Trash2Icon,
 } from "lucide-react"
 import { Navigate, useNavigate } from "react-router"
 
@@ -37,6 +38,7 @@ import { useAccountRoute } from "@/features/wallet/use-account-route"
 import {
   ConnectNetworkDialog,
   connectableNetworks,
+  DeleteWalletDialog,
   ExportKeyDialog,
   RenameWalletDialog,
 } from "@/features/wallet/wallet-dialogs"
@@ -71,7 +73,7 @@ export function WalletScreen() {
   const { account, network, address, loading } = useAccountRoute()
   const { enabledNetworks, networkById } = useSession()
   const navigate = useNavigate()
-  const [dialog, setDialog] = React.useState<"rename" | "connect" | "export" | null>(null)
+  const [dialog, setDialog] = React.useState<"rename" | "connect" | "export" | "delete" | null>(null)
   const rows = useWalletAssets(account, network)
   const { balancesLoading } = useWallet()
 
@@ -128,6 +130,10 @@ export function WalletScreen() {
                     <KeyRoundIcon />
                     Export private key
                   </DropdownMenuItem>
+                  <DropdownMenuItem variant="destructive" onClick={() => setDialog("delete")}>
+                    <Trash2Icon />
+                    Delete wallet
+                  </DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -153,7 +159,7 @@ export function WalletScreen() {
                   {ids.map((id) => (
                     <SelectItem key={id} value={id}>
                       {networkById.get(id)?.name ?? id}
-                      {networkById.get(id)?.testnet && <span className="text-muted-foreground"> · testnet</span>}
+                      {networkById.get(id)?.testnet && <span className="text-muted-foreground">· testnet</span>}
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -249,6 +255,12 @@ export function WalletScreen() {
         onConnected={(n) => navigate(`/wallet/${account.id}/${n.id}`, { replace: true })}
       />
       <ExportKeyDialog account={account} open={dialog === "export"} onOpenChange={(o) => setDialog(o ? "export" : null)} />
+      <DeleteWalletDialog
+        account={account}
+        open={dialog === "delete"}
+        onOpenChange={(o) => setDialog(o ? "delete" : null)}
+        onExport={() => setDialog("export")}
+      />
     </Screen>
   )
 }

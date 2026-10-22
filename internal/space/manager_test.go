@@ -587,3 +587,143 @@ func TestChangingThePasswordClosesTheSpendingWindow(t *testing.T) {
 		t.Errorf("RequireSendConfirmation() on the locked space = %v, want ErrLocked", err)
 	}
 }
+
+func TestDeleteDerivedAccountCanBeDerivedAgain(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	manager := newManager(t, home)
+	created := createWithNileWallet(t, manager, "test-vault-password")
+	wallet := created.Accounts[0]
+
+	if err := manager.DeleteAccount(created.Space.ID, wallet.ID, "test-vault-password"); err != nil {
+		t.Fatalf("DeleteAccount() error = %v", err)
+	}
+	accounts, err := manager.Accounts(created.Space.ID)
+	if err != nil {
+		t.Fatalf("Accounts() error = %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("accounts after delete = %+v, want none", accounts)
+	}
+	// The record is gone from disk, not only from memory.
+	if _, persisted, err := newManager(t, home).Get(created.Space.ID); err != nil || len(persisted) != 0 {
+		t.Fatalf("persisted accounts = %+v, err = %v; want none", persisted, err)
+	}
+
+	// Nothing is lost: the lowest free index on that network is the same one.
+	again, err := manager.Derive(created.Space.ID, "tron-nile", account.FamilyTron, "")
+	if err != nil {
+		t.Fatalf("Derive() after delete error = %v", err)
+	}
+	if again.Addresses[account.FamilyTron] != wallet.Addresses[account.FamilyTron] || *again.Index != *wallet.Index {
+		t.Fatalf("re-derived wallet = %+v, want the deleted %+v back", again, wallet)
+	}
+}
+
+func TestDeleteImportedAccountRemovesItsKey(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	privateKey := "0000000000000000000000000000000000000000000000000000000000000001"
+	imported, err := manager.Import(result.Space.ID, "ethereum-mainnet", account.FamilyEVM, "Hot", privateKey)
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+
+	if err := manager.DeleteAccount(result.Space.ID, imported.Account.ID, "test-vault-password"); err != nil {
+		t.Fatalf("DeleteAccount() error = %v", err)
+	}
+	if _, err := manager.ExportPrivateKey(
+		result.Space.ID, imported.Account.ID, account.FamilyEVM, "test-vault-password",
+	); !errors.Is(err, space.ErrAccountNotFound) {
+		t.Fatalf("ExportPrivateKey(deleted) error = %v, want ErrAccountNotFound", err)
+	}
+
+	// The resealed vault still opens and verifies against the remaining
+	// records: a key left behind, or a record without its key, would fail here.
+	if err := manager.Lock(result.Space.ID); err != nil {
+		t.Fatalf("Lock() error = %v", err)
+	}
+	if err := manager.Unlock(result.Space.ID, "test-vault-password"); err != nil {
+		t.Fatalf("Unlock() after delete error = %v", err)
+	}
+	// The key is no longer known to the vault, so importing it again is a new
+	// wallet rather than a duplicate.
+	again, err := manager.Import(result.Space.ID, "ethereum-mainnet", account.FamilyEVM, "Hot", privateKey)
+	if err != nil {
+		t.Fatalf("Import() after delete error = %v", err)
+	}
+	if again.Account.ID == imported.Account.ID {
+		t.Fatal("re-import returned the deleted account")
+	}
+}
+
+func TestDeleteAccountRefusals(t *testing.T) {
+	t.Parallel()
+
+	manager := newManager(t, t.TempDir())
+	created := createWithNileWallet(t, manager, "test-vault-password")
+	spaceID, accountID := created.Space.ID, created.Accounts[0].ID
+
+	if err := manager.DeleteAccount(spaceID, accountID, ""); !errors.Is(err, space.ErrPasswordRequired) {
+		t.Errorf("DeleteAccount(no password) error = %v, want ErrPasswordRequired", err)
+	}
+	if err := manager.DeleteAccount(spaceID, accountID, "not-the-password"); !errors.Is(err, vault.ErrInvalidPassword) {
+		t.Errorf("DeleteAccount(wrong password) error = %v, want ErrInvalidPassword", err)
+	}
+	if err := manager.DeleteAccount(spaceID, "acc_missing", "test-vault-password"); !errors.Is(err, space.ErrAccountNotFound) {
+		t.Errorf("DeleteAccount(unknown) error = %v, want ErrAccountNotFound", err)
+	}
+	if err := manager.Lock(spaceID); err != nil {
+		t.Fatalf("Lock() error = %v", err)
+	}
+	if err := manager.DeleteAccount(spaceID, accountID, "test-vault-password"); !errors.Is(err, space.ErrLocked) {
+		t.Errorf("DeleteAccount(locked) error = %v, want ErrLocked", err)
+	}
+
+	accounts, err := manager.Accounts(spaceID)
+	if err != nil {
+		t.Fatalf("Accounts() error = %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("a refused delete removed the wallet: %+v", accounts)
+	}
+}
+
+func TestFailedDeleteKeepsTheKeyInTheSession(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	manager := newManager(t, home)
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	privateKey := "0000000000000000000000000000000000000000000000000000000000000001"
+	imported, err := manager.Import(result.Space.ID, "ethereum-mainnet", account.FamilyEVM, "", privateKey)
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	spacePath := filepath.Join(home, "spaces", result.Space.ID)
+	if err := os.RemoveAll(spacePath); err != nil {
+		t.Fatalf("RemoveAll(space) error = %v", err)
+	}
+	if err := os.WriteFile(spacePath, []byte("blocks directory recreation"), 0o600); err != nil {
+		t.Fatalf("WriteFile(space path) error = %v", err)
+	}
+
+	if err := manager.DeleteAccount(result.Space.ID, imported.Account.ID, "test-vault-password"); err == nil {
+		t.Fatal("DeleteAccount() error = nil, want the write failure")
+	}
+	exported, err := manager.ExportPrivateKey(
+		result.Space.ID, imported.Account.ID, account.FamilyEVM, "test-vault-password",
+	)
+	if err != nil || exported != privateKey {
+		t.Fatalf("after a failed delete ExportPrivateKey() = %q, %v; want the key still there", exported, err)
+	}
+}

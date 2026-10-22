@@ -78,6 +78,11 @@ export const accountsApi = {
       `${base(spaceId)}/accounts/${encodeURIComponent(accountId)}`,
       { method: "PATCH", body: { label } }
     ),
+  delete: (spaceId: string, accountId: string, password: string) =>
+    request<{ deleted: boolean }>(
+      `${base(spaceId)}/accounts/${encodeURIComponent(accountId)}`,
+      { method: "DELETE", body: { password } }
+    ),
   bindNetwork: (spaceId: string, accountId: string, network_id: string) =>
     request<Account>(
       `${base(spaceId)}/accounts/${encodeURIComponent(accountId)}/networks`,

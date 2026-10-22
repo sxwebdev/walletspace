@@ -1,6 +1,7 @@
 import * as React from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { TriangleAlertIcon } from "lucide-react"
+import { useNavigate } from "react-router"
 
 import { FormError } from "@/components/common/form-error"
 import { networkLabel } from "@/components/common/network-badge"
@@ -8,6 +9,7 @@ import { PasswordInput } from "@/components/common/password-input"
 import { SecretReveal } from "@/components/common/secret-reveal"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -22,7 +24,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { useSession } from "@/features/session/session"
+import { queryKeys, useSession } from "@/features/session/session"
 import { accountNetworks, accountTitle, useWallet } from "@/features/wallet/wallet-data"
 import { errorMessage } from "@/lib/api/client"
 import { accountsApi } from "@/lib/api/spaces"
@@ -209,7 +211,8 @@ export function NetworkSelect({
           <SelectGroup>
             {testnets.map((network) => (
               <SelectItem key={network.id} value={network.id}>
-                {network.name} <span className="text-muted-foreground">· testnet</span>
+                {network.name}
+                <span className="text-muted-foreground">· testnet</span>
               </SelectItem>
             ))}
           </SelectGroup>
@@ -299,5 +302,106 @@ function ExportKeyBody({ account }: { account: Account }) {
           </form>
         )}
       </>
+  )
+}
+
+export function DeleteWalletDialog({
+  account,
+  open,
+  onOpenChange,
+  onExport,
+}: DialogProps & { onExport: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        {open && <DeleteWalletBody account={account} onExport={onExport} />}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DeleteWalletBody({ account, onExport }: { account: Account; onExport: () => void }) {
+  const { space } = useSession()
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const imported = account.kind === "imported"
+  const [password, setPassword] = React.useState("")
+  // An imported key exists nowhere else in the space; deleting it has to be
+  // acknowledged, not just confirmed with the password.
+  const [acknowledged, setAcknowledged] = React.useState(!imported)
+  const remove = useMutation({
+    mutationFn: () => accountsApi.delete(space!.id, account.id, password),
+    onSuccess: () => {
+      queryClient.setQueryData<{ accounts: Account[] }>(queryKeys.accounts(space!.id), (data) =>
+        data ? { accounts: data.accounts.filter((item) => item.id !== account.id) } : data
+      )
+      toast.add({ type: "success", title: `${accountTitle(account)} deleted` })
+      navigate("/", { replace: true })
+    },
+    onSettled: () => setPassword(""),
+  })
+
+  return (
+    <form
+      className="flex flex-col gap-5"
+      autoComplete="off"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (password && acknowledged) remove.mutate()
+      }}
+    >
+      <DialogHeader>
+        <DialogTitle>Delete {accountTitle(account)}?</DialogTitle>
+        <DialogDescription>
+          {imported
+            ? "The private key is removed from this space for good."
+            : `It can be restored later: create a new wallet on the same network and derivation index ${account.index ?? "?"} comes back with the same address.`}
+        </DialogDescription>
+      </DialogHeader>
+      {imported && (
+        <Alert variant="destructive">
+          <TriangleAlertIcon />
+          <AlertDescription>
+            <span>
+              Without a copy of the key, any funds at this address are lost.{" "}
+              <button type="button" className="font-medium underline underline-offset-3" onClick={onExport}>
+                Export the key first
+              </button>
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="delete-password">Space password</FieldLabel>
+          <PasswordInput
+            id="delete-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+            required
+          />
+        </Field>
+        {imported && (
+          <Field orientation="horizontal">
+            <Checkbox
+              id="delete-ack"
+              checked={acknowledged}
+              onCheckedChange={(v) => setAcknowledged(Boolean(v))}
+            />
+            <FieldLabel htmlFor="delete-ack" className="font-normal">
+              I have a copy of the key or no longer need it
+            </FieldLabel>
+          </Field>
+        )}
+        <FormError message={remove.isError ? errorMessage(remove.error) : null} />
+      </FieldGroup>
+      <DialogFooter>
+        <Button type="submit" variant="destructive" disabled={!password || !acknowledged || remove.isPending}>
+          {remove.isPending && <Spinner data-icon="inline-start" />}
+          Delete wallet
+        </Button>
+      </DialogFooter>
+    </form>
   )
 }

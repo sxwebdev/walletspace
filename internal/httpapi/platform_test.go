@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/sxwebdev/walletspace/internal/account"
 	"github.com/sxwebdev/walletspace/internal/asset"
 	"github.com/sxwebdev/walletspace/internal/chain"
 	evmchain "github.com/sxwebdev/walletspace/internal/chain/evm"
@@ -837,5 +838,51 @@ func TestPlatformRejectsShortPasswordAsClientError(t *testing.T) {
 	})
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("POST /api/spaces status = %d, want 400; body = %s", response.Code, response.Body)
+	}
+}
+
+// Deleting an imported wallet destroys its key, so the endpoint wants the
+// space password even from a tab that unlocked the space, like an export.
+func TestPlatformDeleteAccountNeedsThePassword(t *testing.T) {
+	t.Parallel()
+
+	fixture := newPlatformFixture(t)
+	created, err := fixture.spaces.Create(space.CreateRequest{
+		Password: "test-vault-password", ImportedOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("spaces.Create() error = %v", err)
+	}
+	imported, err := fixture.spaces.Import(
+		created.Space.ID, "ethereum-mainnet", account.FamilyEVM, "Hot",
+		"0000000000000000000000000000000000000000000000000000000000000001",
+	)
+	if err != nil {
+		t.Fatalf("spaces.Import() error = %v", err)
+	}
+	path := "/api/spaces/" + created.Space.ID + "/accounts/" + imported.Account.ID
+
+	if response := platformRequest(t, fixture.handler, http.MethodDelete, path, map[string]string{}); response.Code != http.StatusUnauthorized {
+		t.Fatalf("delete without a password = %d %s", response.Code, response.Body)
+	}
+	if response := platformRequest(t, fixture.handler, http.MethodDelete, path,
+		map[string]string{"password": "not-the-password"}); response.Code != http.StatusUnauthorized {
+		t.Fatalf("delete with a wrong password = %d %s", response.Code, response.Body)
+	}
+	if accounts, _ := fixture.spaces.Accounts(created.Space.ID); len(accounts) != 1 {
+		t.Fatalf("a refused delete removed the wallet: %+v", accounts)
+	}
+
+	deleted := platformRequest(t, fixture.handler, http.MethodDelete, path,
+		map[string]string{"password": "test-vault-password"})
+	if deleted.Code != http.StatusOK || !strings.Contains(deleted.Body.String(), `"deleted":true`) {
+		t.Fatalf("delete = %d %s", deleted.Code, deleted.Body)
+	}
+	if accounts, _ := fixture.spaces.Accounts(created.Space.ID); len(accounts) != 0 {
+		t.Fatalf("accounts after delete = %+v", accounts)
+	}
+	if again := platformRequest(t, fixture.handler, http.MethodDelete, path,
+		map[string]string{"password": "test-vault-password"}); again.Code != http.StatusNotFound {
+		t.Fatalf("second delete = %d %s, want 404", again.Code, again.Body)
 	}
 }
