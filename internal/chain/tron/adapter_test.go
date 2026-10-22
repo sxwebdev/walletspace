@@ -3,11 +3,13 @@ package tron_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -118,34 +120,12 @@ func TestConcurrentInitialHealthStaysWithinPublicRPCBudget(t *testing.T) {
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		switch r.URL.Path {
-		case "/jsonrpc":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0", "id": 1, "result": "0x2b6653dc",
-			})
-		case "/wallet/triggerconstantcontract":
-			var request struct {
-				Data string `json:"data"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Errorf("decode trigger request: %v", err)
-				http.Error(w, "invalid request", http.StatusBadRequest)
-				return
-			}
-			value := strings.Repeat("0", 63) + "6"
-			if request.Data == "95d89b41" {
-				value = "55534454" + strings.Repeat("0", 56)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"result":          map[string]any{"result": true},
-				"constant_result": []string{value},
-			})
-		case "/wallet/getnowblock":
+		if r.URL.Path == "/wallet/getnowblock" {
 			blocks.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{})
-		default:
-			http.NotFound(w, r)
+			return
 		}
+		answerMainnetNode(t, w, r)
 	}))
 	t.Cleanup(server.Close)
 
@@ -179,6 +159,97 @@ func TestConcurrentInitialHealthStaysWithinPublicRPCBudget(t *testing.T) {
 	}
 	if got := blocks.Load(); got != 0 {
 		t.Errorf("initial block probes = %d, want 0", got)
+	}
+}
+
+// answerMainnetNode answers what building a Tron mainnet service asks a node:
+// the chain identity, then the USDT contract's decimals and symbol.
+func answerMainnetNode(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	switch r.URL.Path {
+	case "/jsonrpc":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": 1, "result": "0x2b6653dc",
+		})
+	case "/wallet/triggerconstantcontract":
+		var request struct {
+			Data string `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode trigger request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		value := strings.Repeat("0", 63) + "6"
+		if request.Data == "95d89b41" {
+			value = "55534454" + strings.Repeat("0", 56)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result":          map[string]any{"result": true},
+			"constant_result": []string{value},
+		})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// A caller that leaves while the network's service is still being built stops
+// waiting at once; the build goes on for the callers still waiting on it.
+func TestCancelledCallerStopsWaitingForTheServiceBuild(t *testing.T) {
+	t.Parallel()
+
+	reached := make(chan struct{}, 1)
+	gate := make(chan struct{})
+	var open sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/jsonrpc" {
+			select {
+			case reached <- struct{}{}:
+			default:
+			}
+			<-gate
+		}
+		answerMainnetNode(t, w, r)
+	}))
+	t.Cleanup(server.Close)
+	// Registered after server.Close, so it runs first: Close waits for the
+	// handler parked on the gate.
+	t.Cleanup(func() { open.Do(func() { close(gate) }) })
+
+	registry, err := network.Builtin()
+	if err != nil {
+		t.Fatalf("network.Builtin() error = %v", err)
+	}
+	adapter, err := tronchain.New(
+		t.Context(), registry, nil,
+		endpointProvider{url: server.URL, client: server.Client()},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("tron.New() error = %v", err)
+	}
+	t.Cleanup(adapter.Close)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	leaving := make(chan error, 1)
+	go func() { leaving <- adapter.Health(ctx, "tron-mainnet") }()
+	staying := make(chan error, 1)
+	go func() { staying <- adapter.Health(t.Context(), "tron-mainnet") }()
+
+	<-reached
+	cancel()
+	select {
+	case err := <-leaving:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("cancelled Health() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled Health() is still waiting for the endpoint check")
+	}
+
+	open.Do(func() { close(gate) })
+	if err := <-staying; err != nil {
+		t.Errorf("Health() of the caller still waiting error = %v, want the built service", err)
 	}
 }
 

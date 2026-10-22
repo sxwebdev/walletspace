@@ -325,6 +325,96 @@ func TestBalanceFetchesAreDeduplicatedByAddress(t *testing.T) {
 	})
 }
 
+// One stream leaving — a page reload, a timeout — must not fail the other
+// streams sharing its read of the same address.
+func TestCancelledStreamDoesNotFailOthersSharingARead(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		var calls atomic.Int64
+
+		s := newTestService(func(ctx context.Context, addr string) (Balance, error) {
+			if _, ok := ctx.Deadline(); !ok {
+				t.Error("shared balance read has no deadline of its own")
+			}
+			if calls.Add(1) == 1 {
+				close(started)
+			}
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return Balance{}, ctx.Err()
+			}
+			return Balance{TRX: decimal.NewFromInt(1)}, nil
+		})
+
+		leavingCtx, leave := context.WithCancel(t.Context())
+		leaving := s.BalanceStream(leavingCtx, []string{"TSame"}, true)
+		<-started
+		staying := s.BalanceStream(t.Context(), []string{"TSame"}, true)
+		// The second stream has joined the read before the first one leaves.
+		synctest.Wait()
+
+		leave()
+		for range leaving {
+		}
+
+		close(release)
+		result := <-staying
+		if result.Err != nil || !result.Balance.TRX.Equal(decimal.NewFromInt(1)) {
+			t.Errorf("remaining stream result = %+v, want 1 TRX", result)
+		}
+		if got := calls.Load(); got != 1 {
+			t.Errorf("fetch calls = %d, want one shared fetch", got)
+		}
+	})
+}
+
+// When the last stream waiting on a read leaves, the read is cancelled and
+// gives its slot back; a stream arriving afterwards starts a fresh one rather
+// than joining the cancelled read.
+func TestLastStreamLeavingCancelsTheSharedRead(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		var (
+			calls     atomic.Int64
+			cancelled atomic.Bool
+		)
+
+		s := newTestService(func(ctx context.Context, addr string) (Balance, error) {
+			if calls.Add(1) > 1 {
+				return Balance{TRX: decimal.NewFromInt(2)}, nil
+			}
+			close(started)
+			<-ctx.Done()
+			cancelled.Store(true)
+			return Balance{}, ctx.Err()
+		})
+		s.workers = 1
+		s.balanceSlots = make(chan struct{}, s.workers)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		stream := s.BalanceStream(ctx, []string{"TSame"}, true)
+		<-started
+		cancel()
+		for range stream {
+		}
+		synctest.Wait()
+		if !cancelled.Load() {
+			t.Fatal("the read went on after every stream waiting on it had left")
+		}
+
+		balances, errs := s.Balances(t.Context(), []string{"TSame"}, true)
+		if len(errs) != 0 || !balances["TSame"].TRX.Equal(decimal.NewFromInt(2)) {
+			t.Errorf("Balances() = %v, %v, want a fresh read of 2 TRX", balances, errs)
+		}
+	})
+}
+
 func TestTransactionStatusRejectsMalformedID(t *testing.T) {
 	t.Parallel()
 
