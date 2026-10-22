@@ -33,6 +33,9 @@ type Capabilities struct {
 	TokenTransfer  bool `json:"token_transfer"`
 	TronResources  bool `json:"tron_resources"`
 	TronDeploy     bool `json:"tron_deploy"`
+	// TronSwap is a SunSwap TRX/USDT swap: every built-in Tron network has
+	// one deployed.
+	TronSwap bool `json:"tron_swap"`
 }
 
 // WrappedNative describes a WETH9-compatible wrapper for this network’s native coin.
@@ -135,6 +138,14 @@ func clone(item Network) Network {
 	return item
 }
 
+// tronExplorer is explorer for Tronscan, which names a transaction page
+// /transaction/{tx}; /tx/{tx} is the Etherscan spelling and opens nothing there.
+func tronExplorer(base string) Explorer {
+	e := explorer(base)
+	e.Tx = strings.TrimSuffix(base, "/") + "/transaction/{tx}"
+	return e
+}
+
 func explorer(base string) Explorer {
 	base = strings.TrimSuffix(base, "/")
 	return Explorer{
@@ -158,19 +169,20 @@ func evm(id, name, shortName, chainID, symbol, rpc, explorerBase string, testnet
 func builtinNetworks() []Network {
 	tronCapabilities := Capabilities{
 		NativeTransfer: true, TokenTransfer: true, TronResources: true, TronDeploy: true,
+		TronSwap: true,
 	}
 	return []Network{
 		{
 			ID: "tron-mainnet", Name: "Tron Mainnet", ShortName: "Mainnet",
 			Family: FamilyTron, ChainID: "mainnet", Native: NativeAsset{Symbol: "TRX", Decimals: 6},
-			Enabled: true, Explorer: explorer("https://tronscan.org"),
+			Enabled: true, Explorer: tronExplorer("https://tronscan.org"),
 			RPCFallbacks: []string{"https://tron-rpc.publicnode.com"}, Capabilities: tronCapabilities,
 			PriceChain: "tron", NativePrice: "coingecko:tron",
 		},
 		{
 			ID: "tron-nile", Name: "Tron Nile", ShortName: "Nile",
 			Family: FamilyTron, ChainID: "nile", Native: NativeAsset{Symbol: "TRX", Decimals: 6},
-			Testnet: true, Enabled: true, Explorer: explorer("https://nile.tronscan.org"),
+			Testnet: true, Enabled: true, Explorer: tronExplorer("https://nile.tronscan.org"),
 			RPCFallbacks: []string{"https://nile.trongrid.io"}, Capabilities: tronCapabilities,
 		},
 		evm("ethereum-mainnet", "Ethereum Mainnet", "Mainnet", "1", "ETH", "https://ethereum-rpc.publicnode.com", "https://etherscan.io", false),

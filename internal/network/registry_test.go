@@ -91,3 +91,26 @@ func TestWrappedNativeRegistryIsImmutable(t *testing.T) {
 		t.Fatal("mutation escaped into a new registry")
 	}
 }
+
+// Tronscan and Etherscan spell a transaction page differently; a link built
+// with the other's path opens nothing.
+func TestExplorerTransactionLinks(t *testing.T) {
+	t.Parallel()
+	registry, err := network.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"tron-mainnet":     "https://tronscan.org/transaction/{tx}",
+		"tron-nile":        "https://nile.tronscan.org/transaction/{tx}",
+		"ethereum-mainnet": "https://etherscan.io/tx/{tx}",
+	} {
+		item, err := registry.Get(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item.Explorer.Tx != want {
+			t.Errorf("%s transaction link = %s, want %s", id, item.Explorer.Tx, want)
+		}
+	}
+}
