@@ -89,7 +89,7 @@ func (f *priceFake) Requested() []string {
 	return append([]string(nil), f.requested...)
 }
 
-func newPlatformFixture(t *testing.T) platformFixture {
+func newPlatformFixture(t *testing.T, options ...httpapi.PlatformOption) platformFixture {
 	t.Helper()
 	home := t.TempDir()
 	settings, err := config.NewHomeManager(home)
@@ -130,7 +130,7 @@ func newPlatformFixture(t *testing.T) platformFixture {
 	handler, err := httpapi.NewPlatform(
 		spaces, settings, registry, operation.New(home), assets, evm, tron, nodeDoctor,
 		prices, testAccess(),
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.NewTextHandler(io.Discard, nil)), options...,
 	)
 	if err != nil {
 		t.Fatalf("httpapi.NewPlatform() error = %v", err)

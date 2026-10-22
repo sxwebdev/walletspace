@@ -57,3 +57,37 @@ func TestPolygonAmoyDefaultRPC(t *testing.T) {
 		t.Fatalf("polygon-amoy RPC fallbacks = %q, want PublicNode Amoy Bor RPC", amoy.RPCFallbacks)
 	}
 }
+
+func TestWrappedNativeRegistryIsImmutable(t *testing.T) {
+	t.Parallel()
+	registry, err := network.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := registry.Get("ethereum-mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := original.WrappedNative.Contract
+	original.WrappedNative.Contract = "changed"
+	for _, item := range registry.List() {
+		if item.WrappedNative != nil {
+			item.WrappedNative.Contract = "also changed"
+		}
+	}
+	got, err := registry.Get("ethereum-mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WrappedNative.Contract != want {
+		t.Fatal("callers can mutate the canonical wrapper")
+	}
+	other, err := network.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = other.Get("ethereum-mainnet")
+	if err != nil || got.WrappedNative.Contract != want {
+		t.Fatal("mutation escaped into a new registry")
+	}
+}

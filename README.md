@@ -18,8 +18,24 @@ and are never sent to an RPC provider.
   Chain and Avalanche C-Chain, each with its testnet, plus Base and Kaia mainnets.
 - Native, ERC20 and TRC20 balances and transfers; Tron resources, staking,
   delegation and contract deployment.
+- On-chain wrap/unwrap at 1:1 through native wrapper contracts: ETH/WETH on
+  Ethereum, Base, OP and Arbitrum; BNB/WBNB on BSC mainnet and testnet. Use
+  **Wrap / Unwrap** beside the wallet, choose a direction and amount (or MAX),
+  estimate the fee, then sign. Both directions require native coins for gas.
+  Supported pairs are defined per network; bridged tokens are not native wrappers.
+- Native and token amounts with a USD estimate beside each wallet balance;
+  unavailable prices and cached values are labelled, and testnets have no USD value.
 - Progressive background balance loading, a mainnet USD total and a 24h price
   change from the keyless DefiLlama feed, cached for five minutes.
+- Gas top-ups inside the EVM token send form: if native gas is missing, compare
+  funded wallets in the space by total cost, use a direct transfer or a Gas.zip
+  native-to-native refill, wait for confirmed delivery, then review and send the
+  token on its existing network. Quotes budget the fee shortfall with a 10%
+  reserve, include source gas and provider minimums, and show the estimated
+  remainder. An exactly zero remainder cannot be guaranteed as fees change.
+  Supported cross-chain funding sources: Ethereum, BSC, Polygon, OP, Arbitrum,
+  Base, Avalanche and Kaia; destinations depend on current Gas.zip availability.
+  Pending top-ups survive restarts and cannot be paid twice with the same plan.
 - A background Node Doctor that checks the RPC nodes of every enabled network.
 - Typed settings UI for RPC, provider headers, explorer, discovery, assets,
   auto-lock and general options.

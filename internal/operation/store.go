@@ -254,3 +254,18 @@ func (s *Store) saveLocked(spaceID string, current file) error {
 		append(data, '\n'),
 	)
 }
+
+// Get returns the durable state of one operation without reserving or retrying it.
+func (s *Store) Get(spaceID, key string) (Operation, bool, error) {
+	if !storage.ValidID(spaceID, "spc_") {
+		return Operation{}, false, errors.New("invalid space id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.loadLocked(spaceID)
+	if err != nil {
+		return Operation{}, false, err
+	}
+	item, ok := current.Operations[NormalizeKey(key)]
+	return item, ok, nil
+}

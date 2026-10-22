@@ -2,6 +2,7 @@ import { listSpaces, lockSpace } from "../services/spaces.js";
 import { bindAccountNetwork, listAccounts } from "../services/accounts.js";
 import { doctorHealth, listNetworks, streamBalances } from "../services/networks.js";
 import { getSettings, listAssets } from "../services/settings.js";
+import { showGasRefuel, pendingGasRefuel } from "../features/transfers/refuel.js";
 import { listPrices } from "../services/prices.js";
 import { estimateTransfer, sendTransfer, transactionStatus } from "../services/transfers.js";
 import { deployContract, estimateDeploy, resources, stakingOperation } from "../services/tron.js";
@@ -271,7 +272,7 @@ function accountNetworkRows(account) {
       const symbol = escapeHTML(asset.symbol);
       if (!item) return `<div class="balance"><div class="skeleton"></div><span>${symbol}</span></div>`;
       if (item.error) return `<div class="balance"><strong>—</strong><span title="${escapeHTML(item.error)}">${symbol} · error</span></div>`;
-      return `<div class="balance ${item.stale ? "stale" : ""}"><strong>${escapeHTML(item.amount || "0")}</strong><span>${symbol}${item.stale ? " · cached" : ""}</span></div>`;
+      return `<div class="balance ${item.stale ? "stale" : ""}"><strong>${escapeHTML(item.amount || "0")}</strong><span>${symbol}${item.stale ? " · cached" : ""}</span>${balanceUSD(item, asset, network)}</div>`;
     }).join("") : '<span class="muted">This network is disabled in the settings</span>';
     return `<section class="wallet-network" data-network="${escapeHTML(network.id)}">
       <div class="wallet-network-identity">
@@ -281,11 +282,22 @@ function accountNetworkRows(account) {
       <div class="wallet-balances">${balances}</div>
       <div class="wallet-actions">
         ${network.enabled ? `<button class="button" type="button" data-action="send" data-network="${escapeHTML(network.id)}">Send</button>` : ""}
+        ${network.enabled && network.wrapped_native ? `<button class="button" type="button" data-action="convert" data-network="${escapeHTML(network.id)}">Wrap / Unwrap</button>` : ""}
         ${network.enabled && network.family === "tron" ? `<button class="button icon" type="button" data-action="resources" data-network="${escapeHTML(network.id)}" title="Resources & staking">R</button><button class="button icon" type="button" data-action="deploy" data-network="${escapeHTML(network.id)}" title="Deploy contract">D</button>` : ""}
       </div>
     </section>`;
   });
   return rows.length ? rows.join("") : '<div class="notice danger">No network assigned. Connect one from the wallet menu.</div>';
+}
+
+function balanceUSD(balance, asset, network) {
+  if (network.testnet) return '<small class="muted">Testnet</small>';
+  const quote = state.prices.get(asset.id);
+  const amount = Number(balance.amount || "0");
+  const price = Number(quote?.current_usd);
+  const value = amount === 0 ? 0 : quote && Number.isFinite(price) ? amount * price : null;
+  const cached = balance.stale || state.pricesStale;
+  return `<small class="muted" title="${cached ? "Cached balance or quote" : "Estimated USD value"}">${value === null ? (state.pricesLoading ? "USD …" : "USD unavailable") : `${cached ? "≈ " : ""}${formatUSD(value)}`}</small>`;
 }
 
 function visibleAssets(account, network) {
@@ -453,7 +465,7 @@ async function loadPrices() {
       pricesError: "Quotes are temporarily unavailable",
     });
   }
-  renderPortfolioSummary();
+  renderAccounts();
 }
 
 function bindShell(root) {
@@ -529,6 +541,7 @@ function bindAccountActions() {
       const account = state.accounts.find((item) => item.id === button.closest("[data-account]").dataset.account);
       const network = state.networks.find((item) => item.id === button.dataset.network);
       if (button.dataset.action === "send") showSend(account, network);
+      if (button.dataset.action === "convert") showSend(account, network, true);
       if (button.dataset.action === "bind") showBindNetwork(account);
       if (button.dataset.action === "rename") {
         openAccountRename(state.currentSpaceID, account, (updated) => {
@@ -818,23 +831,35 @@ function rerenderShell() {
   startBalances();
 }
 
-function showSend(account, network) {
+function showSend(account, network, conversion = false) {
   const assets = assetsFor(network);
+  const wrapper = network.wrapped_native;
+  const native = assets.find((asset) => asset.kind === "native");
+  const wrapped = assets.find((asset) => asset.contract?.toLowerCase() === wrapper?.contract.toLowerCase());
   modal({
-    title: `Send · ${network.name}`,
+    title: `${conversion ? "Wrap / Unwrap" : "Send"} · ${network.name}`,
     subtitle: `${network.testnet ? "TESTNET · " : ""}Chain ID ${network.chain_id}`,
     content: `<form class="form-stack" data-form>
       ${network.testnet ? '<div class="notice">This is a testnet. The tokens have no mainnet value.</div>' : ""}
-      <label class="field"><span>Asset</span><select name="asset_id">${assets.map((asset) => `<option value="${escapeHTML(asset.id)}">${escapeHTML(asset.name || asset.symbol)} · ${escapeHTML(asset.symbol)}</option>`).join("")}</select></label>
-      <label class="field"><span>Recipient</span><input name="to" required spellcheck="false" autocomplete="off"></label>
+      ${conversion ? `<div class="notice">Convert 1:1 on ${escapeHTML(network.name)}. Funds stay in this wallet. Keep ${escapeHTML(network.native.symbol)} for gas, including when unwrapping.</div>
+      <label class="field"><span>Direction</span><select name="action"><option value="wrap">${escapeHTML(native.symbol)} → ${escapeHTML(wrapped.symbol)}</option><option value="unwrap">${escapeHTML(wrapped.symbol)} → ${escapeHTML(native.symbol)}</option></select></label>` : ""}
+      <label class="field" ${conversion ? "hidden" : ""}><span>Asset</span><select name="asset_id">${assets.map((asset) => `<option value="${escapeHTML(asset.id)}">${escapeHTML(asset.name || asset.symbol)} · ${escapeHTML(asset.symbol)}</option>`).join("")}</select></label>
+      <label class="field" ${conversion ? "hidden" : ""}><span>Recipient</span><input name="to" required spellcheck="false" autocomplete="off" value="${conversion ? escapeHTML(account.addresses[network.family]) : ""}"></label>
       <div class="field"><label for="send-amount">Amount</label><div class="input-action"><input id="send-amount" name="amount" required inputmode="decimal" placeholder="0.0"><button class="button" type="button" data-max>MAX</button></div></div>
-      <div data-estimate></div>
+      <div data-estimate></div><div data-refuel></div>
       <div class="error-text" data-error></div>
       <button class="button primary" type="submit" data-estimate-button>Estimate the fee</button>
       <button class="button danger" type="button" data-sign hidden disabled>Sign and send</button>
     </form>`,
     onMount(element, close) {
       const form = element.querySelector("[data-form]");
+      if (conversion) {
+        const syncAsset = () => {
+          form.elements.asset_id.value = form.elements.action.value === "wrap" ? native.id : wrapped.id;
+        };
+        form.elements.action.addEventListener("change", syncAsset);
+        syncAsset();
+      }
       const maxButton = form.querySelector("[data-max]");
       const estimateButton = form.querySelector("[data-estimate-button]");
       const signButton = form.querySelector("[data-sign]");
@@ -856,6 +881,7 @@ function showSend(account, network) {
         signButton.disabled = true;
         estimateButton.hidden = false;
         form.querySelector("[data-estimate]").replaceChildren();
+        form.querySelector("[data-refuel]").replaceChildren();
       };
 
       const feeRow = (estimate) => {
@@ -870,11 +896,12 @@ function showSend(account, network) {
           <div class="notice">
             <strong>Check this before signing</strong><br>
             ${escapeHTML(network.name)} · Chain ${escapeHTML(network.chain_id)}<br>
+            ${conversion ? `Conversion: ${escapeHTML(body.action === "wrap" ? native.symbol : wrapped.symbol)} → ${escapeHTML(body.action === "wrap" ? wrapped.symbol : native.symbol)} · 1:1<br>Contract: <span class="mono">${addressGroups(wrapper.contract)}</span><br>` : ""}
             Asset: ${escapeHTML(asset?.symbol || "")}${asset?.contract ? ` · <span class="mono">${addressGroups(asset.contract)}</span>` : ""}<br>
             From: <span class="mono address-full">${addressGroups(account.addresses[network.family])}</span><br>
             To: <span class="mono address-full">${addressGroups(body.to)}</span><br>
             Amount: ${escapeHTML(body.amount)} ${escapeHTML(asset?.symbol || "")}<br>
-            ${feeRow(estimate)}Max fee: ${escapeHTML(estimate.fee)} ${escapeHTML(network.native.symbol)}
+            ${feeRow(estimate)}${Number(estimate.additional_fee) > 0 ? `Additional network fee estimate: ${escapeHTML(estimate.additional_fee)} ${escapeHTML(network.native.symbol)}<br>` : ""}Fee budget: ${escapeHTML(estimate.fee)} ${escapeHTML(network.native.symbol)}
           </div>`;
         estimateButton.hidden = true;
         signButton.hidden = false;
@@ -891,12 +918,72 @@ function showSend(account, network) {
       const transferBody = (amount = new FormData(form).get("amount")) => {
         const data = new FormData(form);
         return {
+          action: conversion ? data.get("action") : undefined,
           account_id: account.id, asset_id: data.get("asset_id"),
           to: data.get("to"), amount,
         };
       };
       const selectedAsset = () =>
         assets.find((item) => item.id === new FormData(form).get("asset_id"));
+
+      const presentEstimate = async (body, estimate, asset) => {
+        if (network.testnet && Number(estimate.fee_shortfall) > 0) {
+          errorBox.textContent = `Not enough ${network.native.symbol} for gas. Get testnet funds from this network's faucet.`;
+          return;
+        }
+        if (!conversion && network.family === "evm" && Number(estimate.fee_shortfall) > 0) {
+          signButton.hidden = true;
+          estimateButton.hidden = true;
+          const mine = generation;
+          const container = document.createElement("div");
+          form.querySelector("[data-refuel]").replaceChildren(container);
+          await showGasRefuel({ container, spaceID: state.currentSpaceID, account, network, body, estimate, signal: routeSignal,
+            onReady: async () => {
+              if (mine !== generation || !container.isConnected) return;
+              const fresh = await estimateTransfer(state.currentSpaceID, network.id, body, routeSignal);
+              if (mine !== generation || !container.isConnected) return;
+              if (Number(fresh.fee_shortfall) > 0) throw new Error("Gas arrived, but the transfer fee increased. Calculate again before topping up further.");
+              form.querySelector("[data-refuel]").replaceChildren();
+              arm(body, fresh, asset);
+            },
+          });
+          return;
+        }
+        arm(body, estimate, asset);
+      };
+
+      if (!conversion && network.family === "evm") {
+        const saved = pendingGasRefuel(state.currentSpaceID, network.id, account.id);
+        if (saved) {
+          const resume = document.createElement("button");
+          resume.className = "button";
+          resume.type = "button";
+          resume.textContent = "Resume pending gas top-up";
+          form.querySelector("[data-refuel]").append(resume);
+          resume.addEventListener("click", async () => {
+            const mine = ++generation;
+            const container = document.createElement("div");
+            form.querySelector("[data-refuel]").replaceChildren(container);
+            await showGasRefuel({ container, spaceID: state.currentSpaceID, account, network, signal: routeSignal, planID: saved,
+              onResume: (plan) => {
+                if (mine !== generation) return;
+                form.elements.asset_id.value = plan.target.asset_id;
+                form.elements.to.value = plan.target.to;
+                form.elements.amount.value = plan.target.amount;
+              },
+              onReady: async (plan) => {
+                if (mine !== generation || !container.isConnected) return;
+                const body = { ...plan.target };
+                const fresh = await estimateTransfer(state.currentSpaceID, network.id, body, routeSignal);
+                if (mine !== generation || !container.isConnected) return;
+                if (Number(fresh.fee_shortfall) > 0) throw new Error("Gas arrived, but more native coin is needed. Calculate the transfer again.");
+                form.querySelector("[data-refuel]").replaceChildren();
+                arm(body, fresh, assets.find((asset) => asset.id === body.asset_id));
+              },
+            });
+          });
+        }
+      }
 
       maxButton.addEventListener("click", async () => {
         const mine = ++generation;
@@ -919,7 +1006,7 @@ function showSend(account, network) {
           // everything" without anyone asking for it.
           if (mine !== generation) return;
           form.querySelector('[name="amount"]').value = estimate.amount;
-          arm({ ...requestBody, amount: estimate.amount }, estimate, selectedAsset());
+          await presentEstimate({ ...requestBody, amount: estimate.amount }, estimate, selectedAsset());
         } catch (cause) {
           if (mine === generation) errorBox.textContent = cause.message;
         } finally {
@@ -942,7 +1029,7 @@ function showSend(account, network) {
         try {
           const estimate = await estimateTransfer(state.currentSpaceID, network.id, body, routeSignal);
           if (mine !== generation) return;
-          arm(body, estimate, asset);
+          await presentEstimate(body, estimate, asset);
         } catch (cause) {
           if (mine === generation) errorBox.textContent = cause.message;
         } finally {
@@ -987,10 +1074,13 @@ function showSend(account, network) {
         }
       });
 
-      form.addEventListener("input", () => {
+      const invalidate = (event) => {
+        if (event?.target?.closest("[data-refuel]")) return;
         generation++;
         disarm();
-      });
+      };
+      form.addEventListener("input", invalidate);
+      form.addEventListener("change", invalidate);
     },
   });
 }

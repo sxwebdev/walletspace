@@ -25,21 +25,24 @@ import (
 	"github.com/sxwebdev/walletspace/internal/network"
 	"github.com/sxwebdev/walletspace/internal/operation"
 	"github.com/sxwebdev/walletspace/internal/price"
+	"github.com/sxwebdev/walletspace/internal/refuel"
 	"github.com/sxwebdev/walletspace/internal/space"
 	"github.com/sxwebdev/walletspace/internal/vault"
 )
 
 type Platform struct {
-	spaces     *space.Manager
-	settings   *config.HomeManager
-	networks   *network.Registry
-	operations *operation.Store
-	assets     *asset.Store
-	evm        *evmchain.Adapter
-	tron       *tronchain.Adapter
-	doctor     *doctor.Doctor
-	prices     price.Provider
-	log        *slog.Logger
+	spaces      *space.Manager
+	settings    *config.HomeManager
+	networks    *network.Registry
+	operations  *operation.Store
+	assets      *asset.Store
+	evm         *evmchain.Adapter
+	tron        *tronchain.Adapter
+	doctor      *doctor.Doctor
+	prices      price.Provider
+	log         *slog.Logger
+	refuel      refuel.Provider
+	refuelPlans *refuel.Store
 }
 
 func NewPlatform(
@@ -54,6 +57,7 @@ func NewPlatform(
 	prices price.Provider,
 	access Access,
 	log *slog.Logger,
+	options ...PlatformOption,
 ) (http.Handler, error) {
 	if spaces == nil || settings == nil || networks == nil || operations == nil ||
 		assets == nil || evm == nil || tron == nil || nodeDoctor == nil || prices == nil {
@@ -71,6 +75,10 @@ func NewPlatform(
 		spaces: spaces, settings: settings, networks: networks,
 		operations: operations, assets: assets, evm: evm, tron: tron,
 		doctor: nodeDoctor, prices: prices, log: log,
+		refuel: refuel.New(refuel.Options{}), refuelPlans: refuel.NewStore(settings.Home()),
+	}
+	for _, option := range options {
+		option(p)
 	}
 	ui, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -128,6 +136,9 @@ func NewPlatform(
 	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/balances/stream", p.balanceStream)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/transfers/estimate", p.estimateTransfer)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/transfers", p.sendTransfer)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/gas-refuel/quotes", p.quoteRefuel)
+	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/gas-refuel/{plan_id}", p.sendRefuel)
+	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/gas-refuel/{plan_id}", p.refuelStatus)
 	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/transactions/{tx_id}", p.transaction)
 	mux.HandleFunc("GET /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/resources", p.tronResources)
 	mux.HandleFunc("POST /api/spaces/{space_id}/networks/{network_id}/accounts/{account_id}/stake", p.tronStake)
@@ -933,6 +944,12 @@ func priceIdentifier(item network.Network, itemAsset chain.Asset) string {
 	if itemAsset.Kind == "native" {
 		return item.NativePrice
 	}
+	// Native wrappers redeem 1:1, so they share the native quote even when
+	// the provider has no market quote for the contract.
+	if item.WrappedNative != nil && itemAsset.Kind == "erc20" &&
+		strings.EqualFold(itemAsset.Contract, item.WrappedNative.Contract) {
+		return item.NativePrice
+	}
 	// Price Robinhood's canonical WETH through ETH even when contract pricing
 	// is unavailable for this network. Match the contract, never the symbol.
 	// https://docs.robinhood.com/chain/contracts/
@@ -1057,6 +1074,7 @@ func (p *Platform) balanceResults(w http.ResponseWriter, r *http.Request) (<-cha
 }
 
 type transferDTO struct {
+	Action    string `json:"action,omitempty"`
 	AccountID string `json:"account_id"`
 	AssetID   string `json:"asset_id"`
 	To        string `json:"to"`
@@ -1092,7 +1110,14 @@ func (p *Platform) estimateTransfer(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var estimate chain.TransferEstimate
 	var err error
-	if transfer.Amount == "max" {
+	if networkItem.Family == network.FamilyEVM && transfer.Asset.Kind == "erc20" && transfer.Action == "" {
+		if transfer.Amount == "max" {
+			transfer.Amount, err = p.evm.Balance(ctx, networkItem.ID, transfer.From, transfer.Asset)
+		}
+		if err == nil {
+			estimate, err = p.evm.EstimateFunding(ctx, networkItem.ID, transfer)
+		}
+	} else if transfer.Amount == "max" {
 		estimate, err = p.chainEstimateMax(ctx, networkItem, transfer)
 	} else {
 		estimate, err = p.chainEstimate(ctx, networkItem, transfer)
@@ -1724,6 +1749,11 @@ func (p *Platform) decodePlatformTransfer(
 		writeError(w, http.StatusBadRequest, "network is disabled")
 		return transferDTO{}, network.Network{}, chain.TransferRequest{}, false
 	}
+	if request.Action != "" && (item.Family != network.FamilyEVM ||
+		(request.Action != "wrap" && request.Action != "unwrap")) {
+		writeError(w, http.StatusBadRequest, "unsupported conversion action")
+		return transferDTO{}, network.Network{}, chain.TransferRequest{}, false
+	}
 	accounts, err := p.spaces.Accounts(r.PathValue("space_id"))
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -1746,7 +1776,7 @@ func (p *Platform) decodePlatformTransfer(
 		return transferDTO{}, network.Network{}, chain.TransferRequest{}, false
 	}
 	return request, item, chain.TransferRequest{
-		AccountID: request.AccountID, From: from, To: request.To, Asset: asset,
+		Action: request.Action, AccountID: request.AccountID, From: from, To: request.To, Asset: asset,
 		Amount: request.Amount, Approved: request.approval(),
 	}, true
 }

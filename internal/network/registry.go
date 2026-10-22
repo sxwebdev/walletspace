@@ -35,20 +35,28 @@ type Capabilities struct {
 	TronDeploy     bool `json:"tron_deploy"`
 }
 
+// WrappedNative describes a WETH9-compatible wrapper for this network’s native coin.
+// Contracts are explicit: a bridged token with the same symbol is not a wrapper.
+type WrappedNative struct {
+	Symbol   string `json:"symbol"`
+	Contract string `json:"contract"`
+}
+
 type Network struct {
-	ID           string       `json:"id" yaml:"id"`
-	Name         string       `json:"name" yaml:"name"`
-	ShortName    string       `json:"short_name" yaml:"short_name"`
-	Family       Family       `json:"family" yaml:"family"`
-	ChainID      string       `json:"chain_id" yaml:"chain_id"`
-	Native       NativeAsset  `json:"native" yaml:"native"`
-	Testnet      bool         `json:"testnet" yaml:"testnet"`
-	Enabled      bool         `json:"enabled" yaml:"enabled"`
-	Explorer     Explorer     `json:"explorer" yaml:"explorer"`
-	RPCFallbacks []string     `json:"rpc_fallbacks" yaml:"rpc_fallbacks"`
-	Capabilities Capabilities `json:"capabilities" yaml:"capabilities"`
-	PriceChain   string       `json:"-" yaml:"-"`
-	NativePrice  string       `json:"-" yaml:"-"`
+	ID            string         `json:"id" yaml:"id"`
+	WrappedNative *WrappedNative `json:"wrapped_native,omitempty" yaml:"-"`
+	Name          string         `json:"name" yaml:"name"`
+	ShortName     string         `json:"short_name" yaml:"short_name"`
+	Family        Family         `json:"family" yaml:"family"`
+	ChainID       string         `json:"chain_id" yaml:"chain_id"`
+	Native        NativeAsset    `json:"native" yaml:"native"`
+	Testnet       bool           `json:"testnet" yaml:"testnet"`
+	Enabled       bool           `json:"enabled" yaml:"enabled"`
+	Explorer      Explorer       `json:"explorer" yaml:"explorer"`
+	RPCFallbacks  []string       `json:"rpc_fallbacks" yaml:"rpc_fallbacks"`
+	Capabilities  Capabilities   `json:"capabilities" yaml:"capabilities"`
+	PriceChain    string         `json:"-" yaml:"-"`
+	NativePrice   string         `json:"-" yaml:"-"`
 }
 
 var ErrUnknownNetwork = errors.New("unknown network")
@@ -120,6 +128,9 @@ func Validate(item Network) error {
 }
 
 func clone(item Network) Network {
+	if item.WrappedNative != nil {
+		item.WrappedNative = new(*item.WrappedNative)
+	}
 	item.RPCFallbacks = append([]string(nil), item.RPCFallbacks...)
 	return item
 }
@@ -140,6 +151,7 @@ func evm(id, name, shortName, chainID, symbol, rpc, explorerBase string, testnet
 		Explorer: explorer(explorerBase), RPCFallbacks: []string{rpc},
 		Capabilities: Capabilities{NativeTransfer: true, TokenTransfer: true},
 		PriceChain:   priceChains[id], NativePrice: nativePrices[id],
+		WrappedNative: wrappedNatives[id],
 	}
 }
 
@@ -201,4 +213,14 @@ var nativePrices = map[string]string{
 	"kaia-mainnet":      "coingecko:kaia",
 	"robinhood-mainnet": "coingecko:ethereum",
 	"avalanche-mainnet": "coingecko:avalanche-2",
+}
+
+// Only native-backed wrappers using deposit()/withdraw(uint256) belong here.
+var wrappedNatives = map[string]*WrappedNative{
+	"ethereum-mainnet": {Symbol: "WETH", Contract: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"},
+	"bsc-mainnet":      {Symbol: "WBNB", Contract: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c"},
+	"bsc-testnet":      {Symbol: "WBNB", Contract: "0xae13d989dac2f0debff460ac112a837c89baa7cd"},
+	"base-mainnet":     {Symbol: "WETH", Contract: "0x4200000000000000000000000000000000000006"},
+	"optimism-mainnet": {Symbol: "WETH", Contract: "0x4200000000000000000000000000000000000006"},
+	"arbitrum-mainnet": {Symbol: "WETH", Contract: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1"},
 }

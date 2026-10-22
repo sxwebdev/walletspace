@@ -44,6 +44,12 @@ type Balance struct {
 }
 
 type TransferRequest struct {
+	// Data and BeforeBroadcast are only set by trusted backend workflows. They
+	// are never decoded from the public transfer DTO.
+	Data            []byte                  `json:"-"`
+	BeforeBroadcast func(hash string) error `json:"-"`
+	// Action is empty for transfers, or wrap/unwrap for native coin conversion.
+	Action    string
 	AccountID string
 	From      string
 	To        string
@@ -84,6 +90,10 @@ type TransferEstimate struct {
 	MaxFeePerGas         string `json:"max_fee_per_gas,omitempty"`
 	MaxPriorityFeePerGas string `json:"max_priority_fee_per_gas,omitempty"`
 	Warning              string `json:"warning,omitempty"`
+	NativeBalance        string `json:"native_balance,omitempty"`
+	FeeShortfall         string `json:"fee_shortfall,omitempty"`
+	AdditionalFee        string `json:"additional_fee,omitempty"`
+	EstimatedFee         string `json:"estimated_fee,omitempty"`
 }
 
 type Transaction struct {

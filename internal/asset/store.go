@@ -165,6 +165,13 @@ func defaults(item network.Network) []chain.Asset {
 		Name: nativeAssetName(item.Native.Symbol), Symbol: item.Native.Symbol,
 		Decimals: item.Native.Decimals,
 	}}
+	if wrapper := item.WrappedNative; wrapper != nil {
+		out = append(out, chain.Asset{
+			ID: ID(item.ID, "erc20", wrapper.Contract), NetworkID: item.ID, Kind: "erc20",
+			Name: "Wrapped " + nativeAssetName(item.Native.Symbol), Symbol: wrapper.Symbol,
+			Contract: wrapper.Contract, Decimals: item.Native.Decimals,
+		})
+	}
 	for _, token := range builtinTokens[item.ID] {
 		out = append(out, chain.Asset{
 			ID: ID(item.ID, token.kind, token.contract), NetworkID: item.ID, Kind: token.kind,
@@ -199,7 +206,6 @@ var builtinTokens = map[string][]builtinToken{
 		trc20("Tether USD", "USDT", "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf", 6),
 	},
 	"bsc-mainnet": {
-		erc20("Wrapped BNB", "WBNB", "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", 18),
 		erc20("Tether USD", "USDT", "0x55d398326f99059ff775485246999027b3197955", 18),
 		erc20("USD Coin", "USDC", "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", 18),
 		erc20("Binance Bitcoin", "BTCB", "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c", 18),
@@ -218,7 +224,6 @@ var builtinTokens = map[string][]builtinToken{
 		erc20("Tether USD", "USDT", "0xdac17f958d2ee523a2206206994597c13d831ec7", 6),
 		erc20("USD Coin", "USDC", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 6),
 		erc20("Wrapped Bitcoin", "WBTC", "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", 8),
-		erc20("Wrapped Ether", "WETH", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", 18),
 		erc20("Wrapped XRP", "WXRP", "0x39fbbabf11738317a448031930706cd3e612e1b9", 18),
 		erc20("POL", "POL", "0x455e53cbb86018ac2b8092fdcd39d8444affc3f6", 18),
 		erc20("Chainlink", "LINK", "0x514910771af9ca656af840dff83e8264ecf986ca", 18),
@@ -243,13 +248,11 @@ var builtinTokens = map[string][]builtinToken{
 	"base-mainnet": {
 		erc20("USD Coin", "USDC", "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", 6),
 		erc20("Coinbase Wrapped Bitcoin", "cbBTC", "0x0555e30da8f98308edb960aa94c0db47230d2b9c", 8),
-		erc20("Wrapped Ether", "WETH", "0x4200000000000000000000000000000000000006", 18),
 		erc20("Bridged Tether USD", "USDT", "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2", 6),
 	},
 	"arbitrum-mainnet": {
 		erc20("USD Coin", "USDC", "0xaf88d065e77c8cc2239327c5edb3a432268e5831", 6),
 		erc20("Wrapped Bitcoin", "WBTC", "0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f", 8),
-		erc20("Wrapped Ether", "WETH", "0x82af49447d8a07e3bd95bd0d56f35241523fbab1", 18),
 		erc20("Tether USD", "USDT", "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", 6),
 		erc20("Arbitrum", "ARB", "0x912ce59144191c1204e64559fe8253a0e49e6548", 18),
 	},

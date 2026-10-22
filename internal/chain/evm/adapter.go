@@ -28,6 +28,8 @@ import (
 )
 
 const erc20ABIJSON = `[
+  {"inputs":[],"name":"deposit","outputs":[],"stateMutability":"payable","type":"function"},
+  {"inputs":[{"name":"amount","type":"uint256"}],"name":"withdraw","outputs":[],"stateMutability":"nonpayable","type":"function"},
   {"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"},
   {"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"type":"function"},
   {"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},
@@ -483,6 +485,11 @@ func (a *Adapter) Send(
 		return chain.Transaction{}, fmt.Errorf("attach EVM signature: %w", err)
 	}
 	hash := signed.Hash().Hex()
+	if req.BeforeBroadcast != nil {
+		if err := req.BeforeBroadcast(hash); err != nil {
+			return chain.Transaction{}, fmt.Errorf("record signed transaction before broadcast: %w", err)
+		}
+	}
 	if err := client.SendTransaction(ctx, signed); err != nil {
 		if rejected(err) {
 			return chain.Transaction{
@@ -586,9 +593,37 @@ func (a *Adapter) transferCall(item network.Network, req chain.TransferRequest) 
 		return ethereum.CallMsg{}, nil, err
 	}
 	from := common.HexToAddress(req.From)
+	if req.Action != "" {
+		wrapper := item.WrappedNative
+		if wrapper == nil || (req.Action != "wrap" && req.Action != "unwrap") {
+			return ethereum.CallMsg{}, nil, fmt.Errorf("%w: unsupported native conversion", chain.ErrInvalidRequest)
+		}
+		if to != from || req.Asset.Decimals != item.Native.Decimals {
+			return ethereum.CallMsg{}, nil, fmt.Errorf("%w: conversion must use the same account and native decimals", chain.ErrInvalidRequest)
+		}
+		contract := common.HexToAddress(wrapper.Contract)
+		value := new(big.Int)
+		var data []byte
+		if req.Action == "wrap" {
+			if req.Asset.Kind != "native" {
+				return ethereum.CallMsg{}, nil, fmt.Errorf("%w: wrap requires the native asset", chain.ErrInvalidRequest)
+			}
+			value.Set(units)
+			data, err = a.erc20.Pack("deposit")
+		} else {
+			if req.Asset.Kind != "erc20" || !strings.EqualFold(req.Asset.Contract, wrapper.Contract) {
+				return ethereum.CallMsg{}, nil, fmt.Errorf("%w: unwrap requires this network's native wrapper", chain.ErrInvalidRequest)
+			}
+			data, err = a.erc20.Pack("withdraw", units)
+		}
+		if err != nil {
+			return ethereum.CallMsg{}, nil, err
+		}
+		return ethereum.CallMsg{From: from, To: &contract, Value: value, Data: data}, value, nil
+	}
 	switch req.Asset.Kind {
 	case "native":
-		return ethereum.CallMsg{From: from, To: &to, Value: units}, units, nil
+		return ethereum.CallMsg{From: from, To: &to, Value: units, Data: req.Data}, units, nil
 	case "erc20":
 		if !common.IsHexAddress(req.Asset.Contract) {
 			return ethereum.CallMsg{}, nil, fmt.Errorf("%w: invalid token contract", chain.ErrInvalidRequest)
