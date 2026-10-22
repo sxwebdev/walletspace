@@ -288,9 +288,12 @@ function WalletList({
         const address = firstNetwork
           ? accountAddress(account, firstNetwork)
           : Object.values(account.addresses)[0]
-        const target = firstNetwork
-          ? `/wallet/${account.id}/${firstNetwork.id}`
-          : `/wallet/${account.id}`
+        // A wallet opens on its list of networks; with one network picked in
+        // the filter, it opens straight on that network.
+        const target =
+          networkFilter !== "all" && firstNetwork
+            ? `/wallet/${account.id}/${firstNetwork.id}`
+            : `/wallet/${account.id}`
         return (
           <motion.li
             key={account.id}

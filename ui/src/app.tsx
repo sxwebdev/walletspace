@@ -35,6 +35,7 @@ import { LockedHeader, LockScreen } from "@/features/spaces/lock-screen"
 import { SpaceSettings } from "@/features/spaces/space-settings"
 import { AddWallet } from "@/features/wallet/add-wallet"
 import { PickWallet } from "@/features/wallet/pick-wallet"
+import { WalletOverview } from "@/features/wallet/wallet-overview"
 import { ReceiveScreen } from "@/features/wallet/receive"
 import { SendScreen } from "@/features/wallet/send/send"
 import { CloseAccountsScreen } from "@/features/wallet/solana/close-accounts"
@@ -177,7 +178,10 @@ function Shell({ wide }: { wide: boolean }) {
                     element={<PickWallet mode="receive" />}
                   />
                   <Route path="/add-wallet" element={<AddWallet />} />
-                  <Route path="/wallet/:accountId" element={<WalletScreen />} />
+                  <Route
+                    path="/wallet/:accountId"
+                    element={<WalletOverview />}
+                  />
                   <Route
                     path="/wallet/:accountId/:networkId"
                     element={<WalletScreen />}

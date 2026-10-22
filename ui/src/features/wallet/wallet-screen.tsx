@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { motion } from "motion/react"
 import {
   ArrowDownLeftIcon,
@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
+import { toast } from "@/components/ui/toast"
 import {
   Tooltip,
   TooltipContent,
@@ -58,6 +59,8 @@ import {
 } from "@/features/wallet/wallet-data"
 import type { Account, Asset, Balance, Network } from "@/lib/api/types"
 import { solanaApi } from "@/lib/api/chain"
+import { errorMessage } from "@/lib/api/client"
+import { accountsApi } from "@/lib/api/spaces"
 import { isPositive, sumDecimals, toNumber } from "@/lib/decimal"
 import { formatAmount, formatUSD } from "@/lib/format"
 
@@ -103,7 +106,24 @@ export function WalletScreen() {
     "rename" | "connect" | "export" | "delete" | null
   >(null)
   const rows = useWalletAssets(account, network)
-  const { balancesLoading } = useWallet()
+  const { balancesLoading, upsertAccount, refreshBalances } = useWallet()
+  // Picking a network the wallet is not bound to yet binds it first: the
+  // picker lists every network the key has an address in.
+  const connect = useMutation({
+    mutationFn: (networkId: string) =>
+      accountsApi.bindNetwork(space!.id, account!.id, networkId),
+    onSuccess: (updated, networkId) => {
+      upsertAccount(updated)
+      refreshBalances({ accountIds: [updated.id], networkIds: [networkId] })
+      navigate(`/wallet/${updated.id}/${networkId}`, { replace: true })
+    },
+    onError: (error) =>
+      toast.add({
+        type: "error",
+        title: "Not connected",
+        description: errorMessage(error),
+      }),
+  })
   // Empty Solana token accounts hold rent the wallet can take back.
   const canClose = Boolean(
     account && network?.enabled && network.capabilities.solana_close_accounts
@@ -125,7 +145,16 @@ export function WalletScreen() {
   if (!account) return <Navigate to="/" replace />
 
   const ids = accountNetworks(account)
-  const canConnect = connectableNetworks(account, enabledNetworks).length > 0
+  const connectable = connectableNetworks(account, enabledNetworks)
+  const canConnect = connectable.length > 0
+  // A record with no binding yet is a legacy one whose family the user must
+  // choose deliberately, so it goes through the connect dialog instead.
+  const pickerNetworks = [
+    ...ids
+      .map((id) => networkById.get(id))
+      .filter((n): n is Network => Boolean(n)),
+    ...connectable,
+  ].sort((a, b) => a.name.localeCompare(b.name))
   const total = rows.reduce((sum, row) => sum + (row.usd ?? 0), 0)
   const base = network ? `/wallet/${account.id}/${network.id}` : ""
   const explorer = network
@@ -173,7 +202,7 @@ export function WalletScreen() {
       header={
         <ScreenHeader
           title={accountTitle(account)}
-          back="/"
+          back={`/wallet/${account.id}`}
           action={
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -242,13 +271,16 @@ export function WalletScreen() {
           </Badge>
           {ids.length > 0 && network && (
             <NetworkPicker
-              networks={ids
-                .map((id) => networkById.get(id))
-                .filter((n): n is Network => Boolean(n))}
-              value={network.id}
-              onChange={(value) =>
-                navigate(`/wallet/${account.id}/${value}`, { replace: true })
-              }
+              networks={pickerNetworks}
+              value={connect.isPending ? connect.variables : network.id}
+              onChange={(value) => {
+                if (connect.isPending || value === network.id) return
+                if (ids.includes(value)) {
+                  navigate(`/wallet/${account.id}/${value}`, { replace: true })
+                } else {
+                  connect.mutate(value)
+                }
+              }}
               size="sm"
             />
           )}
