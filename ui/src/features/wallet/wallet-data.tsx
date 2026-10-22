@@ -25,6 +25,9 @@ export type Portfolio = {
   change24h: number | null
   unpriced: number
   failedNetworks: number
+  // Balances the node did not answer even after the server's retries; the
+  // total leaves them out, so it is a lower bound.
+  failedBalances: number
   hasMainnet: boolean
 }
 
@@ -39,6 +42,8 @@ type WalletData = {
   pricesLoading: boolean
   pricesStale: boolean
   holdings: Holding[]
+  // The first error per wallet on a network, keyed by walletKey.
+  balanceErrors: Map<string, string>
   portfolio: Portfolio
   refreshBalances: (options?: { accountIds?: string[]; networkIds?: string[] }) => void
   upsertAccount: (account: Account) => void
@@ -54,6 +59,8 @@ export function useWallet() {
 
 export const balanceKey = (networkId: string, accountId: string, assetId: string) =>
   `${networkId}:${accountId}:${assetId}`
+
+export const walletKey = (networkId: string, accountId: string) => `${networkId}:${accountId}`
 
 export function accountNetworks(account: Account) {
   return account.network_ids ?? []
@@ -284,6 +291,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     return list.sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1))
   }, [balances, networkById, accountById, assetById, prices])
 
+  const { balanceErrors, failedBalances } = React.useMemo(() => {
+    const map = new Map<string, string>()
+    let count = 0
+    for (const [key, balance] of balances) {
+      if (!balance.error) continue
+      const network = networkById.get(key.slice(0, key.indexOf(":")))
+      const account = accountById.get(balance.account_id)
+      if (!network?.enabled || !account) continue
+      if (!accountNetworks(account).includes(network.id)) continue
+      count += 1
+      const id = walletKey(network.id, account.id)
+      if (!map.has(id)) map.set(id, balance.error)
+    }
+    return { balanceErrors: map, failedBalances: count }
+  }, [balances, networkById, accountById])
+
   const portfolio = React.useMemo<Portfolio>(() => {
     let totalUsd = 0
     let previousUsd = 0
@@ -308,9 +331,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       change24h: previous ? ((totalUsd - previous) / previous) * 100 : null,
       unpriced,
       failedNetworks,
+      failedBalances,
       hasMainnet,
     }
-  }, [holdings, failedNetworks])
+  }, [holdings, failedNetworks, failedBalances])
 
   const value: WalletData = {
     accounts,
@@ -323,6 +347,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     pricesLoading: pricesQuery.isFetching,
     pricesStale: pricesQuery.data?.stale ?? false,
     holdings,
+    balanceErrors,
     portfolio,
     refreshBalances,
     upsertAccount,

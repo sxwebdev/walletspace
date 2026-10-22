@@ -32,6 +32,7 @@ import {
   accountNetworks,
   accountTitle,
   useWallet,
+  walletKey,
   type Holding,
 } from "@/features/wallet/wallet-data"
 import type { Account } from "@/lib/api/types"
@@ -148,7 +149,9 @@ function BalanceHero() {
         <Skeleton className="h-10 w-44 rounded-xl" />
       ) : (
         <div className="text-4xl font-semibold tracking-tight tabular">
-          {portfolio.unpriced > 0 || portfolio.failedNetworks > 0 ? (
+          {portfolio.unpriced > 0 ||
+          portfolio.failedNetworks > 0 ||
+          portfolio.failedBalances > 0 ? (
             <span className="text-muted-foreground">≈ </span>
           ) : null}
           <AnimatedNumber value={portfolio.totalUsd} format={formatUSD} />
@@ -169,6 +172,11 @@ function BalanceHero() {
         ) : null}
         {portfolio.unpriced > 0 && (
           <span>{portfolio.unpriced} without a price</span>
+        )}
+        {portfolio.failedBalances > 0 && (
+          <span className="text-destructive">
+            {portfolio.failedBalances} not loaded
+          </span>
         )}
       </div>
     </div>
@@ -261,7 +269,7 @@ function WalletList({
   networkFilter: string
 }) {
   const { networkById } = useSession()
-  const { holdings, balancesLoading } = useWallet()
+  const { holdings, balancesLoading, balanceErrors } = useWallet()
   const navigate = useNavigate()
 
   if (accounts.length === 0) {
@@ -282,6 +290,11 @@ function WalletList({
             (networkFilter === "all" || h.network.id === networkFilter)
         )
         const usd = own.reduce((sum, h) => sum + (h.usd ?? 0), 0)
+        const incomplete = ids.some(
+          (id) =>
+            (networkFilter === "all" || id === networkFilter) &&
+            balanceErrors.has(walletKey(id, account.id))
+        )
         const firstNetwork = networkById.get(
           networkFilter !== "all" ? networkFilter : (ids[0] ?? "")
         )
@@ -335,8 +348,15 @@ function WalletList({
               <span className="text-right text-sm font-medium tabular">
                 {balancesLoading && own.length === 0 ? (
                   <Skeleton className="h-4 w-14" />
+                ) : incomplete && own.length === 0 ? (
+                  <span className="text-xs text-destructive">Not loaded</span>
                 ) : own.some((h) => h.usd !== null) ? (
-                  formatUSD(usd)
+                  <>
+                    {incomplete && (
+                      <span className="text-muted-foreground">≈ </span>
+                    )}
+                    {formatUSD(usd)}
+                  </>
                 ) : own.length > 0 ? (
                   <span className="text-xs text-muted-foreground">
                     {own.length} assets

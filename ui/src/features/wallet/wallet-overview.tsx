@@ -39,6 +39,7 @@ import {
   accountNetworks,
   accountTitle,
   useWallet,
+  walletKey,
   type Holding,
 } from "@/features/wallet/wallet-data"
 import type { Network } from "@/lib/api/types"
@@ -51,7 +52,13 @@ import { formatUSD } from "@/lib/format"
 export function WalletOverview() {
   const { accountId } = useParams()
   const { enabledNetworks, networkById } = useSession()
-  const { accounts, accountsLoading, holdings, balancesLoading } = useWallet()
+  const {
+    accounts,
+    accountsLoading,
+    holdings,
+    balancesLoading,
+    balanceErrors,
+  } = useWallet()
   const navigate = useNavigate()
   const [dialog, setDialog] = React.useState<
     "rename" | "connect" | "export" | "delete" | null
@@ -70,7 +77,12 @@ export function WalletOverview() {
       const own = holdings.filter(
         (h) => h.account.id === account.id && h.network.id === network.id
       )
-      return { network, own, usd: sumUsd(own) }
+      return {
+        network,
+        own,
+        usd: sumUsd(own),
+        error: balanceErrors.get(walletKey(network.id, account.id)),
+      }
     })
     .sort(
       (a, b) =>
@@ -83,6 +95,7 @@ export function WalletOverview() {
   const total = sumUsd(all)
   const unpriced = all.filter((h) => !h.network.testnet && h.usd === null)
   const families = [...new Set(networks.map((n) => n.family))]
+  const incomplete = rows.some((r) => r.error && r.network.enabled)
 
   return (
     <Screen
@@ -150,7 +163,7 @@ export function WalletOverview() {
             <Skeleton className="h-9 w-32 rounded-xl" />
           ) : (
             <>
-              {unpriced.length > 0 && (
+              {(unpriced.length > 0 || incomplete) && (
                 <span className="text-muted-foreground">≈ </span>
               )}
               {formatUSD(total ?? 0)}
@@ -189,7 +202,7 @@ export function WalletOverview() {
         </div>
       ) : (
         <ul className="-mx-2 flex flex-col">
-          {rows.map(({ network, own, usd }, i) => (
+          {rows.map(({ network, own, usd, error }, i) => (
             <motion.li
               key={network.id}
               variants={listItem}
@@ -213,21 +226,30 @@ export function WalletOverview() {
                   <span className="truncate text-xs text-muted-foreground">
                     {!network.enabled
                       ? "Disabled in the settings"
-                      : own.length > 0
-                        ? own.map((h) => h.asset.symbol).join(", ")
-                        : "No assets"}
+                      : error
+                        ? `Not all balances loaded: ${error}`
+                        : own.length > 0
+                          ? own.map((h) => h.asset.symbol).join(", ")
+                          : "No assets"}
                   </span>
                 </span>
                 <span className="text-right text-sm font-medium tabular">
                   {!network.enabled ? null : balancesLoading &&
                     own.length === 0 ? (
                     <Skeleton className="h-4 w-14" />
+                  ) : error && own.length === 0 ? (
+                    <span className="text-xs text-destructive">Not loaded</span>
                   ) : network.testnet ? (
                     <span className="text-xs text-muted-foreground">
                       Testnet
                     </span>
                   ) : usd !== null ? (
-                    formatUSD(usd)
+                    <>
+                      {error && (
+                        <span className="text-muted-foreground">≈ </span>
+                      )}
+                      {formatUSD(usd)}
+                    </>
                   ) : own.length > 0 ? (
                     <span className="text-xs text-muted-foreground">
                       No price

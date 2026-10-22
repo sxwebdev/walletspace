@@ -2008,7 +2008,12 @@ func (p *Platform) chainBalanceStream(
 	if err != nil {
 		return nil, err
 	}
-	return adapter.BalanceStream(ctx, item.ID, holders, assets, refresh), nil
+	pass := func(
+		ctx context.Context, holders []chain.AccountAddress, assets []chain.Asset, refresh bool,
+	) <-chan chain.Balance {
+		return adapter.BalanceStream(ctx, item.ID, holders, assets, refresh)
+	}
+	return retryBalances(ctx, pass, holders, assets, refresh, balanceRetryDelays), nil
 }
 
 func (p *Platform) chainEstimate(ctx context.Context, item network.Network, request chain.TransferRequest) (chain.TransferEstimate, error) {
