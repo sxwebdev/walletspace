@@ -22,7 +22,6 @@ import (
 	"github.com/sxwebdev/gotron/schema/pb/core"
 	"github.com/sxwebdev/walletspace/internal/chain"
 	"github.com/sxwebdev/walletspace/internal/config"
-	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 )
 
@@ -42,6 +41,9 @@ const (
 	// address costs two calls, so without an API key we stay deliberately slow.
 	balanceConcurrencyPublic = 2
 	balanceConcurrencyKeyed  = 8
+	// balanceReadTimeout bounds one shared balance read once it holds a slot.
+	// The read belongs to no single stream, so no caller's deadline applies.
+	balanceReadTimeout = 60 * time.Second
 )
 
 // Asset identifies which currency an operation applies to.
@@ -214,7 +216,10 @@ type Service struct {
 	// balanceSlots is shared by every HTTP request. A per-request errgroup limit
 	// would let two overlapping refreshes double the load on public TronGrid.
 	balanceSlots chan struct{}
-	balanceGroup singleflight.Group
+	// flights are the balance reads in progress, by address, shared by every
+	// stream waiting on the same address.
+	flightsMu sync.Mutex
+	flights   map[string]*balanceFlight
 	// fetch reads one address from chain. It is a field so the caching and
 	// fan-out logic in Balances can be exercised without a live node.
 	fetch func(ctx context.Context, addr string) (Balance, error)
@@ -477,29 +482,82 @@ func (s *Service) BalanceStream(ctx context.Context, addresses []string, refresh
 	return results
 }
 
+// balanceFlight is one balance read shared by the streams waiting on it.
+type balanceFlight struct {
+	done    chan struct{}
+	balance Balance
+	err     error
+	waiters int
+	cancel  context.CancelFunc
+}
+
 // fetchShared deduplicates the same address across overlapping refreshes and
 // applies the service-wide concurrency limit before touching a node.
+//
+// The read belongs to no single stream: one stream leaving — a page reload, a
+// timeout — does not end it for the others. Each caller stops waiting when its
+// own ctx ends, and when the last one leaves the read is cancelled, so a read
+// nobody wants no longer holds a slot.
 func (s *Service) fetchShared(ctx context.Context, addr string) (Balance, error) {
-	ch := s.balanceGroup.DoChan(addr, func() (any, error) {
-		select {
-		case s.balanceSlots <- struct{}{}:
-			defer func() { <-s.balanceSlots }()
-		case <-ctx.Done():
-			return Balance{}, ctx.Err()
-		}
-
-		return s.fetch(ctx, addr)
-	})
+	s.flightsMu.Lock()
+	if s.flights == nil {
+		s.flights = make(map[string]*balanceFlight)
+	}
+	flight := s.flights[addr]
+	if flight == nil {
+		flightCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		started := &balanceFlight{done: make(chan struct{}), cancel: cancel}
+		flight = started
+		s.flights[addr] = started
+		go func() {
+			defer cancel()
+			b, err := s.fetchInSlot(flightCtx, addr)
+			s.flightsMu.Lock()
+			if s.flights[addr] == started {
+				delete(s.flights, addr)
+			}
+			started.balance, started.err = b, err
+			s.flightsMu.Unlock()
+			close(started.done)
+		}()
+	}
+	flight.waiters++
+	s.flightsMu.Unlock()
 
 	select {
-	case result := <-ch:
-		if result.Val == nil {
-			return Balance{}, result.Err
+	case <-flight.done:
+		return flight.balance, flight.err
+	case <-ctx.Done():
+		s.flightsMu.Lock()
+		flight.waiters--
+		if flight.waiters == 0 {
+			flight.cancel()
+			// Removed in the same critical section as the cancel: a stream
+			// arriving before the flight's goroutine notices would otherwise
+			// join a cancelled read and be answered with its cancellation.
+			if s.flights[addr] == flight {
+				delete(s.flights, addr)
+			}
 		}
-		return result.Val.(Balance), result.Err
+		s.flightsMu.Unlock()
+		return Balance{}, ctx.Err()
+	}
+}
+
+// fetchInSlot waits for a balance slot unless ctx ends first, then reads the
+// address under its own timeout. Waiting for the slot is not bounded by that
+// timeout: a large portfolio on public TronGrid queues for a while.
+func (s *Service) fetchInSlot(ctx context.Context, addr string) (Balance, error) {
+	select {
+	case s.balanceSlots <- struct{}{}:
+		defer func() { <-s.balanceSlots }()
 	case <-ctx.Done():
 		return Balance{}, ctx.Err()
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, balanceReadTimeout)
+	defer cancel()
+	return s.fetch(ctx, addr)
 }
 
 // Balances is the aggregate form used by calculations and the JSON endpoint.
