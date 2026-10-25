@@ -2,6 +2,7 @@
 package evm
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"errors"
@@ -541,6 +542,43 @@ func rejected(err error) bool {
 	return errors.As(err, &rpcErr)
 }
 
+// archiveOnly reports a request a free PublicNode endpoint handed to its archive
+// tier, which refuses it without a personal token. Polygon does that with the
+// receipt of a transaction it has not mined yet; BSC does it with every receipt
+// looked up by transaction hash, however recent. The refusal comes with HTTP
+// 403, so it arrives as an HTTPError, not as a JSON-RPC error.
+func archiveOnly(err error) bool {
+	var httpErr rpc.HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusForbidden &&
+		bytes.Contains(httpErr.Body, []byte("Archive requests require a personal token"))
+}
+
+// receiptFromBlock finds a receipt the way an endpoint that will not look one up
+// by transaction hash still allows: the transaction names its block, and the
+// block's receipts are served while the block is recent. A transaction that has
+// no block yet has no receipt, which is reported as ethereum.NotFound.
+func receiptFromBlock(ctx context.Context, client *ethclient.Client, hash common.Hash) (*types.Receipt, error) {
+	var tx *struct {
+		BlockHash *common.Hash `json:"blockHash"`
+	}
+	if err := client.Client().CallContext(ctx, &tx, "eth_getTransactionByHash", hash); err != nil {
+		return nil, err
+	}
+	if tx == nil || tx.BlockHash == nil {
+		return nil, ethereum.NotFound
+	}
+	receipts, err := client.BlockReceipts(ctx, rpc.BlockNumberOrHashWithHash(*tx.BlockHash, false))
+	if err != nil {
+		return nil, err
+	}
+	for _, receipt := range receipts {
+		if receipt.TxHash == hash {
+			return receipt, nil
+		}
+	}
+	return nil, fmt.Errorf("block %s receipts do not include transaction %s", tx.BlockHash, hash)
+}
+
 func (a *Adapter) Transaction(ctx context.Context, networkID, hash string) (chain.Transaction, error) {
 	_, client, err := a.client(ctx, networkID)
 	if err != nil {
@@ -550,6 +588,9 @@ func (a *Adapter) Transaction(ctx context.Context, networkID, hash string) (chai
 		return chain.Transaction{}, fmt.Errorf("%w: invalid transaction hash", chain.ErrInvalidRequest)
 	}
 	receipt, err := client.TransactionReceipt(ctx, common.HexToHash(hash))
+	if archiveOnly(err) {
+		receipt, err = receiptFromBlock(ctx, client, common.HexToHash(hash))
+	}
 	if errors.Is(err, ethereum.NotFound) {
 		return chain.Transaction{NetworkID: networkID, Hash: hash, Status: "pending"}, nil
 	}

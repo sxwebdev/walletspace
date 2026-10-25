@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -962,5 +963,138 @@ func TestAdapterProbeEndpointChecksIdentityThroughTheProvidedClient(t *testing.T
 	}
 	if got := adapter.TokenKind(); got != "erc20" {
 		t.Errorf("TokenKind() = %q, want erc20", got)
+	}
+}
+
+// PublicNode's free BSC endpoint refuses every receipt looked up by
+// transaction hash with a 403 from its archive tier, while it still serves the
+// transaction and its recent block's receipts. Polygon refuses only the
+// receipt of a transaction it has not mined yet.
+func TestTransactionFallsBackToBlockReceiptsOnArchiveRefusal(t *testing.T) {
+	t.Parallel()
+
+	const archiveRefusal = `{"jsonrpc":"2.0","error":{"code":-32602,"message":"Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode"},"id":1}`
+	hash := "0x" + strings.Repeat("ab", 32)
+	blockHash := "0x" + strings.Repeat("cd", 32)
+	receipt := func(txHash, status string) map[string]any {
+		return map[string]any{
+			"transactionHash": txHash, "status": status, "blockHash": blockHash,
+			"cumulativeGasUsed": "0x5208", "gasUsed": "0x5208", "logs": []any{},
+			"logsBloom": "0x" + strings.Repeat("00", 256),
+		}
+	}
+	mined := map[string]any{"hash": hash, "blockHash": blockHash, "blockNumber": "0xff"}
+
+	tests := []struct {
+		name          string
+		receiptBody   string
+		transaction   any
+		blockReceipts any
+		blockRefused  bool
+		want          string
+		wantErr       bool
+	}{
+		{
+			name:        "not mined yet is pending",
+			receiptBody: archiveRefusal,
+			transaction: nil,
+			want:        "pending",
+		},
+		{
+			name:        "broadcast but not in a block is pending",
+			receiptBody: archiveRefusal,
+			transaction: map[string]any{"hash": hash, "blockHash": nil, "blockNumber": nil},
+			want:        "pending",
+		},
+		{
+			name:          "mined and succeeded is confirmed",
+			receiptBody:   archiveRefusal,
+			transaction:   mined,
+			blockReceipts: []any{receipt("0x"+strings.Repeat("11", 32), "0x0"), receipt(hash, "0x1")},
+			want:          "confirmed",
+		},
+		{
+			name:          "mined and reverted is failed",
+			receiptBody:   archiveRefusal,
+			transaction:   mined,
+			blockReceipts: []any{receipt(hash, "0x0")},
+			want:          "failed",
+		},
+		{
+			name:          "block receipts without the transaction is an error",
+			receiptBody:   archiveRefusal,
+			transaction:   mined,
+			blockReceipts: []any{receipt("0x"+strings.Repeat("11", 32), "0x1")},
+			wantErr:       true,
+		},
+		{
+			name:         "block too old for the free tier is an error",
+			receiptBody:  archiveRefusal,
+			transaction:  mined,
+			blockRefused: true,
+			wantErr:      true,
+		},
+		{
+			name:        "any other refusal is still an error",
+			receiptBody: `{"jsonrpc":"2.0","error":{"code":-32000,"message":"forbidden"},"id":1}`,
+			wantErr:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request rpcRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Errorf("decode request: %v", err)
+					return
+				}
+				reply := func(result any) {
+					_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+				}
+				switch request.Method {
+				case "eth_chainId":
+					reply("0x38")
+				case "eth_blockNumber":
+					reply("0x100")
+				case "eth_getTransactionReceipt":
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = io.WriteString(w, tt.receiptBody)
+				case "eth_getTransactionByHash":
+					reply(tt.transaction)
+				case "eth_getBlockReceipts":
+					var params []struct {
+						BlockHash string `json:"blockHash"`
+					}
+					if err := json.Unmarshal(request.Params, &params); err != nil || len(params) != 1 || params[0].BlockHash != blockHash {
+						t.Errorf("eth_getBlockReceipts params = %s, want block hash %s", request.Params, blockHash)
+					}
+					if tt.blockRefused {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = io.WriteString(w, archiveRefusal)
+						return
+					}
+					reply(tt.blockReceipts)
+				default:
+					t.Errorf("unexpected method %s", request.Method)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			got, err := newAdapter(t, server.URL).Transaction(t.Context(), "bsc-mainnet", hash)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Transaction() = %+v, want error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Transaction() error = %v", err)
+			}
+			if got.Status != tt.want {
+				t.Errorf("Transaction().Status = %q, want %q", got.Status, tt.want)
+			}
+		})
 	}
 }
