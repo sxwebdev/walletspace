@@ -4,12 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/sxwebdev/gotron/pkg/tronutils"
+	"github.com/sxwebdev/walletspace/internal/evmabi"
 )
 
 // Calldata is a contract call encoded locally: the canonical signature the
@@ -101,11 +101,7 @@ var (
 )
 
 func mustABI(definition string) abi.ABI {
-	parsed, err := abi.JSON(strings.NewReader(definition))
-	if err != nil {
-		panic("sunswap: bad ABI: " + err.Error())
-	}
-	return parsed
+	return evmabi.MustParse("sunswap", definition)
 }
 
 func pack(contract abi.ABI, method string, args ...any) (Calldata, error) {
