@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"math/big"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/sxwebdev/walletspace/internal/evmabi"
 )
 
 // The ABIs below are the slices of each contract a route calls. The Symbiosis
@@ -16,6 +16,7 @@ import (
 // the structs that follow.
 var (
 	gatewayABI = mustABI(`[
+		{"type":"function","name":"metaRouterExecutorDontApprove","outputs":[{"type":"address"}]},
 		{"type":"function","name":"metaRoute","stateMutability":"payable","inputs":[{"name":"t","type":"tuple","components":[
 			{"name":"firstSwapCalldata","type":"bytes"},{"name":"secondSwapCalldata","type":"bytes"},
 			{"name":"approvedTokens","type":"address[]"},{"name":"firstDexRouter","type":"address"},
@@ -81,14 +82,8 @@ var (
 	]`)
 )
 
-// mustABI parses one of the literals above. Its panic cannot fire for them: a
-// typo in any would stop the package from initializing, and every test with it.
 func mustABI(definition string) abi.ABI {
-	parsed, err := abi.JSON(strings.NewReader(definition))
-	if err != nil {
-		panic("symbiosis: bad ABI: " + err.Error())
-	}
-	return parsed
+	return evmabi.MustParse("symbiosis", definition)
 }
 
 type metaRouteTx struct {

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
@@ -21,7 +22,7 @@ func TestVerifyAcceptsRecordedQuotes(t *testing.T) {
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
 			tx, want := load(t, f)
-			route, err := symbiosis.Verify(tx, want, settlersFor(f.chainID))
+			route, err := symbiosis.Verify(tx, want, factsFor(f.chainID))
 			if err != nil {
 				t.Fatalf("Verify() error = %v", err)
 			}
@@ -63,7 +64,7 @@ func TestVerifyReportsTheStable(t *testing.T) {
 			t.Parallel()
 			f := fixtureNamed(t, tt.fixture)
 			tx, want := load(t, f)
-			route, err := symbiosis.Verify(tx, want, settlersFor(f.chainID))
+			route, err := symbiosis.Verify(tx, want, factsFor(f.chainID))
 			if err != nil {
 				t.Fatalf("Verify() error = %v", err)
 			}
@@ -106,6 +107,9 @@ func TestVerifyRefusesTamperedRoutes(t *testing.T) {
 		{"another approved token", "arb_usdt", func(l *symbiosis.Layers) { l.Route.ApprovedTokens[1] = stranger }, symbiosis.ErrUnexpected},
 		{"gateway spends more", "arb_usdt", func(l *symbiosis.Layers) { l.Route.Amount = big.NewInt(200_000_000) }, symbiosis.ErrMismatch},
 		{"relayed elsewhere", "arb_usdt", func(l *symbiosis.Layers) { l.Route.RelayRecipient = stranger }, symbiosis.ErrUnexpected},
+		{"first DEX router set", "arb_usdt", func(l *symbiosis.Layers) { l.Route.FirstDexRouter = stranger }, symbiosis.ErrUnexpected},
+		{"second DEX router a stranger", "arb_usdt", func(l *symbiosis.Layers) { l.Route.SecondDexRouter = stranger }, symbiosis.ErrUnexpected},
+		{"second DEX router unset", "arb_usdt", func(l *symbiosis.Layers) { l.Route.SecondDexRouter = common.Address{} }, nil},
 
 		// The first hop, Tron to the Symbiosis chain.
 		{"portal locks more", "arb_usdt", func(l *symbiosis.Layers) { l.Synth.Amount = big.NewInt(200_000_000) }, symbiosis.ErrMismatch},
@@ -117,7 +121,10 @@ func TestVerifyRefusesTamperedRoutes(t *testing.T) {
 		{"first hop to another chain", "arb_usdt", func(l *symbiosis.Layers) { l.Synth.ChainID = big.NewInt(42161) }, symbiosis.ErrUnexpected},
 		{"first revert by a stranger", "arb_usdt", func(l *symbiosis.Layers) { l.Synth.RevertableAddress = stranger }, symbiosis.ErrUnexpected},
 		{"first fee a tenth", "arb_usdt", func(l *symbiosis.Layers) { l.Synth.StableBridgingFee = big.NewInt(10_000_000) }, symbiosis.ErrMismatch},
-		{"first fee a hair under a tenth", "arb_usdt", func(l *symbiosis.Layers) { l.Synth.StableBridgingFee = big.NewInt(9_999_999) }, nil},
+		{"first fee a hair under a tenth", "arb_usdt", func(l *symbiosis.Layers) {
+			// The pool then gets 90 USDT, so its minimum has to come down too.
+			l.Synth.StableBridgingFee, l.Swap.MinToAmount = big.NewInt(9_999_999), big.NewInt(89_000_000)
+		}, nil},
 		{"pool path of three", "arb_usdt", func(l *symbiosis.Layers) { l.Synth.SwapTokens = append(l.Synth.SwapTokens, stranger) }, symbiosis.ErrUnexpected},
 		{"pool starts elsewhere", "arb_usdt", func(l *symbiosis.Layers) { l.Synth.SwapTokens[0] = stranger }, symbiosis.ErrUnexpected},
 		{"unknown stable", "arb_usdt", func(l *symbiosis.Layers) { l.Synth.SwapTokens[1] = stranger }, symbiosis.ErrUnexpected},
@@ -139,6 +146,24 @@ func TestVerifyRefusesTamperedRoutes(t *testing.T) {
 		{"pool sells another asset", "arb_usdt", func(l *symbiosis.Layers) { l.Swap.FromID = big.NewInt(0) }, symbiosis.ErrUnexpected},
 		{"pool buys another asset", "arb_usdt", func(l *symbiosis.Layers) { l.Swap.ToID = big.NewInt(5) }, symbiosis.ErrUnexpected},
 		{"pool swap pays a stranger", "arb_usdt", func(l *symbiosis.Layers) { l.Swap.To = stranger }, symbiosis.ErrUnexpected},
+		{"pool swap expired", "arb_usdt", func(l *symbiosis.Layers) { l.Swap.Deadline = unix(recordedAt.Add(-time.Hour)) }, symbiosis.ErrMismatch},
+		{"pool swap expires too soon", "arb_usdt", func(l *symbiosis.Layers) { l.Swap.Deadline = unix(recordedAt.Add(29 * time.Minute)) }, symbiosis.ErrMismatch},
+		{"pool swap expires just late enough", "arb_usdt", func(l *symbiosis.Layers) { l.Swap.Deadline = unix(recordedAt.Add(30 * time.Minute)) }, nil},
+		// Its low 64 bits are a plausible deadline a day out; read as an int64
+		// it would pass.
+		{"pool deadline past int64", "arb_usdt", func(l *symbiosis.Layers) {
+			l.Swap.Deadline = new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), unix(recordedAt.Add(24*time.Hour)))
+		}, symbiosis.ErrMismatch},
+		// 100 USDT less the 0.25 fee enter the pool; 105% of that is 104.7375.
+		{"pool minimum above its input", "arb_usdt", func(l *symbiosis.Layers) { l.Swap.MinToAmount = big.NewInt(104_737_501) }, symbiosis.ErrMismatch},
+		{"pool minimum at its bound", "arb_usdt", func(l *symbiosis.Layers) { l.Swap.MinToAmount = big.NewInt(104_737_500) }, nil},
+		// The same bound for a stable with 18 decimals: the input is scaled.
+		{"18-decimal pool minimum above its input", "bsc_usdt", func(l *symbiosis.Layers) {
+			l.Swap.MinToAmount = amount(t, "104737500000000000001")
+		}, symbiosis.ErrMismatch},
+		{"18-decimal pool minimum at its bound", "bsc_usdt", func(l *symbiosis.Layers) {
+			l.Swap.MinToAmount = amount(t, "104737500000000000000")
+		}, nil},
 
 		// The second hop, the Symbiosis chain to the destination.
 		{"burns another synthetic", "arb_usdt", func(l *symbiosis.Layers) { l.Burn.SToken = stranger }, symbiosis.ErrUnexpected},
@@ -167,6 +192,8 @@ func TestVerifyRefusesTamperedRoutes(t *testing.T) {
 		{"1inch pays its caller", "arb_usdt", func(l *symbiosis.Layers) { l.OneInch.Desc.DstReceiver = common.Address{} }, symbiosis.ErrMismatch},
 		{"1inch minimum lowered", "arb_usdt", func(l *symbiosis.Layers) { l.OneInch.Desc.MinReturnAmount = big.NewInt(1) }, symbiosis.ErrMismatch},
 		{"1inch partial fill", "arb_usdt", func(l *symbiosis.Layers) { l.OneInch.Desc.Flags = big.NewInt(1) }, symbiosis.ErrUnexpected},
+		{"1inch tail of five bytes", "arb_usdt", func(l *symbiosis.Layers) { l.OneInchTail = append(l.OneInchTail, 0) }, symbiosis.ErrMalformed},
+		{"1inch without a tail", "arb_usdt", func(l *symbiosis.Layers) { l.OneInchTail = nil }, nil},
 
 		// A final swap through 0x.
 		{"0x sells another token", "arb_eth", func(l *symbiosis.Layers) { l.Exec.Token = stranger }, symbiosis.ErrUnexpected},
@@ -182,7 +209,7 @@ func TestVerifyRefusesTamperedRoutes(t *testing.T) {
 			f := fixtureNamed(t, tt.fixture)
 			tx, want := load(t, f)
 			tx = rewrite(t, tx, tt.edit)
-			if _, err := symbiosis.Verify(tx, want, settlersFor(f.chainID)); !errors.Is(err, tt.wantErr) {
+			if _, err := symbiosis.Verify(tx, want, factsFor(f.chainID)); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Verify() error = %v, want %v", err, tt.wantErr)
 			}
 		})
@@ -224,7 +251,7 @@ func TestVerifyRefusesAnotherEnvelope(t *testing.T) {
 			f := fixtureNamed(t, "arb_usdt")
 			tx, want := load(t, f)
 			tt.edit(&tx)
-			if _, err := symbiosis.Verify(tx, want, settlersFor(f.chainID)); !errors.Is(err, tt.wantErr) {
+			if _, err := symbiosis.Verify(tx, want, factsFor(f.chainID)); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Verify() error = %v, want %v", err, tt.wantErr)
 			}
 		})
@@ -303,7 +330,7 @@ func TestVerifyRefusesInnerCallsThatAreNotWhatTheyClaim(t *testing.T) {
 			f := fixtureNamed(t, tt.fixture)
 			tx, want := load(t, f)
 			tx = rewrite(t, tx, tt.edit)
-			if _, err := symbiosis.Verify(tx, want, settlersFor(f.chainID)); !errors.Is(err, tt.wantErr) {
+			if _, err := symbiosis.Verify(tx, want, factsFor(f.chainID)); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Verify() error = %v, want %v", err, tt.wantErr)
 			}
 		})
@@ -327,7 +354,7 @@ func TestVerifyDirectPayout(t *testing.T) {
 		t.Parallel()
 		want := want
 		want.Token, want.MinOut = arbitrumUSDC, wantOut
-		route, err := symbiosis.Verify(tx, want, nil)
+		route, err := symbiosis.Verify(tx, want, noSettlers())
 		if err != nil {
 			t.Fatalf("Verify() error = %v", err)
 		}
@@ -339,13 +366,13 @@ func TestVerifyDirectPayout(t *testing.T) {
 		t.Parallel()
 		want := want
 		want.Token, want.MinOut = arbitrumUSDC, new(big.Int).Add(wantOut, big.NewInt(1))
-		if _, err := symbiosis.Verify(tx, want, nil); !errors.Is(err, symbiosis.ErrMismatch) {
+		if _, err := symbiosis.Verify(tx, want, noSettlers()); !errors.Is(err, symbiosis.ErrMismatch) {
 			t.Fatalf("Verify() error = %v, want %v", err, symbiosis.ErrMismatch)
 		}
 	})
 	t.Run("in another token", func(t *testing.T) {
 		t.Parallel()
-		if _, err := symbiosis.Verify(tx, want, nil); !errors.Is(err, symbiosis.ErrMismatch) {
+		if _, err := symbiosis.Verify(tx, want, noSettlers()); !errors.Is(err, symbiosis.ErrMismatch) {
 			t.Fatalf("Verify() error = %v, want %v", err, symbiosis.ErrMismatch)
 		}
 	})
@@ -358,7 +385,7 @@ func TestVerifyComparesTheMinimumWithTheRequest(t *testing.T) {
 			t.Parallel()
 			tx, want := load(t, f)
 			want.MinOut.Add(want.MinOut, big.NewInt(1))
-			if _, err := symbiosis.Verify(tx, want, settlersFor(f.chainID)); !errors.Is(err, symbiosis.ErrMismatch) {
+			if _, err := symbiosis.Verify(tx, want, factsFor(f.chainID)); !errors.Is(err, symbiosis.ErrMismatch) {
 				t.Fatalf("Verify() error = %v, want %v", err, symbiosis.ErrMismatch)
 			}
 		})
@@ -374,7 +401,7 @@ func TestVerifyNeedsTheCurrentSettler(t *testing.T) {
 		wantErr  error
 	}{
 		{"none", nil, symbiosis.ErrUnexpected},
-		{"another chain's", settlersFor(56), symbiosis.ErrUnexpected},
+		{"another chain's", []common.Address{settlers[56]}, symbiosis.ErrUnexpected},
 		{"the zero address", []common.Address{{}}, symbiosis.ErrUnexpected},
 		{"among others", []common.Address{stranger, settlers[42161]}, nil},
 	}
@@ -382,7 +409,7 @@ func TestVerifyNeedsTheCurrentSettler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			tx, want := load(t, f)
-			if _, err := symbiosis.Verify(tx, want, tt.settlers); !errors.Is(err, tt.wantErr) {
+			if _, err := symbiosis.Verify(tx, want, withSettlers(f.chainID, tt.settlers)); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Verify() error = %v, want %v", err, tt.wantErr)
 			}
 		})
@@ -396,9 +423,48 @@ func TestVerifyRefusesAZeroSettlerOnBothSides(t *testing.T) {
 	f := fixtureNamed(t, "arb_eth")
 	tx, want := load(t, f)
 	tx = rewrite(t, tx, func(l *symbiosis.Layers) { l.Exec.Operator, l.Exec.Target = common.Address{}, common.Address{} })
-	if _, err := symbiosis.Verify(tx, want, []common.Address{{}}); !errors.Is(err, symbiosis.ErrUnexpected) {
+	if _, err := symbiosis.Verify(tx, want, withSettlers(f.chainID, []common.Address{{}})); !errors.Is(err, symbiosis.ErrUnexpected) {
 		t.Fatalf("Verify() error = %v, want %v", err, symbiosis.ErrUnexpected)
 	}
+}
+
+func TestVerifyNeedsTheFacts(t *testing.T) {
+	t.Parallel()
+	f := fixtureNamed(t, "arb_usdt")
+	tests := []struct {
+		name    string
+		edit    func(*symbiosis.Facts)
+		wantErr error
+	}{
+		{"another executor", func(facts *symbiosis.Facts) { facts.Executor = stranger }, symbiosis.ErrUnexpected},
+		{"no executor read", func(facts *symbiosis.Facts) { facts.Executor = common.Address{} }, symbiosis.ErrUnexpected},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tx, want := load(t, f)
+			facts := factsFor(f.chainID)
+			tt.edit(&facts)
+			if _, err := symbiosis.Verify(tx, want, facts); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Verify() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+	t.Run("no clock", func(t *testing.T) {
+		t.Parallel()
+		tx, want := load(t, f)
+		facts := factsFor(f.chainID)
+		facts.Now = time.Time{}
+		_, err := symbiosis.Verify(tx, want, facts)
+		if err == nil {
+			t.Fatal("Verify() accepted a route without knowing the time")
+		}
+		for _, verdict := range []error{symbiosis.ErrMalformed, symbiosis.ErrUnexpected, symbiosis.ErrMismatch} {
+			if errors.Is(err, verdict) {
+				t.Errorf("Verify() error = %v, which blames the quote", err)
+			}
+		}
+	})
 }
 
 func TestVerifyRefusesAnInvalidRequest(t *testing.T) {
@@ -422,7 +488,7 @@ func TestVerifyRefusesAnInvalidRequest(t *testing.T) {
 			t.Parallel()
 			tx, want := load(t, f)
 			tt.edit(&want)
-			_, err := symbiosis.Verify(tx, want, settlersFor(f.chainID))
+			_, err := symbiosis.Verify(tx, want, factsFor(f.chainID))
 			if err == nil {
 				t.Fatal("Verify() accepted an invalid request")
 			}
@@ -442,7 +508,7 @@ func TestVerifyRequestsAnotherAmount(t *testing.T) {
 	f := fixtureNamed(t, "arb_usdt")
 	tx, want := load(t, f)
 	want.Amount = big.NewInt(99_000_000)
-	if _, err := symbiosis.Verify(tx, want, settlersFor(f.chainID)); !errors.Is(err, symbiosis.ErrMismatch) {
+	if _, err := symbiosis.Verify(tx, want, factsFor(f.chainID)); !errors.Is(err, symbiosis.ErrMismatch) {
 		t.Fatalf("Verify() error = %v, want %v", err, symbiosis.ErrMismatch)
 	}
 }
@@ -454,7 +520,7 @@ func TestVerifyRequestsAnotherChainOrToken(t *testing.T) {
 		edit func(*symbiosis.Want)
 	}{
 		{"BSC instead of Arbitrum", func(w *symbiosis.Want) { w.ChainID = 56 }},
-		{"the coin instead of USDT", func(w *symbiosis.Want) { w.Token = symbiosis.Native }},
+		{"the coin instead of USDT", func(w *symbiosis.Want) { w.Token = symbiosis.Native() }},
 		{"another recipient", func(w *symbiosis.Want) { w.Recipient = stranger }},
 	}
 	for _, tt := range tests {
@@ -463,7 +529,7 @@ func TestVerifyRequestsAnotherChainOrToken(t *testing.T) {
 			f := fixtureNamed(t, "arb_usdt")
 			tx, want := load(t, f)
 			tt.edit(&want)
-			if _, err := symbiosis.Verify(tx, want, settlersFor(want.ChainID)); !errors.Is(err, symbiosis.ErrMismatch) {
+			if _, err := symbiosis.Verify(tx, want, factsFor(want.ChainID)); !errors.Is(err, symbiosis.ErrMismatch) {
 				t.Fatalf("Verify() error = %v, want %v", err, symbiosis.ErrMismatch)
 			}
 		})
@@ -483,14 +549,27 @@ func TestSettlerCalls(t *testing.T) {
 	}
 }
 
-func TestDecodeSettler(t *testing.T) {
+func TestExecutorCall(t *testing.T) {
 	t.Parallel()
-	got, err := symbiosis.DecodeSettler(mustHex(t, "00000000000000000000000093ea5e32e9c2be78a279be03f86b74917537df51"))
-	if err != nil || got != settlers[42161] {
-		t.Fatalf("DecodeSettler() = %s, %v; want %s", got.Hex(), err, settlers[42161].Hex())
+	// The selector the Tron gateway answers, as found in its bytecode.
+	if got := symbiosis.ExecutorCall(); !bytes.Equal(got, mustHex(t, "ee2ed888")) {
+		t.Errorf("ExecutorCall() = %x, want ee2ed888", got)
 	}
-	if _, err := symbiosis.DecodeSettler(nil); err == nil {
-		t.Fatal("DecodeSettler(nil) accepted an empty answer")
+	// The call is the caller's to keep; changing it must not change the next.
+	symbiosis.ExecutorCall()[0] = 0
+	if got := symbiosis.ExecutorCall(); got[0] != 0xee {
+		t.Errorf("ExecutorCall() = %x after a caller changed an earlier answer", got)
+	}
+}
+
+func TestDecodeAddress(t *testing.T) {
+	t.Parallel()
+	got, err := symbiosis.DecodeAddress(mustHex(t, "00000000000000000000000093ea5e32e9c2be78a279be03f86b74917537df51"))
+	if err != nil || got != settlers[42161] {
+		t.Fatalf("DecodeAddress() = %s, %v; want %s", got.Hex(), err, settlers[42161].Hex())
+	}
+	if _, err := symbiosis.DecodeAddress(nil); err == nil {
+		t.Fatal("DecodeAddress(nil) accepted an empty answer")
 	}
 }
 
@@ -510,4 +589,33 @@ func mustHex(t *testing.T, s string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// noSettlers is factsFor a route that needs no Settler.
+func noSettlers() symbiosis.Facts {
+	facts := factsFor(42161)
+	facts.Settlers = nil
+	return facts
+}
+
+func withSettlers(chainID uint64, settlers []common.Address) symbiosis.Facts {
+	facts := factsFor(chainID)
+	facts.Settlers = settlers
+	return facts
+}
+
+func unix(at time.Time) *big.Int {
+	return big.NewInt(at.Unix())
+}
+
+func TestPublishedAddresses(t *testing.T) {
+	t.Parallel()
+	// The 0x registry that answered SettlerCalls on Arbitrum and BSC, and the
+	// coin marker both aggregators used in the recorded quotes.
+	if got, want := symbiosis.ZeroExDeployer(), common.HexToAddress("0x00000000000004533Fe15556B1E086BB1A72cEae"); got != want {
+		t.Errorf("ZeroExDeployer() = %s, want %s", got.Hex(), want.Hex())
+	}
+	if got, want := symbiosis.Native(), common.HexToAddress("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"); got != want {
+		t.Errorf("Native() = %s, want %s", got.Hex(), want.Hex())
+	}
 }

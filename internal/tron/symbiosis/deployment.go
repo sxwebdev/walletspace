@@ -11,9 +11,10 @@
 // user asked for. A response that differs anywhere is refused; nothing in it
 // is taken on trust except the parts the contracts themselves enforce.
 //
-// The package makes no network calls. The one fact it needs from a chain —
-// which 0x Settler is current on the destination — callers read with
-// SettlerCalls and hand in.
+// The package makes no network calls. The facts it needs from chains — which
+// router the Tron gateway hands calls to, and which 0x Settler is current on
+// the destination — callers read with ExecutorCall and SettlerCalls and hand
+// in.
 package symbiosis
 
 import "github.com/ethereum/go-ethereum/common"
@@ -29,8 +30,11 @@ const SymbiosisChainID = 13863860
 const Gateway = "TPuaJ6gnYfE9gLUDFrbWbPx3tMnjG8max1"
 
 // Native is how both DEX aggregators a route may end in name the destination's
-// own coin.
-var Native = common.HexToAddress("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
+// own coin. It is a function so that no importer can change it for the rest of
+// the process.
+func Native() common.Address { return native }
+
+var native = common.HexToAddress("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
 
 // synth is a synthetic token on the Symbiosis chain and what it stands for.
 type synth struct {
@@ -40,6 +44,11 @@ type synth struct {
 	Real common.Address
 	// PoolIndex is the synthetic's index in the octopool.
 	PoolIndex uint64
+	// Decimals and RealDecimals are those of Token and of Real. They are
+	// equal for every synthetic listed here, and the amounts are converted all
+	// the same, so a listing where they differ cannot compare a minimum in the
+	// wrong units.
+	Decimals, RealDecimals uint8
 }
 
 // destination is the Symbiosis deployment on a chain a route can end on.
@@ -56,10 +65,11 @@ type destination struct {
 // against at least two of them. The Symbiosis SDK (symbiosis-js-sdk 3.11.60,
 // config/mainnet.ts) names the Symbiosis-chain contracts and each destination's
 // portal and bridge. The chains themselves confirm the rest: the Symbiosis
-// fabric maps each synthetic to its real token (getRealRepresentation), the
-// octopool maps each synthetic to its index (assetToIndex, indexToAsset), and
-// the Tron gateway and portal were deployed by the same account as the portal
-// the SDK still lists — the API has moved to them since the SDK was published.
+// fabric maps each synthetic to its real token (getRealRepresentation), every
+// token reports the decimals listed (decimals), the octopool maps each
+// synthetic to its index (assetToIndex, indexToAsset), and the Tron gateway
+// and portal were deployed by the same account as the portal the SDK still
+// lists — the API has moved to them since the SDK was published.
 var (
 	tronUSDT   = common.HexToAddress("0xa614f803b6fd780986a42c78ec9c7f77e6ded13c")
 	tronPortal = common.HexToAddress("0x21fb7f70b95d119f7594267a79e2897290a21caf")
@@ -76,7 +86,17 @@ var (
 		Token:     common.HexToAddress("0x4e7498c4db259065b73d21c81A5b41cadbEc7d4D"),
 		Real:      tronUSDT,
 		PoolIndex: 18,
+		Decimals:  6, RealDecimals: 6,
 	}
+
+	// gatewayExecutor is the router behind Gateway, which receives the claimed
+	// USDT and makes the metaRoute calls. It is not in the published sources:
+	// its revert strings name it MetaRouterExecutorDontApprove, and it exposes
+	// exactly the open MetaRouter's functions (metaRoute, externalCall,
+	// metaMintSwap, returnSwap). The checks in Verify rely on it behaving as
+	// that MetaRouter does, so Verify refuses to vouch for a gateway that hands
+	// calls to anything else.
+	gatewayExecutor = common.HexToAddress("0xd076ab0d4b74aef1aec7b1d4f106787e0d5f9163")
 
 	// operators are Symbiosis's own accounts on the Symbiosis chain. A route
 	// names one as the revertable address of both hops, the only account that
@@ -100,10 +120,12 @@ var (
 	// allowanceHolder is the 0x AllowanceHolder on every chain with Cancun.
 	allowanceHolder = common.HexToAddress("0x0000000000001fF3684f28c67538d4D072C22734")
 
-	// ZeroExDeployer is the 0x registry that names the current Settler of each
-	// feature on every chain; see SettlerCalls.
-	ZeroExDeployer = common.HexToAddress("0x00000000000004533Fe15556B1E086BB1A72cEae")
+	zeroExDeployer = common.HexToAddress("0x00000000000004533Fe15556B1E086BB1A72cEae")
 )
+
+// ZeroExDeployer is the 0x registry that names the current Settler of each
+// feature on every chain; see SettlerCalls.
+func ZeroExDeployer() common.Address { return zeroExDeployer }
 
 var destinations = map[uint64]destination{
 	1: {
@@ -114,6 +136,7 @@ var destinations = map[uint64]destination{
 			Token:     common.HexToAddress("0xFAEb87361cB1925aFdd1967BD896F0c8FeacB890"),
 			Real:      common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
 			PoolIndex: 0,
+			Decimals:  6, RealDecimals: 6,
 		}},
 	},
 	56: {
@@ -124,6 +147,7 @@ var destinations = map[uint64]destination{
 			Token:     common.HexToAddress("0x076Cb7BEee7D1507DE7B964c29cbC849acaD5022"),
 			Real:      common.HexToAddress("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"),
 			PoolIndex: 5,
+			Decimals:  18, RealDecimals: 18,
 		}},
 	},
 	42161: {
@@ -134,6 +158,7 @@ var destinations = map[uint64]destination{
 			Token:     common.HexToAddress("0xc317169a336b484f65B0AB4A794bBe66a7491E83"),
 			Real:      common.HexToAddress("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
 			PoolIndex: 11,
+			Decimals:  6, RealDecimals: 6,
 		}},
 	},
 }

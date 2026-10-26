@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/sxwebdev/gotron/pkg/tronutils"
+	"github.com/sxwebdev/walletspace/internal/tron/sunswap"
 )
 
 // A rejected route wraps one of these, so a caller can tell a response that
@@ -63,6 +64,18 @@ type Want struct {
 	MinOut *big.Int
 }
 
+// Facts are what the wallet read for one Verify call, from the chains and
+// from its clock. Like Want, none of it may come from the quote.
+type Facts struct {
+	// Executor is the Tron gateway's answer to ExecutorCall.
+	Executor common.Address
+	// Settlers are the 0x registry's answers to SettlerCalls on the
+	// destination. A route that ends in 0x is refused without them.
+	Settlers []common.Address
+	// Now is when the transaction is about to be signed.
+	Now time.Time
+}
+
 // Venue is where a route's last swap happens.
 type Venue string
 
@@ -112,9 +125,22 @@ const (
 	execAmountOffset = 100
 )
 
-// oneInchMaxTail is how much the 1inch API may append to its swap call: a
-// source tag (four bytes in every quote seen), which the router ignores.
-const oneInchMaxTail = 31
+// oneInchMaxTail is how much the 1inch API may append to its swap call: the
+// four-byte source tag every quote carries, which the router ignores. Exactly
+// what was seen is allowed and no more.
+const oneInchMaxTail = 4
+
+// minDeadline is how long the octopool swap must stay valid after signing.
+// The Symbiosis chain receives the first hop within minutes; a swap that has
+// expired by then reverts and leaves the USDT locked on Tron until Symbiosis
+// reverts the transfer by hand.
+const minDeadline = 30 * time.Minute
+
+// maxPoolPremium bounds the octopool minimum from above, in percent of what
+// goes into the pool. A swap between two dollar stables does not pay a
+// twentieth more than its input; a minimum it cannot reach only makes the swap
+// revert, with the same stuck transfer as an expired deadline.
+const maxPoolPremium = 105
 
 // maxFeeShare bounds each hop's bridging fee: no more than one part in ten of
 // what the hop carries. The fee is Symbiosis's to set and is shown to the user
@@ -126,43 +152,56 @@ const maxFeeShare = 10
 // call through AllowanceHolder.
 const settlerFeature = 2
 
+// ExecutorCall returns the call to Gateway that names the router it hands
+// every metaRoute to. Its answer goes into Facts.Executor.
+func ExecutorCall() []byte {
+	return slices.Clone(gatewayABI.Methods["metaRouterExecutorDontApprove"].ID)
+}
+
 // SettlerCalls returns the two calls to ZeroExDeployer on a destination that
 // name the Settlers a route may end in: the current one (ownerOf) and the one
 // it replaced (prev), which 0x keeps working for a while after a rotation so
-// that quotes in flight still settle. Both answers are handed to Verify.
+// that quotes in flight still settle. Both answers go into Facts.Settlers.
 func SettlerCalls() (current, previous []byte) {
 	feature := common.LeftPadBytes([]byte{settlerFeature}, 32)
 	return slices.Concat(deployerABI.Methods["ownerOf"].ID, feature),
 		slices.Concat(deployerABI.Methods["prev"].ID, feature)
 }
 
-// DecodeSettler reads the address out of the answer to either SettlerCalls
-// call.
-func DecodeSettler(result []byte) (common.Address, error) {
+// DecodeAddress reads the address out of the answer to ExecutorCall or to
+// either SettlerCalls call.
+func DecodeAddress(result []byte) (common.Address, error) {
 	values, err := deployerABI.Methods["ownerOf"].Outputs.Unpack(result)
 	if err != nil {
-		return common.Address{}, fmt.Errorf("decode Settler: %w", err)
+		return common.Address{}, fmt.Errorf("decode address: %w", err)
 	}
 	return values[0].(common.Address), nil
 }
 
 // Verify checks a quote's transaction against what the user asked for and
-// returns what it promises. settlers are the 0x Settlers current on the
-// destination (see SettlerCalls); a route that ends in 0x is refused without
-// them.
+// what the wallet read itself, and returns what the transaction promises.
 //
 // What it establishes: the transaction spends exactly want.Amount of the
 // owner's USDT through the pinned Tron contracts; every hop calls only pinned
 // contracts with canonically encoded arguments; whatever the route pays out,
 // in success or after a failed final swap, goes to want.Recipient on
 // want.ChainID; the destination contracts revert a final swap that pays less
-// than want.MinOut; and a revert of the first hop refunds the owner on Tron.
+// than want.MinOut; the octopool swap is still valid long after signing and
+// asks no more than its input can pay; and a revert of the first hop refunds
+// the owner on Tron.
 // What it cannot establish is that the Symbiosis relayers deliver: that, and
 // a revert of the second hop, rest with Symbiosis (see operators).
-func Verify(tx Tx, want Want, settlers []common.Address) (Route, error) {
+func Verify(tx Tx, want Want, facts Facts) (Route, error) {
 	owner, dest, err := want.check()
 	if err != nil {
 		return Route{}, err
+	}
+	if facts.Now.IsZero() {
+		return Route{}, errors.New("the time of signing is not set")
+	}
+	if facts.Executor != gatewayExecutor {
+		return Route{}, fmt.Errorf("%w: the gateway hands calls to %s, not the router this package was checked against",
+			ErrUnexpected, facts.Executor.Hex())
 	}
 
 	method := gatewayABI.Methods["metaRoute"]
@@ -192,7 +231,7 @@ func Verify(tx Tx, want Want, settlers []common.Address) (Route, error) {
 	if err := decode(portalABI, "metaSynthesize", route.OtherSideCalldata, &synth); err != nil {
 		return Route{}, err
 	}
-	stable, minPooled, err := checkSynthesize(synth, want, owner, dest)
+	stable, minPooled, err := checkSynthesize(synth, want, owner, dest, facts.Now)
 	if err != nil {
 		return Route{}, err
 	}
@@ -201,7 +240,7 @@ func Verify(tx Tx, want Want, settlers []common.Address) (Route, error) {
 	if err := decode(synthesisABI, "metaBurnSyntheticToken", synth.FinalCalldata, &burn); err != nil {
 		return Route{}, err
 	}
-	venue, minOut, err := checkBurn(burn, want, dest, stable, minPooled, settlers)
+	venue, minOut, err := checkBurn(burn, want, dest, stable, minPooled, facts.Settlers)
 	if err != nil {
 		return Route{}, err
 	}
@@ -222,7 +261,7 @@ func Verify(tx Tx, want Want, settlers []common.Address) (Route, error) {
 
 // check validates the request itself and resolves what it names.
 func (w Want) check() (common.Address, destination, error) {
-	owner, err := evmAddress(w.Owner)
+	owner, err := sunswap.EVMAddress(w.Owner)
 	if err != nil {
 		return common.Address{}, destination{}, err
 	}
@@ -249,6 +288,13 @@ func checkMetaRoute(r metaRouteTx, want Want) error {
 	switch {
 	case len(r.FirstSwapCalldata) != 0 || len(r.SecondSwapCalldata) != 0:
 		return fmt.Errorf("%w: the route swaps on Tron", ErrUnexpected)
+	case r.FirstDexRouter != (common.Address{}) || (r.SecondDexRouter != (common.Address{}) && r.SecondDexRouter != multicall):
+		// The router calls neither without swap calldata. Requiring them
+		// unset keeps that true even if it some day did: the second carries
+		// the Symbiosis-chain multicall in every quote seen, an address that
+		// holds no contract on Tron.
+		return fmt.Errorf("%w: the route names DEX routers %s and %s on Tron",
+			ErrUnexpected, r.FirstDexRouter.Hex(), r.SecondDexRouter.Hex())
 	case r.NativeIn:
 		return fmt.Errorf("%w: the route spends TRX", ErrUnexpected)
 	case len(r.ApprovedTokens) == 0 || slices.ContainsFunc(r.ApprovedTokens, func(a common.Address) bool { return a != tronUSDT }):
@@ -265,7 +311,7 @@ func checkMetaRoute(r metaRouteTx, want Want) error {
 // chain: mint the synthetic, swap it in the octopool for the destination's
 // stable, burn that toward the destination. It returns the stable and the
 // least the octopool swap may yield.
-func checkSynthesize(s metaSynthesizeTx, want Want, owner common.Address, dest destination) (synth, *big.Int, error) {
+func checkSynthesize(s metaSynthesizeTx, want Want, owner common.Address, dest destination, now time.Time) (synth, *big.Int, error) {
 	switch {
 	case s.Amount.Cmp(want.Amount) != 0:
 		return synth{}, nil, fmt.Errorf("%w: the portal locks %s USDT units, not %s", ErrMismatch, s.Amount, want.Amount)
@@ -301,9 +347,15 @@ func checkSynthesize(s metaSynthesizeTx, want Want, owner common.Address, dest d
 		}
 		return synth{}, nil, fmt.Errorf("%w: the route unlocks %s on the destination", ErrUnexpected, s.SwapTokens[1].Hex())
 	}
-	minPooled, err := checkPoolSwap(s.SecondSwapCalldata, stable)
+	minPooled, err := checkPoolSwap(s.SecondSwapCalldata, stable, now)
 	if err != nil {
 		return synth{}, nil, err
+	}
+	// What enters the pool is the amount less the first hop's fee, in the
+	// Tron synthetic's units; the minimum is in the destination synthetic's.
+	pooled := scale(new(big.Int).Sub(s.Amount, s.StableBridgingFee), tronUSDTSynth.Decimals, stable.Decimals)
+	if new(big.Int).Mul(minPooled, big.NewInt(100)).Cmp(pooled.Mul(pooled, big.NewInt(maxPoolPremium))) > 0 {
+		return synth{}, nil, fmt.Errorf("%w: the octopool swap asks for at least %s, more than its input can pay", ErrMismatch, minPooled)
 	}
 	return stable, minPooled, nil
 }
@@ -311,7 +363,7 @@ func checkSynthesize(s metaSynthesizeTx, want Want, owner common.Address, dest d
 // checkPoolSwap checks the multicall that swaps the Tron synthetic for the
 // destination's in the octopool and hands the result to the MetaRouter, which
 // burns it toward the destination. It returns the swap's minimum.
-func checkPoolSwap(data []byte, stable synth) (*big.Int, error) {
+func checkPoolSwap(data []byte, stable synth, now time.Time) (*big.Int, error) {
 	var call multicallArgs
 	if err := decode(multicallABI, "multicall", data, &call); err != nil {
 		return nil, err
@@ -340,6 +392,9 @@ func checkPoolSwap(data []byte, stable synth) (*big.Int, error) {
 		return nil, fmt.Errorf("%w: the octopool swap trades asset %s for %s", ErrUnexpected, swap.FromID, swap.ToID)
 	case swap.To != multicall:
 		return nil, fmt.Errorf("%w: the octopool swap pays %s", ErrUnexpected, swap.To.Hex())
+	case !swap.Deadline.IsInt64() || time.Unix(swap.Deadline.Int64(), 0).Before(now.Add(minDeadline)):
+		return nil, fmt.Errorf("%w: the octopool swap expires at %s, too soon after %s",
+			ErrMismatch, swap.Deadline, now.UTC().Format(time.RFC3339))
 	}
 	return swap.MinToAmount, nil
 }
@@ -370,7 +425,7 @@ func checkBurn(b metaBurnTx, want Want, dest destination, stable synth, minPoole
 		if want.Token != stable.Real {
 			return "", nil, fmt.Errorf("%w: the route pays out %s, not %s", ErrMismatch, stable.Real.Hex(), want.Token.Hex())
 		}
-		return VenueDirect, new(big.Int).Sub(minPooled, b.StableBridgingFee), nil
+		return VenueDirect, scale(new(big.Int).Sub(minPooled, b.StableBridgingFee), stable.Decimals, stable.RealDecimals), nil
 	case b.FinalReceiveSide == oneInchRouter && is(b.FinalOffset, oneInchAmountOffset):
 		minOut, err := checkOneInch(b.FinalCallData, want, stable)
 		return VenueOneInch, minOut, err
@@ -447,16 +502,19 @@ func outsized(fee, base *big.Int) bool {
 	return new(big.Int).Mul(fee, big.NewInt(maxFeeShare)).Cmp(base) >= 0
 }
 
+// scale converts an amount between two numbers of decimals, rounding down. It
+// changes v in place and returns it.
+func scale(v *big.Int, from, to uint8) *big.Int {
+	switch {
+	case to > from:
+		return v.Mul(v, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(to-from)), nil))
+	case to < from:
+		return v.Quo(v, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(from-to)), nil))
+	}
+	return v
+}
+
 // is compares a decoded uint256 with a small constant.
 func is(got *big.Int, want uint64) bool {
 	return got.IsUint64() && got.Uint64() == want
-}
-
-// evmAddress turns a base58check Tron address into the 20 bytes the ABI holds.
-func evmAddress(addr string) (common.Address, error) {
-	raw, err := tronutils.DecodeCheck(addr)
-	if err != nil {
-		return common.Address{}, fmt.Errorf("invalid Tron address %q: %w", addr, err)
-	}
-	return common.BytesToAddress(raw[1:]), nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/sxwebdev/walletspace/internal/tron/symbiosis"
@@ -31,6 +32,11 @@ var (
 	bscUSDC      = common.HexToAddress("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d")
 	bscUSDT      = common.HexToAddress("0x55d398326f99059fF775485246999027B3197955")
 
+	// What the Tron gateway named as its router (metaRouterExecutorDontApprove)
+	// when the quotes were recorded, and when that was.
+	executor   = common.HexToAddress("0xd076ab0d4b74aef1aec7b1d4f106787e0d5f9163")
+	recordedAt = time.Date(2026, 10, 26, 3, 0, 0, 0, time.UTC)
+
 	// The Settlers the 0x registry named on each chain (ownerOf(2)) when the
 	// quotes were recorded.
 	settlers = map[uint64]common.Address{
@@ -49,10 +55,10 @@ type fixture struct {
 
 var fixtures = []fixture{
 	{"arb_usdt", 42161, arbitrumUSDT, symbiosis.VenueOneInch},
-	{"arb_eth", 42161, symbiosis.Native, symbiosis.VenueZeroEx},
+	{"arb_eth", 42161, symbiosis.Native(), symbiosis.VenueZeroEx},
 	{"bsc_usdt", 56, bscUSDT, symbiosis.VenueZeroEx},
-	{"bsc_bnb", 56, symbiosis.Native, symbiosis.VenueZeroEx},
-	{"eth_eth", 1, symbiosis.Native, symbiosis.VenueZeroEx},
+	{"bsc_bnb", 56, symbiosis.Native(), symbiosis.VenueZeroEx},
+	{"eth_eth", 1, symbiosis.Native(), symbiosis.VenueZeroEx},
 }
 
 type recorded struct {
@@ -136,6 +142,12 @@ func rewrite(t *testing.T, tx symbiosis.Tx, edit func(*symbiosis.Layers)) symbio
 	return tx
 }
 
-func settlersFor(chainID uint64) []common.Address {
-	return []common.Address{settlers[chainID]}
+// factsFor is what the wallet would have read for a quote to chainID when the
+// quotes were recorded.
+func factsFor(chainID uint64) symbiosis.Facts {
+	return symbiosis.Facts{
+		Executor: executor,
+		Settlers: []common.Address{settlers[chainID]},
+		Now:      recordedAt,
+	}
 }
