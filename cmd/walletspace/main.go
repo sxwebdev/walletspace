@@ -51,6 +51,8 @@ type command int
 const (
 	commandServe command = iota
 	commandMigrate
+	commandExport
+	commandImport
 	commandVersion
 	commandHelp
 	commandUnknown
@@ -66,6 +68,10 @@ func parseCommand(args []string) (command, []string) {
 	switch args[0] {
 	case "migrate":
 		return commandMigrate, args[1:]
+	case "export":
+		return commandExport, args[1:]
+	case "import":
+		return commandImport, args[1:]
 	case "version", "--version", "-version":
 		return commandVersion, args[1:]
 	case "help", "--help", "-help", "-h":
@@ -80,6 +86,8 @@ func usage(out io.Writer) {
 Usage:
   walletspace                     serve the UI on the configured loopback address
   walletspace migrate --from DIR  import a legacy data directory into a new space
+  walletspace export --out FILE   write spaces to a backup file for another machine
+  walletspace import FILE         add the spaces of a backup file to this machine
   walletspace version             print the version
   walletspace help                print this help
 
@@ -88,6 +96,18 @@ Migrate flags:
   --home DIR   Walletspace home to create the new space in
   --name NAME  name for the new space
   --dry-run    verify every legacy address without writing anything
+
+Export flags:
+  --out FILE   backup file to create (required; never overwritten)
+  --space ID   export only this space; repeat for several (default: all)
+  --home DIR   Walletspace home to read
+
+Import flags:
+  --home DIR   Walletspace home to add the spaces to
+
+A backup file holds every vault in it, each still under its own password.
+Copy it to the other machine directly (AirDrop, USB, scp), import it, and
+delete it on both sides.
 
 Environment:
   WALLETSPACE_HOME          data directory, default ~/.walletspace
@@ -108,6 +128,10 @@ func main() {
 		err = run(log)
 	case commandMigrate:
 		err = runMigration(log, args)
+	case commandExport:
+		err = runExport(args, os.Stdout)
+	case commandImport:
+		err = runImport(args, os.Stdout)
 	case commandVersion:
 		fmt.Fprintln(os.Stdout, version)
 	case commandHelp:
@@ -165,6 +189,7 @@ func run(log *slog.Logger) error {
 	spaces.SetSendConfirmation(
 		snapshot.Config.Security.ConfirmSends, snapshot.Config.Security.SendGrantTTL,
 	)
+	httpapi.StartSync(spaces, home, snapshot.Config.Sync, log)
 	registry, err := network.Builtin()
 	if err != nil {
 		return err

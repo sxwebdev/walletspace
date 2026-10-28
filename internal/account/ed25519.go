@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/decred/base58"
-	"github.com/sxwebdev/go-bip39"
 )
 
 // hardenedOffset is the first hardened child index, 2^31.
@@ -40,10 +39,15 @@ var errIndexRange = errors.New("derivation index is out of the hardened range")
 //
 // The returned key is the 64-byte seed‖public-key form; the caller clears it.
 func DeriveEd25519PrivateKey(mnemonic, passphrase string, family Family, index uint32) (ed25519.PrivateKey, error) {
-	mnemonic = NormalizeMnemonic(mnemonic)
-	if err := ValidateMnemonic(mnemonic); err != nil {
+	seed, err := Seed(mnemonic, passphrase)
+	if err != nil {
 		return nil, err
 	}
+	defer clear(seed)
+	return deriveEd25519FromSeed(seed, family, index)
+}
+
+func deriveEd25519FromSeed(seed []byte, family Family, index uint32) (ed25519.PrivateKey, error) {
 	var coinType uint32
 	switch family {
 	case FamilySolana:
@@ -56,8 +60,6 @@ func DeriveEd25519PrivateKey(mnemonic, passphrase string, family Family, index u
 	if index >= hardenedOffset {
 		return nil, fmt.Errorf("%w: %d", errIndexRange, index)
 	}
-	seed := bip39.NewSeed(mnemonic, passphrase)
-	defer clear(seed)
 	key, chainCode, err := slip10Ed25519(seed,
 		hardenedOffset+44, hardenedOffset+coinType, hardenedOffset+index, hardenedOffset,
 	)

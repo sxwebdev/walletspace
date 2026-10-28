@@ -68,7 +68,8 @@ export function TxResult({
           <TriangleAlertIcon />
           <AlertTitle>Do not send it again yet</AlertTitle>
           <AlertDescription>
-            It may already be on chain. Sending a second one could move the funds twice.
+            It may already be on chain. Sending it again — here or from another
+            computer — could move the funds twice. Check the explorer first.
           </AlertDescription>
         </Alert>
       )}

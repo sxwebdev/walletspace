@@ -12,10 +12,15 @@ import { AppBar } from "@/components/layout/widget"
 import { Button } from "@/components/ui/button"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
-import { setSpaceLocked, useSession } from "@/features/session/session"
+import { toast } from "@/components/ui/toast"
+import { setSpace, useSession } from "@/features/session/session"
 import { SpaceSwitcher } from "@/features/spaces/space-switcher"
 import { errorMessage } from "@/lib/api/client"
-import { spacesApi } from "@/lib/api/spaces"
+import {
+  firstSyncIncomplete,
+  firstSyncIncompleteMessage,
+  spacesApi,
+} from "@/lib/api/spaces"
 
 // The first thing a locked space shows. Nothing of the space — wallets,
 // balances, addresses — is rendered until the password checks out. The shell
@@ -29,9 +34,12 @@ export function LockScreen() {
 
   const unlock = useMutation({
     mutationFn: () => spacesApi.unlock(space!.id, password),
-    onSuccess: () => {
+    onSuccess: (result) => {
       setPassword("")
-      setSpaceLocked(queryClient, space!.id, false)
+      setSpace(queryClient, result.space)
+      if (firstSyncIncomplete(result.sync)) {
+        toast.add({ type: "warning", ...firstSyncIncompleteMessage })
+      }
     },
     onError: () => {
       void shake.start({

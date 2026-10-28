@@ -3,9 +3,16 @@ export type Space = {
   name: string
   locked: boolean
   seeded: boolean
+  // Known only while the space is unlocked; false when locked.
+  has_phrase: boolean
   account_count: number
   created_at: string
   updated_at: string
+}
+
+export type BundleImport = {
+  imported: Space[]
+  skipped: { id: string; name: string; reason: "exists" | "quota" }[]
 }
 
 export type NetworkFamily = "evm" | "tron" | "solana"
@@ -69,8 +76,72 @@ export type Settings = {
     allow_insecure_rpc: boolean
   }
   ui: { last_space_id: string }
+  sync: { enabled: boolean; folder: string }
   revision: string
   restart_required: string[]
+}
+
+export type SyncState = "off" | "no_phrase" | "locked" | "ok" | "error"
+
+export type SyncStatus = {
+  state: SyncState
+  last_sync?: string
+  last_write?: string
+  devices: number
+  // Other computers' files not downloaded yet; missing is the part that will
+  // not arrive unless the folder is kept downloaded.
+  pending: number
+  missing: number
+  // cannot_ask: the provider cannot be asked to download from here.
+  // requests_failed: it was asked, and the requests kept failing.
+  missing_reason?: "cannot_ask" | "requests_failed"
+  unreadable: number
+  error?: string
+  duplicates?: string[]
+  dropped?: string[]
+  key_conflicts?: string[]
+  future_records?: number
+  // How far this computer's latest change got. Absent when sync is off or
+  // the space has no recovery phrase.
+  delivery?: SyncDelivery
+  // Locked, with a change not sealed for the folder yet: only an unlock can.
+  needs_unlock?: boolean
+  // This computer's file in the folder was left alone: it may hold what the
+  // space does not (a data folder restored from a backup), or it cannot be
+  // read yet. It is merged before it is replaced.
+  merge_first?: boolean
+  merge_first_reason?:
+    "not_merged" | "not_downloaded" | "newer_version" | "merge_failed"
+  // Why the last send failed; it is tried again.
+  send_error?: string
+  local_revision: number
+  outbox_revision: number
+  written_revision: number
+}
+
+// What the first sync of an unlock or a restore had found when the wait for it
+// ended. Anything but finished with nothing pending may still be missing what
+// other computers wrote.
+export type FirstSync = {
+  finished: boolean
+  pending: number
+  missing: number
+}
+
+// unsent: the folder does not hold the latest change yet. upload_unknown:
+// written to the folder; whether the provider uploaded it cannot be asked.
+export type SyncDelivery = "unsent" | "upload_unknown"
+
+export type SyncOverview = {
+  enabled: boolean
+  folder: string
+  suggested_folder: string
+  spaces: Record<string, SyncStatus>
+  unknown: number
+  // Spaces here that have not synced here yet, so the folder cannot be
+  // matched against them.
+  unidentified: number
+  error?: string
 }
 
 export type AssetKind = "native" | "erc20" | "trc20" | "spl"

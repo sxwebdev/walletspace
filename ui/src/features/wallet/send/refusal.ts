@@ -52,7 +52,7 @@ export function classifyRefusal(error: unknown): Refusal {
 
 export const UNSURE_TITLE = "No clear answer"
 export const UNSURE_MESSAGE =
-  "No clear answer — the request may still be processing. Try again sends the same request, so it cannot go out twice."
+  "No clear answer — the request may still be processing. Try again sends the same request, so it cannot go out twice. Do not repeat it from another computer before checking the explorer."
 // A retry's own refusal, said together with what still holds for the attempt
 // before it.
 export function stillUnsureMessage(message: string) {

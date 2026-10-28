@@ -85,6 +85,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     queryKey: queryKeys.accounts(spaceId),
     queryFn: () => accountsApi.list(spaceId),
   })
+  // A sync pass in the background — after unlock, every 30 s, after a change
+  // on another computer — can add or remove wallets. It moves the space's
+  // updated_at, which the space list poll brings in; the wallet list follows,
+  // so a wallet deleted elsewhere does not stay on screen with its address.
+  const updatedAt = space!.updated_at
+  const seenUpdatedAt = React.useRef(updatedAt)
+  React.useEffect(() => {
+    if (seenUpdatedAt.current === updatedAt) return
+    seenUpdatedAt.current = updatedAt
+    void queryClient.invalidateQueries({ queryKey: queryKeys.accounts(spaceId) })
+  }, [updatedAt, spaceId, queryClient])
   const accounts = React.useMemo(
     () => accountsQuery.data?.accounts ?? [],
     [accountsQuery.data]

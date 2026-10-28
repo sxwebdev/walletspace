@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "motion/react"
-import { ChevronDownIcon, KeyRoundIcon, ShieldAlertIcon, SparklesIcon } from "lucide-react"
+import { ChevronDownIcon, FileUpIcon, KeyRoundIcon, ShieldAlertIcon, SparklesIcon } from "lucide-react"
 import { useNavigate, useSearchParams } from "react-router"
 
 import { CopyButton } from "@/components/common/copy-button"
@@ -28,7 +28,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { queryKeys } from "@/features/session/session"
 import { errorMessage } from "@/lib/api/client"
-import { spacesApi } from "@/lib/api/spaces"
+import { firstSyncIncomplete, firstSyncIncompleteMessage, spacesApi } from "@/lib/api/spaces"
 import type { Space } from "@/lib/api/types"
 import { sessionSet } from "@/lib/storage"
 
@@ -58,6 +58,10 @@ export function Welcome() {
         <Button size="lg" variant="secondary" onClick={() => navigate("/create?mode=restore")}>
           <KeyRoundIcon data-icon="inline-start" />I have a recovery phrase
         </Button>
+        <Button size="lg" variant="ghost" onClick={() => navigate("/import")}>
+          <FileUpIcon data-icon="inline-start" />
+          Import from a backup file
+        </Button>
         <Button variant="link" className="text-muted-foreground" onClick={() => navigate("/settings")}>
           Set up RPC nodes first
         </Button>
@@ -71,22 +75,25 @@ export function NewSpaceChoice() {
   const navigate = useNavigate()
   const options = [
     {
+      to: "/create?mode=new",
       mode: "new",
       icon: SparklesIcon,
       title: "New recovery phrase",
       description: "Generate a fresh 24-word phrase for this space.",
     },
     {
+      to: "/create?mode=restore",
       mode: "restore",
       icon: KeyRoundIcon,
       title: "Restore from a phrase",
       description: "Bring an existing BIP39 recovery phrase.",
     },
     {
-      mode: "imported",
-      icon: ShieldAlertIcon,
-      title: "Imported keys only",
-      description: "No phrase; add private keys one by one later.",
+      to: "/import",
+      mode: "file",
+      icon: FileUpIcon,
+      title: "From a backup file",
+      description: "Spaces exported on another computer.",
     },
   ]
   return (
@@ -96,7 +103,7 @@ export function NewSpaceChoice() {
           <FadeIn key={option.mode} delay={i * 0.05}>
             <Item
               variant="outline"
-              render={<button type="button" onClick={() => navigate(`/create?mode=${option.mode}`)} />}
+              render={<button type="button" onClick={() => navigate(option.to)} />}
               className="w-full text-left"
             >
               <ItemMedia variant="icon">
@@ -114,11 +121,11 @@ export function NewSpaceChoice() {
   )
 }
 
-type Mode = "new" | "restore" | "imported"
+type Mode = "new" | "restore"
 
 export function CreateSpace({ first }: { first: boolean }) {
   const [params] = useSearchParams()
-  const mode = (["new", "restore", "imported"].includes(params.get("mode") ?? "")
+  const mode = (["new", "restore"].includes(params.get("mode") ?? "")
     ? params.get("mode")
     : "new") as Mode
   const navigate = useNavigate()
@@ -147,8 +154,7 @@ export function CreateSpace({ first }: { first: boolean }) {
         name: name.trim(),
         password,
         mnemonic: mode === "restore" ? mnemonic.trim() : undefined,
-        bip39_passphrase: mode !== "imported" && passphrase ? passphrase : undefined,
-        imported_only: mode === "imported" || undefined,
+        bip39_passphrase: passphrase || undefined,
         first: first || undefined,
       }),
     onSuccess: (result) => {
@@ -159,7 +165,12 @@ export function CreateSpace({ first }: { first: boolean }) {
       if (result.mnemonic_generated && result.mnemonic) {
         setPhrase({ value: result.mnemonic, space: result.space })
       } else {
-        toast.add({ type: "success", title: mode === "restore" ? "Space restored" : "Space created" })
+        if (firstSyncIncomplete(result.sync)) {
+          // A restore still waiting for files is not shown as complete.
+          toast.add({ type: "warning", ...firstSyncIncompleteMessage })
+        } else {
+          toast.add({ type: "success", title: mode === "restore" ? "Space restored" : "Space created" })
+        }
         finish(result.space)
       }
     },
@@ -183,8 +194,7 @@ export function CreateSpace({ first }: { first: boolean }) {
     return <SavePhrase phrase={phrase.value} onDone={() => finish(phrase.space)} />
   }
 
-  const title =
-    mode === "restore" ? "Restore a space" : mode === "imported" ? "Imported-only space" : "Create a space"
+  const title = mode === "restore" ? "Restore a space" : "Create a space"
 
   return (
     <Screen
@@ -247,32 +257,30 @@ export function CreateSpace({ first }: { first: boolean }) {
               onChange={(e) => setConfirmation(e.target.value)}
             />
           </Field>
-          {mode !== "imported" && (
-            <Collapsible>
-              <CollapsibleTrigger
-                render={
-                  <Button type="button" variant="ghost" size="sm" className="-ml-2 text-muted-foreground" />
-                }
-              >
-                Advanced: BIP39 passphrase
-                <ChevronDownIcon data-icon="inline-end" />
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <Field className="pt-3">
-                  <FieldLabel htmlFor="space-passphrase">BIP39 passphrase</FieldLabel>
-                  <PasswordInput
-                    id="space-passphrase"
-                    autoComplete="new-password"
-                    value={passphrase}
-                    onChange={(e) => setPassphrase(e.target.value)}
-                  />
-                  <FieldDescription>
-                    Part of the derivation: it changes every address. It is not the space password.
-                  </FieldDescription>
-                </Field>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
+          <Collapsible>
+            <CollapsibleTrigger
+              render={
+                <Button type="button" variant="ghost" size="sm" className="-ml-2 text-muted-foreground" />
+              }
+            >
+              Advanced: BIP39 passphrase
+              <ChevronDownIcon data-icon="inline-end" />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <Field className="pt-3">
+                <FieldLabel htmlFor="space-passphrase">BIP39 passphrase</FieldLabel>
+                <PasswordInput
+                  id="space-passphrase"
+                  autoComplete="new-password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                />
+                <FieldDescription>
+                  Part of the derivation: it changes every address. It is not the space password.
+                </FieldDescription>
+              </Field>
+            </CollapsibleContent>
+          </Collapsible>
           <FormError message={localError ?? (create.isError ? errorMessage(create.error) : null)} />
         </FieldGroup>
       </form>

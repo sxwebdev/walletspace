@@ -23,7 +23,7 @@ func TestPlatformImportsAndExportsSolanaKeys(t *testing.T) {
 
 	fixture := newPlatformFixture(t)
 	created, err := fixture.spaces.Create(space.CreateRequest{
-		Password: "test-vault-password", ImportedOnly: true,
+		Password: "test-vault-password",
 	})
 	if err != nil {
 		t.Fatalf("spaces.Create() error = %v", err)
@@ -91,7 +91,7 @@ func TestPlatformImportCurveMustMatchTheNetwork(t *testing.T) {
 
 	fixture := newPlatformFixture(t)
 	created, err := fixture.spaces.Create(space.CreateRequest{
-		Password: "test-vault-password", ImportedOnly: true,
+		Password: "test-vault-password",
 	})
 	if err != nil {
 		t.Fatalf("spaces.Create() error = %v", err)

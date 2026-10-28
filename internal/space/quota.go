@@ -3,6 +3,8 @@ package space
 import (
 	"errors"
 	"fmt"
+
+	"github.com/sxwebdev/walletspace/internal/devicesync"
 )
 
 // ErrQuotaExceeded reports that a limit on stored objects has been reached.
@@ -17,8 +19,10 @@ var ErrQuotaExceeded = errors.New("limit reached")
 // could grow both until the machine gave out — and unlike a request flood, what
 // it created was written to disk and reloaded on the next start.
 const (
-	maxSpaces           = 64
-	maxAccountsPerSpace = 512
+	maxSpaces = 64
+	// The same ceiling a sync snapshot is held to: a space allowed more
+	// wallets than a snapshot carries would stop syncing at the next one.
+	maxAccountsPerSpace = devicesync.MaxAccounts
 )
 
 func (m *Manager) checkSpaceQuota() error {

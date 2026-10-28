@@ -33,6 +33,7 @@ import {
 } from "@/features/spaces/create-space"
 import { LockedHeader, LockScreen } from "@/features/spaces/lock-screen"
 import { SpaceSettings } from "@/features/spaces/space-settings"
+import { ImportScreen } from "@/features/spaces/transfer"
 import { AddWallet } from "@/features/wallet/add-wallet"
 import { PickWallet } from "@/features/wallet/pick-wallet"
 import { WalletOverview } from "@/features/wallet/wallet-overview"
@@ -112,7 +113,7 @@ function Session() {
 }
 
 // Routes reachable without an unlocked space: nothing in them reads the vault.
-const openRoutes = ["/settings", "/spaces/new", "/create"]
+const openRoutes = ["/settings", "/spaces/new", "/create", "/import"]
 
 function Shell({ wide }: { wide: boolean }) {
   const { spaces, space } = useSession()
@@ -155,6 +156,7 @@ function Shell({ wide }: { wide: boolean }) {
             <Animated>
               <Route path="/" element={<Welcome />} />
               <Route path="/create" element={<CreateSpace first />} />
+              <Route path="/import" element={<ImportScreen first />} />
               <Route path="/settings/*" element={<SettingsScreen />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Animated>
@@ -165,6 +167,7 @@ function Shell({ wide }: { wide: boolean }) {
               <Route path="/settings/*" element={<SettingsScreen />} />
               <Route path="/spaces/new" element={<NewSpaceChoice />} />
               <Route path="/create" element={<CreateSpace first={false} />} />
+              <Route path="/import" element={<ImportScreen first={false} />} />
             </Animated>
           )}
           {stage === "unlocked" && (
@@ -223,6 +226,10 @@ function Shell({ wide }: { wide: boolean }) {
                   <Route
                     path="/create"
                     element={<CreateSpace first={false} />}
+                  />
+                  <Route
+                    path="/import"
+                    element={<ImportScreen first={false} />}
                   />
                   <Route path="/nodes" element={<NodesScreen />} />
                   <Route path="/settings/*" element={<SettingsScreen />} />
