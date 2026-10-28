@@ -1209,3 +1209,68 @@ patches. What is left:
    found three more. That rate is the argument for this step, not the
    complexity of any single fix. The adversarial suite it was meant to
    accompany now exists, so the review has something to run.
+
+## Addendum — device sync and space bundles (2026-10-26)
+
+This addendum is separate from the audit above. It was written by the
+implementation's author and followed by design and implementation reviews on
+2026-10-27. The table describes revision 1, which is in the working tree. Rev 2
+of the [design](device-sync.md) is agreed and not implemented yet.
+
+| New surface                                                | What bounds it                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /api/spaces/export` hands out several vaults at once | The same step-up as `Backup`, once per space, through the same throttle and per-space lock (`ExportBundle`, `TestExportBundleGoesThroughTheUnlockThrottle`). A wrong password fails the whole export                                                                                                                                                                                                                                             |
+| `walletspace export` writes vaults without a password      | Command line only: whoever runs it can read `~/.walletspace` already. `ExportHome` is not reachable from the API. The file is created `0600` and never over an existing one                                                                                                                                                                                                                                                                      |
+| `POST /api/spaces/import` takes a 32 MiB body              | The raised limit is on that exact path only. Every space is checked as far as possible without its password — `validateFile`, quotas, `vault.Container.Check` (format and KDF bounds) — and its wallet list is checked against the vault at the first unlock, as for a space on disk. An existing space is never replaced. Token only, like creating a space                                                                                     |
+| Sync folder: files written by other machines               | XChaCha20-Poly1305 under a seed-derived key; tags are authenticated and checked against the requested path. Invalid files are skipped and incoming wallets are verified before adoption. Pure-merge property tests pass; they do not prove integration safety. Revision 1 keeps one key per reference; see SYNC-02 below                                                                                                                         |
+| Imported private keys leave the machine                    | Only when sync is enabled, encrypted under a seed-derived key; neither the phrase, BIP39 passphrase nor local password is sent. Recovery needs the phrase, BIP39 passphrase if set, and a current external copy of the encrypted files                                                                                                                                                                                                           |
+| `PATCH /api/settings/sync` with the token alone            | It changes where ciphertext is written. A folder inside, equal to or around the data folder is refused before anything is created. The check compares paths as text; a symlink, firmlink or different letter case gets past it until rev 2 resolves them. A token holder can still make the wallet create a directory and write ciphertext files anywhere the user can write — no secret is exposed by that, and it is the BE-7 class of setting |
+| Sync keys in memory                                        | Derived at unlock, cleared from the session at lock. In-flight work owns copies and must clear them; an invalidated session cannot publish a merge. `sync.json` holds the public space tag and last-write time; rev 2 adds delivery revisions and an encrypted outbox, never a key                                                                                                                                                               |
+| A remote key under a reference this machine holds          | Revision 1 keeps the local key and drops a wallet relying on conflicting bytes (`TestALocalKeyIsNeverReplaced`). This avoids replacing a local secret but does not preserve both secrets or converge. Rev 2 must retain all canonical variants and resolve the matching key for each account; see SYNC-02                                                                                                                                        |
+| Merge removes local data                                   | A `space.json.prev` copy is made before a merge removes an account or key. It is a single local safety copy, not proof of an external backup                                                                                                                                                                                                                                                                                                     |
+
+### Review findings (2026-10-27)
+
+| Finding                                                                                                    | Decision                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SYNC-01 — deleting a wallet deletes a key another wallet uses                                              | Deleting an imported wallet deletes its key by design (owner, 2026-10-27). Walletspace never puts two wallets on one reference; the review built such a pair through a forged snapshot, which takes the seed. Rev 2 keeps the key while another wallet of the space still uses the reference, so that wallet does not stop the space from unlocking |
+| SYNC-02 — a key conflict keeps one secret and machines diverge                                             | Rev 2: every reference holds a sorted set of variants; each wallet signs with the variant that matches its curve, fingerprint and addresses                                                                                                                                                                                                         |
+| SYNC-03 — a change made just before locking stays local                                                    | Rev 2: a local revision, an outbox sealed on every change and sent without keys, delivery states in the status                                                                                                                                                                                                                                      |
+| SYNC-04 — a copied installation and files iCloud has not downloaded                                        | Rev 2: the device id is bound to the machine and the data folder; evicted files are requested from iCloud                                                                                                                                                                                                                                           |
+| SYNC-05 — ties settled by Go's JSON output                                                                 | Rev 2: canonical encoding (RFC 8785) and a shared merge vector                                                                                                                                                                                                                                                                                      |
+| SYNC-06 — the UI promises more recovery than there is                                                      | Wording fixed in the README and the design; the send screen's unknown-outcome message is rev 2                                                                                                                                                                                                                                                      |
+| SYNC-07 — a key tombstone added to a backup file deletes the key everywhere                                | Rev 2 (owner, 2026-10-27): key tombstones move inside the vault; a plaintext one in `space.json` or a backup file counts for nothing                                                                                                                                                                                                                |
+| SYNC-08 — adding another local space's phrase merges the two spaces                                        | Rev 2 (owner, 2026-10-27): such a phrase is refused                                                                                                                                                                                                                                                                                                 |
+| SYNC-09 — a password change racing a sync pass loses a key; the old password still opens `space.json.prev` | Fixed in revision 1: the change starts over when the vault moved under it (409 after three tries); `.prev` is resealed under the new password                                                                                                                                                                                                       |
+
+### Limits retained in rev 2
+
+- **Clocks decide merges.** A machine whose clock runs far ahead wins every
+  concurrent edit. It is reported (`future_records`) but not prevented.
+- **Duplicates are kept.** Two machines that create the same wallet before
+  syncing produce two entries for one address. Folding them automatically
+  cannot be done consistently (see the merge rules in `docs/device-sync.md`).
+- **An identical clone keeps the writer identity.** A disk or VM clone that
+  preserves both machine ID and data path stays unsupported. The agreed
+  binding handles a different machine or path, not this case. Bundle export
+  avoids copying the installation identity; the documented clone procedure
+  regenerates it before sync is used.
+- **A rolled-back folder is not detected.** Tombstones protect against old
+  snapshots only while some machine holds the newer state. A machine restoring
+  from a rolled-back folder adopts deleted wallets again and lacks keys
+  imported since. Counters in the folder would roll back with it; the limit is
+  documented.
+- **Upload to the cloud is not observed.** Rev 2 knows when a change reached
+  the folder on this disk, not whether the provider uploaded it; the status
+  says "upload unknown" for every provider.
+- **An unsent change has no external copy.** Rev 2 shows it as unsent; until it
+  reaches the folder, the phrase alone cannot bring back a key imported since.
+- **A newer format stops this machine's sending.** An own sync file written by
+  a newer Walletspace (after restoring an older app with its data) is kept
+  untouched; that space's changes from this machine wait until Walletspace is
+  updated. The status says so.
+- **A repeated payment.** Operations are not synced; a transfer whose outcome
+  was unknown on one machine can be repeated from another and pay twice.
+  Documented, not prevented.
+- **The provider sees metadata**: how many spaces and machines, when they
+  write, and roughly how large each space is.
