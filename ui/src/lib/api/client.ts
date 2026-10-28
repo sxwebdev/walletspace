@@ -57,6 +57,8 @@ export const hasToken = token !== ""
 type RequestOptions = {
   method?: string
   body?: unknown
+  // Sent as it is instead of as JSON: an uploaded file that is JSON already.
+  rawBody?: Blob
   headers?: HeadersInit
   signal?: AbortSignal
 }
@@ -85,7 +87,11 @@ async function failure(response: Response): Promise<APIError> {
 
 async function send(path: string, options: RequestOptions = {}) {
   const headers = new Headers(options.headers)
-  if (options.body !== undefined || (options.method && options.method !== "GET")) {
+  if (
+    options.body !== undefined ||
+    options.rawBody !== undefined ||
+    (options.method && options.method !== "GET")
+  ) {
     // The guard requires JSON on every non-GET, bodyless ones included.
     headers.set("Content-Type", "application/json")
   }
@@ -94,7 +100,9 @@ async function send(path: string, options: RequestOptions = {}) {
     method: options.method ?? "GET",
     headers,
     signal: options.signal,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body:
+      options.rawBody ??
+      (options.body === undefined ? undefined : JSON.stringify(options.body)),
   })
   if (!response.ok) throw await failure(response)
   return response

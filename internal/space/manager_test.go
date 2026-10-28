@@ -362,7 +362,7 @@ func TestImportNetworksBindsTheKeyOnceAcrossNetworks(t *testing.T) {
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -402,7 +402,7 @@ func TestImportedKeyPersistsAndDeduplicates(t *testing.T) {
 
 	home := t.TempDir()
 	manager := newManager(t, home)
-	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -789,7 +789,7 @@ func TestDeleteImportedAccountRemovesItsKey(t *testing.T) {
 	t.Parallel()
 
 	manager := newManager(t, t.TempDir())
-	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -864,7 +864,7 @@ func TestFailedDeleteKeepsTheKeyInTheSession(t *testing.T) {
 
 	home := t.TempDir()
 	manager := newManager(t, home)
-	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	result, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -889,5 +889,25 @@ func TestFailedDeleteKeepsTheKeyInTheSession(t *testing.T) {
 	)
 	if err != nil || exported != privateKey {
 		t.Fatalf("after a failed delete ExportPrivateKey() = %q, %v; want the key still there", exported, err)
+	}
+
+	// Nor does the session keep the key tombstone of the delete that failed:
+	// the next write of the vault would carry it, and sync would delete the
+	// key everywhere.
+	if err := os.Remove(spacePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(spacePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Import(result.Space.ID, "ethereum-mainnet", account.FamilyEVM, "", bundleImportedKey); err != nil {
+		t.Fatal(err)
+	}
+	keys, deleted, err := space.VaultContents(home, result.Space.ID, "test-vault-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 0 || keys[imported.Account.KeyRef] != 1 {
+		t.Fatalf("vault keys %v, key tombstones %v after a failed delete; want the key and no tombstone", keys, deleted)
 	}
 }

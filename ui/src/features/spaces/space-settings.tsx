@@ -7,6 +7,7 @@ import {
   KeyRoundIcon,
   LockIcon,
   PencilIcon,
+  ShieldPlusIcon,
   TriangleAlertIcon,
 } from "lucide-react"
 
@@ -25,10 +26,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { queryKeys, setSpaceLocked, useSession } from "@/features/session/session"
 import { errorMessage } from "@/lib/api/client"
@@ -36,7 +39,7 @@ import { spacesApi } from "@/lib/api/spaces"
 import type { Space } from "@/lib/api/types"
 import { formatDateTime } from "@/lib/format"
 
-type Action = "rename" | "password" | "phrase" | "backup" | null
+type Action = "rename" | "password" | "phrase" | "add-phrase" | "backup" | null
 
 export function SpaceSettings() {
   const { space, settings } = useSession()
@@ -52,7 +55,14 @@ export function SpaceSettings() {
   const items = [
     { key: "rename" as const, icon: PencilIcon, title: "Rename", description: space.name },
     { key: "password" as const, icon: KeyRoundIcon, title: "Change password", description: "Addresses and the phrase stay the same" },
-    { key: "phrase" as const, icon: FileKeyIcon, title: "Show recovery phrase", description: "Requires the password" },
+    space.has_phrase
+      ? { key: "phrase" as const, icon: FileKeyIcon, title: "Show recovery phrase", description: "Requires the password" }
+      : {
+          key: "add-phrase" as const,
+          icon: ShieldPlusIcon,
+          title: "Create a recovery phrase",
+          description: "This space has none: it cannot be restored or synced",
+        },
     { key: "backup" as const, icon: DownloadIcon, title: "Download encrypted backup", description: "The vault file, as stored" },
   ]
 
@@ -100,6 +110,9 @@ export function SpaceSettings() {
       </ActionDialog>
       <ActionDialog open={action === "phrase"} onClose={close} wide>
         <PhraseBody space={space} />
+      </ActionDialog>
+      <ActionDialog open={action === "add-phrase"} onClose={close} wide>
+        <AddPhraseBody space={space} />
       </ActionDialog>
       <ActionDialog open={action === "backup"} onClose={close}>
         <BackupBody space={space} onClose={close} />
@@ -254,6 +267,100 @@ function PhraseBody({ space }: Pick<BodyProps, "space">) {
             </DialogFooter>
           </form>
         )}
+    </>
+  )
+}
+
+// A space created without a phrase gets one. Nothing in it derives from the
+// phrase, but the phrase is what restores the space — imported keys included —
+// on another computer.
+function AddPhraseBody({ space }: Pick<BodyProps, "space">) {
+  const queryClient = useQueryClient()
+  const [password, setPassword] = React.useState("")
+  // A space copied to several computers before it had a phrase must get the
+  // same phrase on all of them, or each copy syncs on its own.
+  const [fromOther, setFromOther] = React.useState(false)
+  const [existing, setExisting] = React.useState("")
+  const add = useMutation({
+    mutationFn: () => spacesApi.addRecoveryPhrase(space.id, password, fromOther ? existing.trim() : ""),
+    onSettled: () => {
+      setPassword("")
+      setExisting("")
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.spaces }),
+  })
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Create a recovery phrase</DialogTitle>
+        <DialogDescription>
+          This space was made without a phrase, so its keys live only on this computer. With a phrase, the space comes
+          back whole from three things together: the phrase, its BIP39 passphrase if it has one, and a current copy of
+          the space in the sync folder. The phrase alone does not bring back imported keys.
+        </DialogDescription>
+      </DialogHeader>
+      {add.data ? (
+        <div className="flex flex-col gap-4">
+          <Alert>
+            <TriangleAlertIcon />
+            <AlertDescription>
+              Write these words down now and keep them offline. Anyone who reads them controls this space.
+            </AlertDescription>
+          </Alert>
+          <SecretReveal value={add.data.mnemonic} label="Recovery phrase" words />
+        </div>
+      ) : (
+        <form className="flex flex-col gap-5" autoComplete="off" onSubmit={(e) => (e.preventDefault(), add.mutate())}>
+          <FieldGroup>
+            <Field orientation="horizontal">
+              <Switch id="add-phrase-other" checked={fromOther} onCheckedChange={setFromOther} />
+              <FieldLabel htmlFor="add-phrase-other" className="font-normal">
+                This space already got a phrase on another computer
+              </FieldLabel>
+            </Field>
+            {fromOther ? (
+              <Field>
+                <FieldLabel htmlFor="add-phrase-existing">That phrase</FieldLabel>
+                <Textarea
+                  id="add-phrase-existing"
+                  rows={3}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  className="font-mono"
+                  value={existing}
+                  onChange={(e) => setExisting(e.target.value)}
+                  required
+                />
+                <FieldDescription>
+                  The copies of this space then sync with each other. A new phrase here would make this copy sync on
+                  its own.
+                </FieldDescription>
+              </Field>
+            ) : (
+              <FieldDescription>
+                If this space is on other computers too, create the phrase on one of them and enter it on the others.
+              </FieldDescription>
+            )}
+            <Field>
+              <FieldLabel htmlFor="add-phrase-password">Space password</FieldLabel>
+              <PasswordInput
+                id="add-phrase-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoFocus
+              />
+            </Field>
+            <FormError message={add.isError ? errorMessage(add.error) : null} />
+          </FieldGroup>
+          <DialogFooter>
+            <Button type="submit" disabled={!password || (fromOther && !existing.trim()) || add.isPending}>
+              {add.isPending ? <Spinner data-icon="inline-start" /> : <ShieldPlusIcon data-icon="inline-start" />}
+              {fromOther ? "Use this phrase" : "Create the phrase"}
+            </Button>
+          </DialogFooter>
+        </form>
+      )}
     </>
   )
 }

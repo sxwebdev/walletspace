@@ -2,11 +2,10 @@
 package space
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/sxwebdev/walletspace/internal/account"
 	"github.com/sxwebdev/walletspace/internal/chain"
+	"github.com/sxwebdev/walletspace/internal/devicesync"
 	"github.com/sxwebdev/walletspace/internal/storage"
 	"github.com/sxwebdev/walletspace/internal/vault"
 )
@@ -40,6 +40,8 @@ var (
 	ErrLocked           = errors.New("space is locked")
 	ErrDuplicateKey     = errors.New("private key is already imported")
 	ErrNoSeed           = errors.New("space does not have a mnemonic")
+	ErrHasSeed          = errors.New("space already has a recovery phrase")
+	ErrSpaceChanged     = errors.New("the space changed while the password was being checked; try again")
 	ErrAccountNotFound  = errors.New("account not found")
 	ErrNetworkBinding   = errors.New("account is not available for this network")
 	ErrFirstSpaceExists = errors.New("the first space was already created")
@@ -58,40 +60,98 @@ type KeyEntry struct {
 	ImportedAt time.Time `json:"imported_at"`
 }
 
+// KeyVariants are the keys a reference holds. It is one key unless machines
+// that sync the space disagreed about the reference; each wallet uses the
+// variant that makes its address (see keyFor). Kept sorted by
+// devicesync.VariantID, one entry per variant.
+type KeyVariants []KeyEntry
+
+// UnmarshalJSON reads a list, or the single key a vault written before key
+// variants holds under each reference. The key's bytes, its reference and the
+// wallets on it stay as they were.
+func (v *KeyVariants) UnmarshalJSON(data []byte) error {
+	if trimmed := bytes.TrimLeft(data, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '{' {
+		var single KeyEntry
+		if err := json.Unmarshal(data, &single); err != nil {
+			clear(single.PrivateKey)
+			return err
+		}
+		*v = KeyVariants{single}
+		return nil
+	}
+	var list []KeyEntry
+	if err := json.Unmarshal(data, &list); err != nil {
+		for _, entry := range list {
+			clear(entry.PrivateKey)
+		}
+		return err
+	}
+	*v = list
+	return nil
+}
+
 type Payload struct {
-	Version         int                 `json:"version"`
-	Mnemonic        []byte              `json:"mnemonic,omitempty"`
-	BIP39Passphrase []byte              `json:"bip39_passphrase,omitempty"`
-	ImportedKeys    map[string]KeyEntry `json:"imported_keys"`
-	CreatedAt       time.Time           `json:"created_at"`
+	Version         int                    `json:"version"`
+	Mnemonic        []byte                 `json:"mnemonic,omitempty"`
+	BIP39Passphrase []byte                 `json:"bip39_passphrase,omitempty"`
+	ImportedKeys    map[string]KeyVariants `json:"imported_keys"`
+	// DeletedKeys are the tombstones of deleted key references. They live in
+	// the vault, under the password, because a key tombstone deletes a secret
+	// on every machine: one planted in a plaintext file — a bundle changed in
+	// transit — must not be able to do that.
+	DeletedKeys []devicesync.Tombstone `json:"deleted_keys,omitempty"`
+	CreatedAt   time.Time              `json:"created_at"`
 }
 
 type File struct {
-	SchemaVersion int               `json:"schema_version"`
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	SchemaVersion int       `json:"schema_version"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	// NameUpdatedAt is when the name was last set. Sync settles two renames
+	// by it; UpdatedAt moves on every change and cannot.
+	NameUpdatedAt time.Time         `json:"name_updated_at,omitzero"`
 	Accounts      []account.Account `json:"accounts"`
 	Vault         vault.Container   `json:"vault"`
+	// Tombstones of deleted wallets, kept for good so that a deletion reaches
+	// every machine the space syncs to and an old snapshot read later cannot
+	// bring the record back. Ids are never reused.
+	//
+	// Key tombstones are not here: they live in the vault (Payload.DeletedKeys).
+	// A "deleted_keys" list an unreleased build left in space.json is not read
+	// at all — in plaintext, anything that can write the file could have put
+	// it there — and goes at the next write of the file.
+	DeletedAccounts []devicesync.Tombstone `json:"deleted_accounts,omitempty"`
+	// LocalRevision counts the changes made to the space here, a merge's
+	// included; it is raised in the same write as the change. It is this
+	// machine's bookkeeping of what has reached the sync folder (see sync.go)
+	// and never decides a merge. A file from before it reads as 0.
+	LocalRevision uint64 `json:"local_revision,omitempty"`
 }
 
 type Summary struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Locked       bool      `json:"locked"`
-	Seeded       bool      `json:"seeded"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Locked bool   `json:"locked"`
+	Seeded bool   `json:"seeded"`
+	// HasPhrase says whether the vault holds a recovery phrase. Only an open
+	// session can tell, so a locked space always reports false.
+	HasPhrase    bool      `json:"has_phrase"`
 	AccountCount int       `json:"account_count"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// CreateRequest describes a new space. Every new space has a recovery phrase:
+// the given one, or a generated one. A space kept for imported keys simply
+// derives no wallets from it — the phrase is still what restores the space,
+// keys included, on another machine.
 type CreateRequest struct {
 	Name            string
 	Mnemonic        string
 	BIP39Passphrase string
 	Password        string
-	ImportedOnly    bool
 	ExpectEmpty     bool
 }
 
@@ -100,6 +160,9 @@ type CreateResult struct {
 	Accounts          []account.Account
 	Mnemonic          string
 	MnemonicGenerated bool
+	// Sync is what the space's first sync found, or nil when sync is off or
+	// the space has no phrase.
+	Sync *FirstSync
 }
 
 type ImportResult struct {
@@ -116,6 +179,9 @@ type session struct {
 	payload  Payload
 	key      *vault.SessionKey
 	lastUsed time.Time
+	// syncKeys are derived from the seed when the session opens and cleared
+	// with it; a space without a phrase has none and does not sync.
+	syncKeys *devicesync.Keys
 	// sendGrant is when the password last entered to authorise spending stops
 	// counting. It lives on the session rather than beside it so that anything
 	// that ends the session takes the grant with it: locking the space by hand,
@@ -153,6 +219,29 @@ type Manager struct {
 	// naming one cannot add a permanent entry to spaceLocks.
 	unknownSpaceLock sync.Mutex
 	kdfSlots         chan struct{}
+
+	// syncMu guards the sync wiring and what it reports. It may be taken while
+	// holding mu, never the other way round. syncRun keeps passes from
+	// overlapping. See sync.go.
+	syncMu     sync.Mutex
+	sync       *syncer
+	syncStatus map[string]SyncStatus
+	// sendErrors is why the last send of a space failed, by space id.
+	sendErrors map[string]string
+	// downloadFailures counts download requests that failed in a row, by
+	// space id and device tag.
+	downloadFailures map[string]int
+	// mergeFirst holds the spaces whose file in the folder was left alone to
+	// be merged first, and why (see deliver).
+	mergeFirst map[string]string
+	// syncUnavailable says why sync is turned on but not running.
+	syncUnavailable string
+	syncRun         sync.Mutex
+	// syncTimeout bounds one pass over one space (syncRunTimeout), and
+	// downloadTimeout one download request (downloadRequestTimeout); both
+	// are shorter in tests.
+	syncTimeout     time.Duration
+	downloadTimeout time.Duration
 }
 
 func NewManager(home string, autoLock time.Duration, params vault.Params) (*Manager, error) {
@@ -166,7 +255,10 @@ func NewManager(home string, autoLock time.Duration, params vault.Params) (*Mana
 		home: home, params: params, autoLock: autoLock, now: func() time.Time { return time.Now().UTC() },
 		files: make(map[string]File), sessions: make(map[string]*session),
 		stop: make(chan struct{}), done: make(chan struct{}), reset: make(chan struct{}, 1),
-		kdfSlots: newKDFSlots(),
+		kdfSlots:   newKDFSlots(),
+		syncStatus: make(map[string]SyncStatus), sendErrors: make(map[string]string), mergeFirst: make(map[string]string),
+		downloadFailures: make(map[string]int), syncTimeout: syncRunTimeout,
+		downloadTimeout: downloadRequestTimeout,
 		// On until told otherwise. A manager built without settings is one in a
 		// test or an early start-up, and the safe reading of "not configured
 		// yet" is the one that asks.
@@ -180,6 +272,11 @@ func NewManager(home string, autoLock time.Duration, params vault.Params) (*Mana
 }
 
 func (m *Manager) Close() {
+	// What the spaces prepared and did not send yet goes to the folder now if
+	// the folder answers at once; the outbox keeps it for the next start if
+	// it does not.
+	m.flushSync(syncFlushWait)
+	m.SetSync(nil, "", nil)
 	select {
 	case <-m.stop:
 	default:
@@ -258,6 +355,11 @@ func validateFile(file File, directoryID string) error {
 		}
 		seen[item.ID] = struct{}{}
 	}
+	for _, tomb := range file.DeletedAccounts {
+		if !storage.ValidID(tomb.ID, "acc_") {
+			return fmt.Errorf("space %s has invalid deleted wallet id %q", file.ID, tomb.ID)
+		}
+	}
 	return nil
 }
 
@@ -282,6 +384,10 @@ func (m *Manager) Get(id string) (Summary, []account.Account, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.expireLocked()
+	return m.getLocked(id)
+}
+
+func (m *Manager) getLocked(id string) (Summary, []account.Account, error) {
 	file, ok := m.files[id]
 	if !ok {
 		return Summary{}, nil, fmt.Errorf("%w: %s", ErrNotFound, id)
@@ -293,17 +399,18 @@ func (m *Manager) Create(req CreateRequest) (CreateResult, error) {
 	if err := validateNewPassword(req.Password); err != nil {
 		return CreateResult{}, err
 	}
-	name := strings.TrimSpace(req.Name)
+	name, nameSetAt := strings.TrimSpace(req.Name), m.now()
+	if err := validateName(name); err != nil {
+		return CreateResult{}, err
+	}
 	if name == "" {
-		name = "default"
+		// A default name has no time of its own, so that a space restored on
+		// another machine takes the name its other machines gave it.
+		name, nameSetAt = defaultName, time.Time{}
 	}
 	mnemonic := account.NormalizeMnemonic(req.Mnemonic)
 	generated := false
-	if req.ImportedOnly {
-		if mnemonic != "" {
-			return CreateResult{}, errors.New("imported-only space cannot have a mnemonic")
-		}
-	} else if mnemonic == "" {
+	if mnemonic == "" {
 		var err error
 		mnemonic, err = account.GenerateMnemonic()
 		if err != nil {
@@ -321,7 +428,7 @@ func (m *Manager) Create(req CreateRequest) (CreateResult, error) {
 	}
 	payload := Payload{
 		Version: 1, Mnemonic: []byte(mnemonic), BIP39Passphrase: []byte(req.BIP39Passphrase),
-		ImportedKeys: make(map[string]KeyEntry), CreatedAt: now,
+		ImportedKeys: make(map[string]KeyVariants), CreatedAt: now,
 	}
 	// Checked before the two derivations rather than after, so a caller that has
 	// already hit the ceiling cannot spend 128 MiB of Argon2 per request finding
@@ -330,7 +437,7 @@ func (m *Manager) Create(req CreateRequest) (CreateResult, error) {
 		clearPayload(&payload)
 		return CreateResult{}, err
 	}
-	file := File{SchemaVersion: SchemaVersion, ID: id, Name: name, CreatedAt: now, UpdatedAt: now}
+	file := File{SchemaVersion: SchemaVersion, ID: id, Name: name, CreatedAt: now, UpdatedAt: now, NameUpdatedAt: nameSetAt}
 	releaseKDF := m.acquireKDF()
 	container, err := vault.SealJSON(req.Password, payload, aad(id), m.params)
 	releaseKDF()
@@ -359,17 +466,27 @@ func (m *Manager) Create(req CreateRequest) (CreateResult, error) {
 		clearPayload(&payload)
 		return CreateResult{}, ErrFirstSpaceExists
 	}
-	if err := m.saveLocked(file); err != nil {
+	if err := m.saveLocked(&file); err != nil {
 		sessionKey.Clear()
 		clearPayload(&payload)
 		return CreateResult{}, err
 	}
 	m.files[id] = file
-	m.sessions[id] = &session{payload: payload, key: sessionKey, lastUsed: now}
-	return CreateResult{
+	m.sessions[id] = newSession(payload, sessionKey, now)
+	m.rememberSpaceTagLocked(id)
+	result := CreateResult{
 		Space: m.summaryLocked(file), Accounts: cloneAccounts(file.Accounts),
 		Mnemonic: mnemonic, MnemonicGenerated: generated,
-	}, nil
+	}
+	m.mu.Unlock()
+	// A space restored from its phrase finds what its other machines wrote.
+	result.Sync = m.syncAfterUnlock(id)
+	m.mu.Lock()
+	if _, accounts, err := m.getLocked(id); err == nil {
+		result.Accounts = accounts
+		result.Space = m.summaryLocked(m.files[id])
+	}
+	return result, nil
 }
 
 // ImportLegacy verifies every legacy Tron address and publishes one complete
@@ -383,9 +500,9 @@ func (m *Manager) ImportLegacy(req CreateRequest, legacy []LegacyAccount) (Creat
 	if err != nil {
 		return CreateResult{}, err
 	}
-	name := strings.TrimSpace(req.Name)
+	name, nameSetAt := strings.TrimSpace(req.Name), m.now()
 	if name == "" {
-		name = "default"
+		name, nameSetAt = defaultName, time.Time{}
 	}
 	now := m.now()
 	id, err := newID("spc_")
@@ -394,10 +511,10 @@ func (m *Manager) ImportLegacy(req CreateRequest, legacy []LegacyAccount) (Creat
 	}
 	payload := Payload{
 		Version: 1, Mnemonic: []byte(mnemonic), BIP39Passphrase: []byte(req.BIP39Passphrase),
-		ImportedKeys: make(map[string]KeyEntry), CreatedAt: now,
+		ImportedKeys: make(map[string]KeyVariants), CreatedAt: now,
 	}
 	file := File{
-		SchemaVersion: SchemaVersion, ID: id, Name: name, CreatedAt: now, UpdatedAt: now,
+		SchemaVersion: SchemaVersion, ID: id, Name: name, CreatedAt: now, UpdatedAt: now, NameUpdatedAt: nameSetAt,
 		Accounts: make([]account.Account, 0, len(legacy)),
 	}
 	for _, old := range legacy {
@@ -427,13 +544,14 @@ func (m *Manager) ImportLegacy(req CreateRequest, legacy []LegacyAccount) (Creat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.saveLocked(file); err != nil {
+	if err := m.saveLocked(&file); err != nil {
 		sessionKey.Clear()
 		clearPayload(&payload)
 		return CreateResult{}, err
 	}
 	m.files[id] = file
-	m.sessions[id] = &session{payload: payload, key: sessionKey, lastUsed: now}
+	m.sessions[id] = newSession(payload, sessionKey, now)
+	m.rememberSpaceTagLocked(id)
 	return CreateResult{
 		Space: m.summaryLocked(file), Accounts: cloneAccounts(file.Accounts),
 	}, nil
@@ -485,17 +603,32 @@ func validateLegacy(
 // attempts on the same space in order, and it is also what stops a password
 // change from replacing the container midway through this derivation.
 func (m *Manager) Unlock(id, password string) error {
+	_, err := m.UnlockAndSync(id, password)
+	return err
+}
+
+// UnlockAndSync is Unlock, and reports what the space's first sync found
+// (nil when sync is off or the space has no phrase).
+func (m *Manager) UnlockAndSync(id, password string) (*FirstSync, error) {
 	unlockSpace := m.lockSpace(id)
 	defer unlockSpace()
+	// A space that is already open can be resealed by a sync pass while this
+	// derives; see retryWhileStale.
+	if err := retryWhileStale(func() (bool, error) { return m.unlockOnce(id, password) }); err != nil {
+		return nil, err
+	}
+	return m.syncAfterUnlock(id), nil
+}
 
+func (m *Manager) unlockOnce(id, password string) (stale bool, err error) {
 	m.mu.RLock()
 	file, ok := m.files[id]
 	m.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrNotFound, id)
+		return false, fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 	if err := m.checkUnlockCooldown(id); err != nil {
-		return err
+		return false, err
 	}
 
 	releaseKDF := m.acquireKDF()
@@ -506,21 +639,30 @@ func (m *Manager) Unlock(id, password string) error {
 		if errors.Is(err, vault.ErrInvalidPassword) {
 			m.recordUnlockFailure(id)
 		}
-		return err
+		return false, err
 	}
 	if err := verifyPayload(file, payload); err != nil {
 		sessionKey.Clear()
 		clearPayload(&payload)
-		return err
+		return false, err
 	}
 	normalizePayload(&payload)
 	m.clearUnlockFailures(id)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if current, ok := m.files[id]; !ok || current.Vault != file.Vault {
+		sessionKey.Clear()
+		clearPayload(&payload)
+		if !ok {
+			return false, fmt.Errorf("%w: %s", ErrNotFound, id)
+		}
+		return true, nil
+	}
 	m.clearSessionLocked(id)
-	m.sessions[id] = &session{payload: payload, key: sessionKey, lastUsed: m.now()}
-	return nil
+	m.sessions[id] = newSession(payload, sessionKey, m.now())
+	m.rememberSpaceTagLocked(id)
+	return false, nil
 }
 
 func (m *Manager) Lock(id string) error {
@@ -538,6 +680,9 @@ func (m *Manager) Rename(id, name string) (Summary, error) {
 	if name == "" {
 		return Summary{}, errors.New("space name is required")
 	}
+	if err := validateName(name); err != nil {
+		return Summary{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	file, ok := m.files[id]
@@ -546,11 +691,25 @@ func (m *Manager) Rename(id, name string) (Summary, error) {
 	}
 	file.Name = name
 	file.UpdatedAt = m.now()
-	if err := m.saveLocked(file); err != nil {
+	file.NameUpdatedAt = file.UpdatedAt
+	if err := m.saveLocked(&file); err != nil {
 		return Summary{}, err
 	}
 	m.files[id] = file
 	return m.summaryLocked(file), nil
+}
+
+// defaultName is what a space is called when it is given no name. It carries
+// no time of its own (see snapshotOf).
+const defaultName = "default"
+
+// validateName bounds a space name by what a sync snapshot carries, so that a
+// name accepted here can always be synced.
+func validateName(name string) error {
+	if utf8.RuneCountInString(name) > devicesync.MaxNameRunes {
+		return fmt.Errorf("space name is invalid: longer than %d characters", devicesync.MaxNameRunes)
+	}
+	return nil
 }
 
 // ChangePassword re-encrypts the vault under a new password.
@@ -566,30 +725,62 @@ func (m *Manager) ChangePassword(id, currentPassword, newPassword string) error 
 	}
 	unlockSpace := m.lockSpace(id)
 	defer unlockSpace()
+	return retryWhileStale(func() (bool, error) {
+		return m.changePasswordOnce(id, currentPassword, newPassword)
+	})
+}
 
+// staleAttempts bounds how often a password check starts over because a sync
+// pass rewrote the vault while it was deriving. A pass runs at most every few
+// hundred milliseconds per change; a few attempts is plenty.
+const staleAttempts = 3
+
+// retryWhileStale runs attempt until it reports a vault that did not change
+// under it.
+//
+// Unlock and ChangePassword read the vault, spend seconds of Argon2 outside
+// the manager's lock, and then build a session or a new container from what
+// they read. The per-space lock keeps other password paths out, but not a
+// sync pass: it reseals the vault with adopted keys under the session key,
+// without that lock. Writing back what was read would drop those keys while
+// space.json keeps their wallets — the space would no longer unlock. So the
+// attempt checks under the lock that the vault is still the one it read, and
+// starts over if it is not.
+func retryWhileStale(attempt func() (stale bool, err error)) error {
+	for range staleAttempts {
+		stale, err := attempt()
+		if err != nil || !stale {
+			return err
+		}
+	}
+	return ErrSpaceChanged
+}
+
+func (m *Manager) changePasswordOnce(id, currentPassword, newPassword string) (stale bool, err error) {
 	m.mu.RLock()
 	file, ok := m.files[id]
 	m.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrNotFound, id)
+		return false, fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
+	read := file.Vault
 	if err := m.checkUnlockCooldown(id); err != nil {
-		return err
+		return false, err
 	}
 
 	releaseKDF := m.acquireKDF()
 	var payload Payload
-	err := vault.OpenJSON(currentPassword, file.Vault, aad(id), &payload)
+	err = vault.OpenJSON(currentPassword, file.Vault, aad(id), &payload)
 	releaseKDF()
 	if err != nil {
 		if errors.Is(err, vault.ErrInvalidPassword) {
 			m.recordUnlockFailure(id)
 		}
-		return err
+		return false, err
 	}
 	defer clearPayload(&payload)
 	if err := verifyPayload(file, payload); err != nil {
-		return err
+		return false, err
 	}
 	normalizePayload(&payload)
 	m.clearUnlockFailures(id)
@@ -598,7 +789,7 @@ func (m *Manager) ChangePassword(id, currentPassword, newPassword string) error 
 	container, err := vault.SealJSON(newPassword, payload, aad(id), m.params)
 	releaseKDF()
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// An open session has to keep working under the new password, which means a
@@ -617,9 +808,10 @@ func (m *Manager) ChangePassword(id, currentPassword, newPassword string) error 
 		releaseKDF()
 		if err != nil {
 			clearPayload(&refreshed)
-			return err
+			return false, err
 		}
 	}
+	previous := m.resealPrevious(id, currentPassword, newPassword)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -627,16 +819,29 @@ func (m *Manager) ChangePassword(id, currentPassword, newPassword string) error 
 	if !ok {
 		sessionKey.Clear()
 		clearPayload(&refreshed)
-		return fmt.Errorf("%w: %s", ErrNotFound, id)
+		return false, fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	if file.Vault != read {
+		// A sync pass changed the vault since it was read; see retryWhileStale.
+		sessionKey.Clear()
+		clearPayload(&refreshed)
+		return true, nil
 	}
 	file.Vault = container
 	file.UpdatedAt = m.now()
-	if err := m.saveLocked(file); err != nil {
+	// The same wallets, keys and phrase under another password: nothing sync
+	// carries changed, so the revision stays and nothing is sent.
+	if err := m.storeFileLocked(file); err != nil {
 		sessionKey.Clear()
 		clearPayload(&refreshed)
-		return err
+		return false, err
 	}
 	m.files[id] = file
+	// The space is saved under the new password; a copy that failed to follow
+	// is left as it was rather than failing a change that has happened.
+	if previous != nil {
+		_ = storage.AtomicWrite(m.previousPath(id), previous)
+	}
 	// The session is replaced rather than refreshed in place. Swapping the key
 	// and the payload left everything else on it standing, including a spending
 	// grant opened under the password that was just replaced — so changing the
@@ -646,12 +851,12 @@ func (m *Manager) ChangePassword(id, currentPassword, newPassword string) error 
 	// same on purpose.
 	if active := m.sessions[id]; active != nil && sessionKey != nil {
 		m.clearSessionLocked(id)
-		m.sessions[id] = &session{payload: refreshed, key: sessionKey, lastUsed: m.now()}
+		m.sessions[id] = newSession(refreshed, sessionKey, m.now())
 	} else {
 		sessionKey.Clear()
 		clearPayload(&refreshed)
 	}
-	return nil
+	return false, nil
 }
 
 // commonPasswords are the ones that turn up first in every cracking wordlist.
@@ -777,11 +982,11 @@ func (m *Manager) DeriveNetworks(
 		}
 		item.UpdatedAt = m.now()
 		file.UpdatedAt = item.UpdatedAt
-		if err := m.saveLocked(file); err != nil {
+		if err := m.saveLocked(&file); err != nil {
 			return account.Account{}, err
 		}
 		m.files[id] = file
-		return cloneAccount(*item), nil
+		return item.Clone(), nil
 	}
 	address, err := account.DerivedAddress(
 		string(payload.Mnemonic), string(payload.BIP39Passphrase), family, next,
@@ -806,11 +1011,11 @@ func (m *Manager) DeriveNetworks(
 	}
 	file.Accounts = append(file.Accounts, created)
 	file.UpdatedAt = now
-	if err := m.saveLocked(file); err != nil {
+	if err := m.saveLocked(&file); err != nil {
 		return account.Account{}, err
 	}
 	m.files[id] = file
-	return cloneAccount(created), nil
+	return created.Clone(), nil
 }
 
 func (m *Manager) Import(
@@ -862,11 +1067,11 @@ func (m *Manager) ImportNetworks(
 			}
 			item.UpdatedAt = m.now()
 			file.UpdatedAt = item.UpdatedAt
-			if err := m.saveLocked(file); err != nil {
+			if err := m.saveLocked(&file); err != nil {
 				return ImportResult{}, err
 			}
 			m.files[id] = file
-			return ImportResult{Account: cloneAccount(*item)}, nil
+			return ImportResult{Account: item.Clone()}, nil
 		}
 	}
 	if err := accountQuotaLocked(file); err != nil {
@@ -888,9 +1093,9 @@ func (m *Manager) ImportNetworks(
 		KeyRef: keyRef, Fingerprint: fingerprint, ImportedAt: &importedAt,
 		CreatedAt: now, UpdatedAt: now,
 	}
-	payload.ImportedKeys[keyRef] = KeyEntry{
+	payload.ImportedKeys[keyRef] = KeyVariants{{
 		Curve: string(curve), PrivateKey: append([]byte(nil), raw...), ImportedAt: now,
-	}
+	}}
 	file.Accounts = append(file.Accounts, created)
 	file.UpdatedAt = now
 	if err := m.resealAndSaveLocked(&file, payload, id); err != nil {
@@ -898,7 +1103,7 @@ func (m *Manager) ImportNetworks(
 		return ImportResult{}, err
 	}
 	m.files[id] = file
-	return ImportResult{Account: cloneAccount(created)}, nil
+	return ImportResult{Account: created.Clone()}, nil
 }
 
 // ExportPrivateKey hands over permanent control of one account, so it asks for
@@ -1254,11 +1459,11 @@ func (m *Manager) BindNetwork(
 		item.NetworkIDs = appendNetwork(item.NetworkIDs, networkID)
 		item.UpdatedAt = m.now()
 		file.UpdatedAt = item.UpdatedAt
-		if err := m.saveLocked(file); err != nil {
+		if err := m.saveLocked(&file); err != nil {
 			return account.Account{}, err
 		}
 		m.files[id] = file
-		return cloneAccount(*item), nil
+		return item.Clone(), nil
 	}
 	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
 }
@@ -1287,11 +1492,11 @@ func (m *Manager) UnbindNetwork(id, accountID, networkID string) (account.Accoun
 		item.NetworkIDs = slices.DeleteFunc(item.NetworkIDs, func(id string) bool { return id == networkID })
 		item.UpdatedAt = m.now()
 		file.UpdatedAt = item.UpdatedAt
-		if err := m.saveLocked(file); err != nil {
+		if err := m.saveLocked(&file); err != nil {
 			return account.Account{}, err
 		}
 		m.files[id] = file
-		return cloneAccount(*item), nil
+		return item.Clone(), nil
 	}
 	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
 }
@@ -1311,20 +1516,27 @@ func (m *Manager) RenameAccount(id, accountID, label string) (account.Account, e
 		file.Accounts[i].Label = strings.TrimSpace(label)
 		file.Accounts[i].UpdatedAt = m.now()
 		file.UpdatedAt = m.now()
-		if err := m.saveLocked(file); err != nil {
+		if err := m.saveLocked(&file); err != nil {
 			return account.Account{}, err
 		}
 		m.files[id] = file
-		return cloneAccount(file.Accounts[i]), nil
+		return file.Accounts[i].Clone(), nil
 	}
 	return account.Account{}, fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
 }
 
 // DeleteAccount removes a wallet from the space. For an imported wallet that
-// also takes its private key out of the vault, which nothing can undo, so the
-// space password is asked for again rather than trusting the open session —
-// the same bar as exporting the key. A derived wallet only loses its record:
+// also takes its private key out of the vault — every variant of its
+// reference — and leaves a key tombstone in the vault, so that the key goes on
+// every machine the space syncs to. Nothing can undo that, so the space
+// password is asked for again rather than trusting the open session — the
+// same bar as exporting the key. A derived wallet only loses its record:
 // deriving again on the same network hands back the same lowest free index.
+//
+// Walletspace gives every import a reference of its own, so a key belongs to
+// one wallet. Two wallets on one reference can only come from a snapshot this
+// wallet did not write; for that case the key stays while another wallet of
+// the space still uses it, so that the space keeps unlocking.
 func (m *Manager) DeleteAccount(id, accountID, password string) error {
 	unlockSpace := m.lockSpace(id)
 	defer unlockSpace()
@@ -1344,9 +1556,15 @@ func (m *Manager) DeleteAccount(id, accountID, password string) error {
 	removed := file.Accounts[index]
 	file.Accounts = slices.Delete(file.Accounts, index, index+1)
 	file.UpdatedAt = m.now()
+	// Copies, so a failed write leaves the published file's slices as they were.
+	file.DeletedAccounts = append(slices.Clone(file.DeletedAccounts),
+		devicesync.Tombstone{ID: removed.ID, DeletedAt: file.UpdatedAt})
 
-	if removed.Kind != account.KindImported {
-		if err := m.saveLocked(file); err != nil {
+	sharedKey := slices.ContainsFunc(file.Accounts, func(item account.Account) bool {
+		return item.Kind == account.KindImported && item.KeyRef == removed.KeyRef
+	})
+	if removed.Kind != account.KindImported || sharedKey {
+		if err := m.saveLocked(&file); err != nil {
 			return err
 		}
 		m.files[id] = file
@@ -1355,15 +1573,21 @@ func (m *Manager) DeleteAccount(id, accountID, password string) error {
 
 	// The key leaves the payload before the vault is resealed, and comes back
 	// if the write fails: the session must keep matching what is on disk.
-	entry, hadKey := payload.ImportedKeys[removed.KeyRef]
+	variants, hadKey := payload.ImportedKeys[removed.KeyRef]
+	deleted := payload.DeletedKeys
 	delete(payload.ImportedKeys, removed.KeyRef)
+	payload.DeletedKeys = append(slices.Clone(deleted),
+		devicesync.Tombstone{ID: removed.KeyRef, DeletedAt: file.UpdatedAt})
 	if err := m.resealAndSaveLocked(&file, payload, id); err != nil {
 		if hadKey {
-			payload.ImportedKeys[removed.KeyRef] = entry
+			payload.ImportedKeys[removed.KeyRef] = variants
 		}
+		payload.DeletedKeys = deleted
 		return err
 	}
-	clear(entry.PrivateKey)
+	for _, entry := range variants {
+		clear(entry.PrivateKey)
+	}
 	m.files[id] = file
 	return nil
 }
@@ -1435,6 +1659,16 @@ func (m *Manager) unlockedLocked(id string) (File, *Payload, error) {
 }
 
 func (m *Manager) resealAndSaveLocked(file *File, payload *Payload, id string) error {
+	if err := m.resealAndSaveQuietLocked(file, payload, id); err != nil {
+		return err
+	}
+	m.markDirty(id)
+	return nil
+}
+
+// resealAndSaveQuietLocked is resealAndSaveLocked for a change sync made
+// itself, which must not ask for another pass.
+func (m *Manager) resealAndSaveQuietLocked(file *File, payload *Payload, id string) error {
 	active := m.sessions[id]
 	if active == nil || active.key == nil {
 		return ErrLocked
@@ -1444,10 +1678,44 @@ func (m *Manager) resealAndSaveLocked(file *File, payload *Payload, id string) e
 		return err
 	}
 	file.Vault = container
-	return m.saveLocked(*file)
+	return m.writeFileLocked(file, payload)
 }
 
-func (m *Manager) saveLocked(file File) error {
+// saveLocked writes a space after a change made here, and asks sync to pass
+// the change on.
+func (m *Manager) saveLocked(file *File) error {
+	var payload *Payload
+	if active := m.sessions[file.ID]; active != nil {
+		payload = &active.payload
+	}
+	if err := m.writeFileLocked(file, payload); err != nil {
+		return err
+	}
+	m.markDirty(file.ID)
+	return nil
+}
+
+// writeFileLocked writes a change to a space: its revision is raised in the
+// same write. With payload — the space is open — the change is then sealed
+// into the outbox for the folder (see prepareOutboxLocked), so that it is
+// ready to send even if the space locks before the next pass.
+func (m *Manager) writeFileLocked(file *File, payload *Payload) error {
+	previous := file.LocalRevision
+	file.LocalRevision = m.files[file.ID].LocalRevision + 1
+	if err := m.storeFileLocked(*file); err != nil {
+		file.LocalRevision = previous
+		return err
+	}
+	if payload != nil {
+		// A phrase given to the space just now (AddRecoveryPhrase) gives it a tag.
+		m.rememberSpaceTagLocked(file.ID)
+		m.prepareOutboxLocked(*file, payload)
+	}
+	return nil
+}
+
+// storeFileLocked writes a space as it is.
+func (m *Manager) storeFileLocked(file File) error {
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode space: %w", err)
@@ -1458,7 +1726,8 @@ func (m *Manager) saveLocked(file File) error {
 }
 
 func (m *Manager) summaryLocked(file File) Summary {
-	_, unlocked := m.sessions[file.ID]
+	active, unlocked := m.sessions[file.ID]
+	hasPhrase := unlocked && len(active.payload.Mnemonic) > 0
 	seeded := false
 	for _, item := range file.Accounts {
 		if item.Kind == account.KindDerived {
@@ -1467,7 +1736,7 @@ func (m *Manager) summaryLocked(file File) Summary {
 		}
 	}
 	return Summary{
-		ID: file.ID, Name: file.Name, Locked: !unlocked, Seeded: seeded,
+		ID: file.ID, Name: file.Name, Locked: !unlocked, Seeded: seeded, HasPhrase: hasPhrase,
 		AccountCount: len(file.Accounts), CreatedAt: file.CreatedAt, UpdatedAt: file.UpdatedAt,
 	}
 }
@@ -1530,72 +1799,161 @@ func (m *Manager) clearSessionLocked(id string) {
 	}
 	clearPayload(&active.payload)
 	active.key.Clear()
+	active.syncKeys.Clear()
 	delete(m.sessions, id)
 }
 
 func clearPayload(payload *Payload) {
 	clear(payload.Mnemonic)
 	clear(payload.BIP39Passphrase)
-	for key, entry := range payload.ImportedKeys {
-		clear(entry.PrivateKey)
-		delete(payload.ImportedKeys, key)
+	clearKeys(payload.ImportedKeys)
+}
+
+// clearKeys wipes every variant of every key and empties the map.
+func clearKeys(keys map[string]KeyVariants) {
+	for ref, variants := range keys {
+		for _, entry := range variants {
+			clear(entry.PrivateKey)
+		}
+		delete(keys, ref)
 	}
 }
 
+// normalizePayload names every key's curve — entries from before ed25519 left
+// it empty, and meant secp256k1 — and keeps each reference's variants as a
+// sorted set, so that one key is one variant here as it is in a snapshot.
+// Nothing is removed but an exact copy of a key, and a reference with no key.
 func normalizePayload(payload *Payload) {
 	if payload.ImportedKeys == nil {
-		payload.ImportedKeys = make(map[string]KeyEntry)
+		payload.ImportedKeys = make(map[string]KeyVariants)
 	}
+	for ref, variants := range payload.ImportedKeys {
+		variants = normalizeVariants(variants)
+		if len(variants) == 0 {
+			delete(payload.ImportedKeys, ref)
+			continue
+		}
+		payload.ImportedKeys[ref] = variants
+	}
+}
+
+func normalizeVariants(variants KeyVariants) KeyVariants {
+	byID := make(map[string]KeyEntry, len(variants))
+	for _, entry := range variants {
+		if entry.Curve == "" {
+			entry.Curve = string(account.CurveSecp256k1)
+		}
+		id := devicesync.VariantID(entry.Curve, entry.PrivateKey)
+		current, ok := byID[id]
+		if !ok {
+			byID[id] = entry
+			continue
+		}
+		if entry.ImportedAt.Before(current.ImportedAt) {
+			current.ImportedAt = entry.ImportedAt
+			byID[id] = current
+		}
+		clear(entry.PrivateKey)
+	}
+	out := make(KeyVariants, 0, len(byID))
+	for _, id := range slices.Sorted(maps.Keys(byID)) {
+		out = append(out, byID[id])
+	}
+	return out
 }
 
 func verifyPayload(file File, payload Payload) error {
 	if payload.Version != 1 {
 		return errors.New("unsupported vault payload")
 	}
+	var seed []byte
+	if len(payload.Mnemonic) > 0 {
+		var err error
+		seed, err = seedOf(payload.Mnemonic, payload.BIP39Passphrase)
+		if err != nil {
+			return err
+		}
+		defer clear(seed)
+	}
 	for _, item := range file.Accounts {
-		switch item.Kind {
-		case account.KindDerived:
-			if item.Index == nil || len(payload.Mnemonic) == 0 {
-				return errors.New("derived account cannot be verified")
-			}
-			if item.Family == "" {
-				// Pre-binding records projected one index into both families.
-				// They remain readable but unavailable to networks until the
-				// user explicitly assigns their original network.
-				addresses, err := account.DerivedAddresses(
-					string(payload.Mnemonic), string(payload.BIP39Passphrase), *item.Index,
-				)
-				if err != nil {
-					return err
-				}
-				if addresses[account.FamilyTron] != item.Addresses[account.FamilyTron] ||
-					addresses[account.FamilyEVM] != item.Addresses[account.FamilyEVM] {
-					return errors.New("derived account address does not match vault")
-				}
-				continue
-			}
-			address, err := account.DerivedAddress(
-				string(payload.Mnemonic), string(payload.BIP39Passphrase), item.Family, *item.Index,
-			)
-			if err != nil {
-				return err
-			}
-			if address != item.Addresses[item.Family] {
-				return errors.New("derived account address does not match vault")
-			}
-		case account.KindImported:
-			entry, ok := payload.ImportedKeys[item.KeyRef]
-			if !ok {
-				return errors.New("imported account key is missing")
-			}
-			if err := verifyImportedKey(item, entry); err != nil {
-				return err
-			}
-		default:
-			return errors.New("unknown account kind")
+		if err := verifyAccount(item, seed, payload.ImportedKeys); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// seedOf is the space's BIP39 seed. Everything that checks several wallets
+// derives it once and hands it on: it is a PBKDF2 of 2048 rounds, and doing it
+// per wallet made checking a large space take seconds.
+var seedOf = func(mnemonic, passphrase []byte) ([]byte, error) {
+	return account.Seed(string(mnemonic), string(passphrase))
+}
+
+// verifyAccount checks one wallet against the secrets it claims to stand for:
+// a derived wallet's address is derived again from the phrase, an imported
+// wallet's reference must hold a key that produces its address. It is what makes a
+// wallet list read from a file — on disk, in a backup, from another machine —
+// something the vault vouches for rather than something it was told.
+//
+// seed is the space's BIP39 seed, or nil for a space without a phrase.
+func verifyAccount(item account.Account, seed []byte, keys map[string]KeyVariants) error {
+	switch item.Kind {
+	case account.KindDerived:
+		if item.Index == nil || len(seed) == 0 {
+			return errors.New("derived account cannot be verified")
+		}
+		if item.Family == "" {
+			// Pre-binding records projected one index into both families.
+			// They remain readable but unavailable to networks until the
+			// user explicitly assigns their original network.
+			addresses, err := account.DerivedAddressesFromSeed(seed, *item.Index)
+			if err != nil {
+				return err
+			}
+			if addresses[account.FamilyTron] != item.Addresses[account.FamilyTron] ||
+				addresses[account.FamilyEVM] != item.Addresses[account.FamilyEVM] {
+				return errors.New("derived account address does not match vault")
+			}
+			return nil
+		}
+		address, err := account.DerivedAddressFromSeed(seed, item.Family, *item.Index)
+		if err != nil {
+			return err
+		}
+		if address != item.Addresses[item.Family] {
+			return errors.New("derived account address does not match vault")
+		}
+	case account.KindImported:
+		if _, err := keyFor(item, keys); err != nil {
+			return err
+		}
+	default:
+		return errors.New("unknown account kind")
+	}
+	return nil
+}
+
+// keyFor is an imported wallet's key: the variant of its reference that passes
+// verifyImportedKey — its curve, its fingerprint and every address it records.
+// A fingerprint alone is not enough, and the first variant is not the key:
+// two machines may have put different keys under one reference, and a wallet
+// signs only with the key of its own address.
+func keyFor(item account.Account, keys map[string]KeyVariants) (KeyEntry, error) {
+	variants := keys[item.KeyRef]
+	if len(variants) == 0 {
+		return KeyEntry{}, errors.New("imported account key is missing")
+	}
+	var err error
+	for _, entry := range variants {
+		if err = verifyImportedKey(item, entry); err == nil {
+			return entry, nil
+		}
+	}
+	if len(variants) > 1 {
+		return KeyEntry{}, fmt.Errorf("none of the %d keys under the wallet's reference is its key: %w", len(variants), err)
+	}
+	return KeyEntry{}, err
 }
 
 func findAccount(items []account.Account, id string) (account.Account, error) {
@@ -1742,9 +2100,10 @@ func verifyImportedKey(item account.Account, entry KeyEntry) error {
 }
 
 // privateKeyFor resolves the account's key for family. A derived account is
-// derived along its family's path; an imported key is used only for a family
-// on its own curve, so an ed25519 key is never offered to Tron or EVM, nor a
-// secp256k1 key to Solana.
+// derived along its family's path; an imported account uses the variant of its
+// reference that is its own key (keyFor), and only for a family on that key's
+// curve, so an ed25519 key is never offered to Tron or EVM, nor a secp256k1
+// key to Solana.
 func privateKeyFor(item account.Account, payload *Payload, family account.Family) (signingKey, error) {
 	curve, err := account.CurveOf(family)
 	if err != nil {
@@ -1782,9 +2141,9 @@ func privateKeyFor(item account.Account, payload *Payload, family account.Family
 			return signingKey{}, fmt.Errorf("%w: %s", account.ErrUnsupportedFamily, family)
 		}
 	case account.KindImported:
-		entry, ok := payload.ImportedKeys[item.KeyRef]
-		if !ok {
-			return signingKey{}, errors.New("imported key is missing from vault")
+		entry, err := keyFor(item, payload.ImportedKeys)
+		if err != nil {
+			return signingKey{}, err
 		}
 		stored, err := entryCurve(entry)
 		if err != nil {
@@ -1898,25 +2257,9 @@ func (s *ed25519Signer) clear() {
 func cloneAccounts(items []account.Account) []account.Account {
 	out := make([]account.Account, len(items))
 	for i := range items {
-		out[i] = cloneAccount(items[i])
+		out[i] = items[i].Clone()
 	}
 	return out
-}
-
-func cloneAccount(item account.Account) account.Account {
-	item.NetworkIDs = append([]string(nil), item.NetworkIDs...)
-	addresses := item.Addresses
-	item.Addresses = make(map[account.Family]string, len(addresses))
-	maps.Copy(item.Addresses, addresses)
-	if item.Index != nil {
-		index := *item.Index
-		item.Index = &index
-	}
-	if item.ImportedAt != nil {
-		importedAt := *item.ImportedAt
-		item.ImportedAt = &importedAt
-	}
-	return item
 }
 
 // networkList is the sorted set of networks a wallet is created on.
@@ -1943,9 +2286,5 @@ func aad(id string) []byte {
 }
 
 func newID(prefix string) (string, error) {
-	raw := make([]byte, 12)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generate id: %w", err)
-	}
-	return prefix + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)), nil
+	return storage.NewID(prefix)
 }

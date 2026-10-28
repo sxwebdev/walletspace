@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sxwebdev/walletspace/internal/space"
 	"github.com/sxwebdev/xutils/randutil"
 )
 
@@ -45,6 +46,9 @@ const (
 	// hex, so it is twice its own size, and the ABI rides along with it. The
 	// chain's own limit on deployed code is a few tens of kilobytes.
 	maxDeployBodyBytes = 512 << 10
+	// maxImportBodyBytes is a space bundle: every space file on a machine,
+	// vault containers included.
+	maxImportBodyBytes = space.MaxBundleBytes
 )
 
 // bodyLimit is how much of a request body will be read. Only a deployment needs
@@ -57,6 +61,10 @@ func bodyLimit(path string) int64 {
 	// merely embeds the word.
 	if strings.HasSuffix(path, "/deploy") || strings.HasSuffix(path, "/deploy-estimate") {
 		return maxDeployBodyBytes
+	}
+	// The exact path only, for the same reason.
+	if path == "/api/spaces/import" {
+		return maxImportBodyBytes
 	}
 
 	return maxBodyBytes

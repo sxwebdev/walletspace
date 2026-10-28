@@ -140,27 +140,48 @@ func Decrypt(password string, container Container, aad []byte) ([]byte, error) {
 	return plaintext, err
 }
 
-func Unlock(password string, container Container, aad []byte) ([]byte, *SessionKey, error) {
+// Check validates everything about a container that can be judged without the
+// password: the format, the work factors, and the shape of the salt, nonce and
+// ciphertext. A container that passes may still fail to open; one that fails
+// never will. It is what an import runs on a vault that arrived in a file, so
+// a damaged or doctored one is refused when it arrives rather than at the
+// first unlock.
+func (c Container) Check() error {
+	_, _, _, err := parseContainer(c)
+	return err
+}
+
+func parseContainer(container Container) (salt, nonce, ciphertext []byte, err error) {
 	if container.Version != Version || container.KDF.Name != "argon2id" || container.Cipher.Name != "aes-256-gcm" {
-		return nil, nil, errors.New("unsupported vault format")
+		return nil, nil, nil, errors.New("unsupported vault format")
 	}
 	if err := validateKDF(container.KDF); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	salt, err := base64.RawStdEncoding.DecodeString(container.KDF.Salt)
+	salt, err = base64.RawStdEncoding.DecodeString(container.KDF.Salt)
 	if err != nil || len(salt) != 16 {
-		return nil, nil, errors.New("invalid vault salt")
+		return nil, nil, nil, errors.New("invalid vault salt")
 	}
-	nonce, err := base64.RawStdEncoding.DecodeString(container.Cipher.Nonce)
-	if err != nil {
-		return nil, nil, errors.New("invalid vault nonce")
+	nonce, err = base64.RawStdEncoding.DecodeString(container.Cipher.Nonce)
+	// The GCM standard nonce. Checked here rather than only at open time so
+	// that Check can promise a container it passes is well-formed.
+	if err != nil || len(nonce) != 12 {
+		return nil, nil, nil, errors.New("invalid vault nonce")
 	}
-	ciphertext, err := base64.RawStdEncoding.DecodeString(container.Ciphertext)
+	ciphertext, err = base64.RawStdEncoding.DecodeString(container.Ciphertext)
 	if err != nil {
-		return nil, nil, errors.New("invalid vault ciphertext")
+		return nil, nil, nil, errors.New("invalid vault ciphertext")
 	}
 	if len(ciphertext) < 16 || len(ciphertext) > maxCiphertextSize {
-		return nil, nil, errors.New("invalid vault ciphertext")
+		return nil, nil, nil, errors.New("invalid vault ciphertext")
+	}
+	return salt, nonce, ciphertext, nil
+}
+
+func Unlock(password string, container Container, aad []byte) ([]byte, *SessionKey, error) {
+	salt, nonce, ciphertext, err := parseContainer(container)
+	if err != nil {
+		return nil, nil, err
 	}
 	key := argon2.IDKey([]byte(password), salt, container.KDF.Time, container.KDF.MemoryKiB, container.KDF.Parallelism, 32)
 	defer clear(key)

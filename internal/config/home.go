@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -110,12 +111,22 @@ type UISettings struct {
 	LastSpaceID string `json:"last_space_id" yaml:"last_space_id"`
 }
 
+// SyncSettings say whether this machine syncs its spaces, and through which
+// folder. The folder is something another program copies between machines —
+// iCloud Drive, Dropbox, Syncthing — and holds only ciphertext. See
+// docs/device-sync.md.
+type SyncSettings struct {
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	Folder  string `json:"folder" yaml:"folder"`
+}
+
 type HomeConfig struct {
 	SchemaVersion int               `json:"schema_version" yaml:"schema_version"`
 	Server        ServerSettings    `json:"server" yaml:"server"`
 	Security      SecuritySettings  `json:"security" yaml:"-"`
 	NodeDiscovery DiscoverySettings `json:"node_discovery" yaml:"-"`
 	UI            UISettings        `json:"ui" yaml:"ui"`
+	Sync          SyncSettings      `json:"sync" yaml:"sync"`
 }
 
 type rawHomeConfig struct {
@@ -124,6 +135,7 @@ type rawHomeConfig struct {
 	Security      rawSecuritySettings  `yaml:"security"`
 	NodeDiscovery rawDiscoverySettings `yaml:"node_discovery"`
 	UI            UISettings           `yaml:"ui"`
+	Sync          SyncSettings         `yaml:"sync"`
 }
 
 // Endpoint is one RPC URL together with the credentials that belong to that
@@ -303,6 +315,17 @@ func (m *HomeManager) SaveConfig(next HomeConfig, expectedRevision string) (Sett
 	if err := ValidateHomeConfig(next); err != nil {
 		return SettingsSnapshot{}, err
 	}
+	m.mu.RLock()
+	current := m.config.Sync.Folder
+	m.mu.RUnlock()
+	// The folder is looked at on disk only when it changes. One that was
+	// accepted already, and has since gone unresponsive, must not keep every
+	// other setting from being saved.
+	if next.Sync.Folder != current {
+		if err := validateSyncFolder(next.Sync, m.home); err != nil {
+			return SettingsSnapshot{}, err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if expectedRevision != "" && expectedRevision != m.revision {
@@ -390,6 +413,11 @@ func (m *HomeManager) reload() error {
 	if err := ValidateHomeConfig(config); err != nil {
 		return err
 	}
+	// A folder that does not answer is not a folder that overlaps the data
+	// folder: it keeps its setting, and sync reports it unavailable.
+	if err := validateSyncFolder(config.Sync, m.home); err != nil && !errors.Is(err, errSyncFolderSlow) {
+		config.Sync = SyncSettings{}
+	}
 	overrides := make(map[string]NetworkOverride)
 	networkData, err := os.ReadFile(filepath.Join(m.home, "networks.yaml"))
 	if err == nil {
@@ -458,7 +486,148 @@ func ValidateHomeConfig(config HomeConfig) error {
 	if config.NodeDiscovery.RefreshInterval <= 0 || config.NodeDiscovery.RequestTimeout <= 0 {
 		return fmt.Errorf("%w: node discovery durations must be positive", ErrInvalidSettings)
 	}
+	if err := validateSync(config.Sync); err != nil {
+		return err
+	}
 	return validateDiscoveryURL(config.NodeDiscovery)
+}
+
+// validateSync states the rule for the sync folder once; clampSync applies it
+// to what is already on disk.
+func validateSync(settings SyncSettings) error {
+	if settings.Folder == "" {
+		if settings.Enabled {
+			return fmt.Errorf("%w: choose a folder to sync through", ErrInvalidSettings)
+		}
+		return nil
+	}
+	if !filepath.IsAbs(settings.Folder) || filepath.Clean(settings.Folder) != settings.Folder {
+		return fmt.Errorf("%w: the sync folder must be a clean absolute path", ErrInvalidSettings)
+	}
+	return nil
+}
+
+func clampSync(settings SyncSettings) SyncSettings {
+	if validateSync(settings) != nil {
+		return SyncSettings{}
+	}
+	return settings
+}
+
+// ValidateSync checks sync settings against this home without saving them,
+// so that nothing is created on disk for a folder that would be refused.
+func (m *HomeManager) ValidateSync(settings SyncSettings) error {
+	if err := validateSync(settings); err != nil {
+		return err
+	}
+	return validateSyncFolder(settings, m.home)
+}
+
+// validateSyncFolder refuses a folder that overlaps the wallet's own data.
+// Syncing ~/.walletspace itself would put every vault, the wallet list and
+// the settings in the cloud in the clear form they have on disk.
+//
+// The paths are compared as written and as they are on disk: with the
+// symlinks resolved, so a link into the data folder does not pass for a folder
+// elsewhere, and on macOS ignoring case, as APFS does by default. Looking at
+// the disk is bounded in time; a folder that does not answer is refused with
+// errSyncFolderSlow.
+func validateSyncFolder(settings SyncSettings, home string) error {
+	if settings.Folder == "" {
+		return nil
+	}
+	home = filepath.Clean(home)
+	if overlaps(settings.Folder, home) {
+		return errSyncFolderOverlaps
+	}
+	resolved, err := resolvePaths(settings.Folder, home)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidSettings, err)
+	}
+	if overlaps(resolved[0], resolved[1]) {
+		return errSyncFolderOverlaps
+	}
+	return nil
+}
+
+var (
+	errSyncFolderOverlaps = fmt.Errorf("%w: the sync folder cannot be the wallet's data folder, inside it or around it", ErrInvalidSettings)
+	// errSyncFolderSlow is a folder whose path could not be resolved in
+	// time: a network volume or a provider that hangs.
+	errSyncFolderSlow = errors.New("the sync folder does not answer: is the drive or cloud service available?")
+)
+
+// foldPathCase says whether paths that differ only in case name one folder.
+// APFS and HFS+ ignore case unless formatted otherwise.
+var foldPathCase = runtime.GOOS == "darwin"
+
+func overlaps(a, b string) bool {
+	if foldPathCase {
+		a, b = strings.ToLower(a), strings.ToLower(b)
+	}
+	return within(a, b) || within(b, a)
+}
+
+func within(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+var (
+	// evalSymlinks and syncFolderCheckTimeout are replaced by tests.
+	evalSymlinks           = filepath.EvalSymlinks
+	syncFolderCheckTimeout = 3 * time.Second
+	// syncFolderChecks bounds the resolutions in flight. One stuck on a hung
+	// mount stays stuck after its caller gave up on it; past this many, a
+	// check is refused at once instead of leaving another thread behind.
+	syncFolderChecks = make(chan struct{}, 4)
+)
+
+// resolvePaths resolves the symlinks of each path, giving up after
+// syncFolderCheckTimeout.
+func resolvePaths(paths ...string) ([]string, error) {
+	// Read here, not in the goroutine, which may outlive the call.
+	eval, timeout := evalSymlinks, syncFolderCheckTimeout
+	select {
+	case syncFolderChecks <- struct{}{}:
+	default:
+		return nil, errSyncFolderSlow
+	}
+	done := make(chan []string, 1)
+	go func() {
+		defer func() { <-syncFolderChecks }()
+		resolved := make([]string, len(paths))
+		for i, path := range paths {
+			resolved[i] = resolvePath(path, eval)
+		}
+		done <- resolved
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case resolved := <-done:
+		return resolved, nil
+	case <-timer.C:
+		return nil, errSyncFolderSlow
+	}
+}
+
+// resolvePath resolves the symlinks of path's deepest existing ancestor and
+// puts the rest back on. What does not exist yet holds no symlink. A path
+// none of whose ancestors resolves comes back as it was.
+func resolvePath(path string, eval func(string) (string, error)) string {
+	rest := ""
+	for dir := path; ; {
+		if real, err := eval(dir); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return path
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
 }
 
 // validateDiscoveryURL states the rule for a node-discovery URL once.
@@ -547,7 +716,7 @@ func clampDiscovery(settings DiscoverySettings) DiscoverySettings {
 
 func marshalConfig(config HomeConfig) ([]byte, error) {
 	raw := rawHomeConfig{
-		SchemaVersion: config.SchemaVersion, Server: config.Server, UI: config.UI,
+		SchemaVersion: config.SchemaVersion, Server: config.Server, UI: config.UI, Sync: config.Sync,
 		Security: rawSecuritySettings{
 			AutoLock:     config.Security.AutoLock.String(),
 			ConfirmSends: &config.Security.ConfirmSends,
@@ -605,6 +774,10 @@ func unmarshalConfig(data []byte) (HomeConfig, error) {
 	}
 	return HomeConfig{
 		SchemaVersion: raw.SchemaVersion, Server: raw.Server, UI: raw.UI,
+		// Repaired rather than refused, like the values below: a folder that
+		// no longer validates turns sync off instead of keeping the wallet
+		// from starting.
+		Sync: clampSync(raw.Sync),
 		Security: SecuritySettings{
 			AutoLock: autoLock, ConfirmSends: confirmSends,
 			// Clamped for the same reason auto-lock is: a file that names an

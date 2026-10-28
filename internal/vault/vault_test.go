@@ -132,3 +132,49 @@ func TestAWeakenedHeaderIsNeverOpenedOrResealed(t *testing.T) {
 		t.Errorf("Seal() with sound parameters error = %v", err)
 	}
 }
+
+// Check is what an import trusts about a vault it cannot open. Everything it
+// passes must be something Unlock would attempt, and everything Unlock refuses
+// before deriving a key it must refuse too.
+func TestCheckJudgesAContainerWithoutItsPassword(t *testing.T) {
+	t.Parallel()
+
+	container, err := vault.Encrypt("correct horse", []byte("secret"), []byte("space"), testParams)
+	if err != nil {
+		t.Fatalf("Encrypt() error = %v", err)
+	}
+	if err := container.Check(); err != nil {
+		t.Fatalf("Check(fresh container) error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*vault.Container)
+	}{
+		{name: "unknown version", edit: func(c *vault.Container) { c.Version = 2 }},
+		{name: "unknown KDF", edit: func(c *vault.Container) { c.KDF.Name = "scrypt" }},
+		{name: "unknown cipher", edit: func(c *vault.Container) { c.Cipher.Name = "aes-128-cbc" }},
+		{name: "weakened memory", edit: func(c *vault.Container) { c.KDF.MemoryKiB = 8 }},
+		{name: "salt not base64", edit: func(c *vault.Container) { c.KDF.Salt = "!!" }},
+		{name: "short salt", edit: func(c *vault.Container) { c.KDF.Salt = "AAAA" }},
+		{name: "nonce not base64", edit: func(c *vault.Container) { c.Cipher.Nonce = "!!" }},
+		{name: "short nonce", edit: func(c *vault.Container) { c.Cipher.Nonce = "AAAA" }},
+		{name: "ciphertext not base64", edit: func(c *vault.Container) { c.Ciphertext = "!!" }},
+		{name: "ciphertext shorter than a tag", edit: func(c *vault.Container) { c.Ciphertext = "AAAA" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			broken := container
+			tt.edit(&broken)
+			if err := broken.Check(); err == nil {
+				t.Fatal("Check() error = nil")
+			}
+			// Unlock refuses it for the same reason, before any derivation.
+			if _, err := vault.Decrypt("correct horse", broken, []byte("space")); err == nil {
+				t.Fatal("Decrypt() of a container Check refuses succeeded")
+			}
+		})
+	}
+}

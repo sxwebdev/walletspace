@@ -2,6 +2,8 @@
 package storage
 
 import (
+	"crypto/rand"
+	"encoding/base32"
 	"errors"
 	"fmt"
 	"os"
@@ -82,6 +84,16 @@ func AtomicWrite(path string, data []byte) error {
 		return fmt.Errorf("close parent directory %s: %w", dir, err)
 	}
 	return nil
+}
+
+// NewID returns prefix followed by 96 random bits in lowercase base32: the
+// shape ValidID accepts.
+func NewID(prefix string) (string, error) {
+	raw := make([]byte, 12)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate id: %w", err)
+	}
+	return prefix + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)), nil
 }
 
 func ValidID(id, prefix string) bool {

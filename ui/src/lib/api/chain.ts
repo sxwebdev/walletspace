@@ -291,6 +291,12 @@ export const settingsApi = {
       body,
       headers: revisionHeaders(revision),
     }),
+  patchSync: (revision: string, body: Settings["sync"]) =>
+    request<Settings>("/api/settings/sync", {
+      method: "PATCH",
+      body,
+      headers: revisionHeaders(revision),
+    }),
   patchDiscovery: (revision: string, body: Settings["node_discovery"]) =>
     request<Settings>("/api/settings/node-discovery", {
       method: "PATCH",

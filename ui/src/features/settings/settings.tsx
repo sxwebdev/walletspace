@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "motion/react"
 import {
+  ArrowLeftRightIcon,
   CoinsIcon,
   NetworkIcon,
   RadarIcon,
@@ -21,6 +22,7 @@ import {
 } from "@/features/settings/general-sections"
 import { NetworksSection } from "@/features/settings/networks-section"
 import { queryKeys } from "@/features/session/session"
+import { TransferSection } from "@/features/spaces/transfer"
 import { settingsApi } from "@/lib/api/chain"
 import { errorMessage } from "@/lib/api/client"
 import { cn } from "cn"
@@ -31,6 +33,7 @@ const sections = [
   { id: "networks", label: "Networks & RPC", icon: NetworkIcon },
   { id: "discovery", label: "Node discovery", icon: RadarIcon },
   { id: "assets", label: "Assets", icon: CoinsIcon },
+  { id: "transfer", label: "Backup & sync", icon: ArrowLeftRightIcon },
 ] as const
 
 type SectionId = (typeof sections)[number]["id"]
@@ -122,6 +125,9 @@ export function SettingsScreen() {
                 )}
                 {section === "networks" && <NetworksSection />}
                 {section === "assets" && <AssetsSection />}
+                {section === "transfer" && (
+                  <TransferSection settings={settings.data} />
+                )}
               </motion.div>
             )}
           </div>

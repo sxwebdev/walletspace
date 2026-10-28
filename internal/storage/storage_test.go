@@ -61,3 +61,22 @@ func TestProcessLockIsExclusiveAndRecoverable(t *testing.T) {
 		t.Fatalf("Close(recovered) error = %v", err)
 	}
 }
+
+func TestNewIDHasTheShapeValidIDAccepts(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]bool{}
+	for range 100 {
+		id, err := storage.NewID("dev_")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !storage.ValidID(id, "dev_") {
+			t.Fatalf("NewID() = %q is not a valid id", id)
+		}
+		if seen[id] {
+			t.Fatalf("NewID() repeated %q", id)
+		}
+		seen[id] = true
+	}
+}

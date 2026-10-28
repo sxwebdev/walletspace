@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -77,6 +78,23 @@ type Account struct {
 	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
+// Clone returns a deep copy: its slice, map and pointers are its own, so the
+// copy can be changed or handed out without reaching the original. Addresses
+// is always a map in the copy, never nil.
+func (a Account) Clone() Account {
+	a.NetworkIDs = append([]string(nil), a.NetworkIDs...)
+	addresses := a.Addresses
+	a.Addresses = make(map[Family]string, len(addresses))
+	maps.Copy(a.Addresses, addresses)
+	if a.Index != nil {
+		a.Index = new(*a.Index)
+	}
+	if a.ImportedAt != nil {
+		a.ImportedAt = new(*a.ImportedAt)
+	}
+	return a
+}
+
 // BoundTo reports whether the wallet was explicitly enabled for networkID.
 // Empty NetworkIDs are intentionally not treated as "all networks": records
 // written before network bindings were introduced must be assigned by the
@@ -113,11 +131,26 @@ func GenerateMnemonic() (string, error) {
 	return mnemonic, nil
 }
 
-func DerivePrivateKey(mnemonic, passphrase string, family Family, index uint32) (*ecdsa.PrivateKey, error) {
+// Seed is the BIP39 seed of a valid mnemonic and passphrase: the 64 bytes
+// every wallet of the space derives from. The caller clears it.
+func Seed(mnemonic, passphrase string) ([]byte, error) {
 	mnemonic = NormalizeMnemonic(mnemonic)
 	if err := ValidateMnemonic(mnemonic); err != nil {
 		return nil, err
 	}
+	return bip39.NewSeed(mnemonic, passphrase), nil
+}
+
+func DerivePrivateKey(mnemonic, passphrase string, family Family, index uint32) (*ecdsa.PrivateKey, error) {
+	seed, err := Seed(mnemonic, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(seed)
+	return derivePrivateKeyFromSeed(seed, family, index)
+}
+
+func derivePrivateKeyFromSeed(seed []byte, family Family, index uint32) (*ecdsa.PrivateKey, error) {
 	var coinType uint32
 	switch family {
 	case FamilyTron:
@@ -129,8 +162,6 @@ func DerivePrivateKey(mnemonic, passphrase string, family Family, index uint32) 
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFamily, family)
 	}
-	seed := bip39.NewSeed(mnemonic, passphrase)
-	defer clear(seed)
 	key, err := hdkeychain.NewMaster(seed, hdNetParams{})
 	if err != nil {
 		return nil, fmt.Errorf("create BIP32 master key: %w", err)
@@ -164,9 +195,21 @@ func DerivePrivateKey(mnemonic, passphrase string, family Family, index uint32) 
 // has no Solana entry: no such record ever had one, and a Solana wallet is
 // always created for its family by DerivedAddress.
 func DerivedAddresses(mnemonic, passphrase string, index uint32) (map[Family]string, error) {
+	seed, err := Seed(mnemonic, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(seed)
+	return DerivedAddressesFromSeed(seed, index)
+}
+
+// DerivedAddressesFromSeed is DerivedAddresses from a seed already computed.
+// The BIP39 seed is a PBKDF2 of 2048 rounds; checking many wallets of one
+// space derives it once rather than once per wallet.
+func DerivedAddressesFromSeed(seed []byte, index uint32) (map[Family]string, error) {
 	out := make(map[Family]string, 2)
 	for _, family := range []Family{FamilyTron, FamilyEVM} {
-		key, err := DerivePrivateKey(mnemonic, passphrase, family, index)
+		key, err := derivePrivateKeyFromSeed(seed, family, index)
 		if err != nil {
 			return nil, err
 		}
@@ -180,20 +223,31 @@ func DerivedAddresses(mnemonic, passphrase string, index uint32) (map[Family]str
 }
 
 func DerivedAddress(mnemonic, passphrase string, family Family, index uint32) (string, error) {
+	seed, err := Seed(mnemonic, passphrase)
+	if err != nil {
+		return "", err
+	}
+	defer clear(seed)
+	return DerivedAddressFromSeed(seed, family, index)
+}
+
+// DerivedAddressFromSeed is DerivedAddress from a seed already computed; see
+// DerivedAddressesFromSeed.
+func DerivedAddressFromSeed(seed []byte, family Family, index uint32) (string, error) {
 	curve, err := CurveOf(family)
 	if err != nil {
 		return "", err
 	}
 	switch curve {
 	case CurveEd25519:
-		key, err := DeriveEd25519PrivateKey(mnemonic, passphrase, family, index)
+		key, err := deriveEd25519FromSeed(seed, family, index)
 		if err != nil {
 			return "", err
 		}
 		defer clear(key)
 		return AddressFromEd25519Key(key, family)
 	case CurveSecp256k1:
-		key, err := DerivePrivateKey(mnemonic, passphrase, family, index)
+		key, err := derivePrivateKeyFromSeed(seed, family, index)
 		if err != nil {
 			return "", err
 		}

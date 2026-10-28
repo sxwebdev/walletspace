@@ -95,14 +95,19 @@ func NewPlatform(
 
 	mux.HandleFunc("GET /api/spaces", p.listSpaces)
 	mux.HandleFunc("POST /api/spaces", p.createSpace)
+	mux.HandleFunc("POST /api/spaces/export", p.exportSpaces)
+	mux.HandleFunc("POST /api/spaces/import", p.importSpaces)
 	mux.HandleFunc("GET /api/spaces/{space_id}", p.getSpace)
 	mux.HandleFunc("PATCH /api/spaces/{space_id}", p.renameSpace)
 	mux.HandleFunc("POST /api/spaces/{space_id}/unlock", p.unlockSpace)
 	mux.HandleFunc("POST /api/spaces/{space_id}/lock", p.lockSpace)
 	mux.HandleFunc("POST /api/spaces/{space_id}/change-password", p.changePassword)
 	mux.HandleFunc("POST /api/spaces/{space_id}/mnemonic", p.revealMnemonic)
+	mux.HandleFunc("POST /api/spaces/{space_id}/recovery-phrase", p.addRecoveryPhrase)
 	mux.HandleFunc("POST /api/spaces/{space_id}/backup", p.backupSpace)
 	mux.HandleFunc("POST /api/spaces/{space_id}/confirm-send", p.confirmSend)
+	mux.HandleFunc("POST /api/spaces/{space_id}/sync", p.syncSpace)
+	mux.HandleFunc("GET /api/sync", p.syncOverview)
 
 	mux.HandleFunc("GET /api/spaces/{space_id}/accounts", p.listAccounts)
 	mux.HandleFunc("POST /api/spaces/{space_id}/accounts/derive", p.deriveAccount)
@@ -122,6 +127,7 @@ func NewPlatform(
 	mux.HandleFunc("PATCH /api/settings/general", p.patchGeneral)
 	mux.HandleFunc("PATCH /api/settings/security", p.patchSecurity)
 	mux.HandleFunc("PATCH /api/settings/node-discovery", p.patchDiscovery)
+	mux.HandleFunc("PATCH /api/settings/sync", p.patchSync)
 	mux.HandleFunc("GET /api/settings/networks", p.getNetworkSettings)
 	mux.HandleFunc("PUT /api/settings/networks/{network_id}", p.putNetworkSettings)
 	mux.HandleFunc("DELETE /api/settings/networks/{network_id}/override", p.deleteNetworkSettings)
@@ -168,8 +174,10 @@ func (p *Platform) createSpace(w http.ResponseWriter, r *http.Request) {
 		Mnemonic        string `json:"mnemonic"`
 		BIP39Passphrase string `json:"bip39_passphrase"`
 		Password        string `json:"password"`
-		ImportedOnly    bool   `json:"imported_only"`
-		First           bool   `json:"first"`
+		// ImportedOnly is accepted from older clients and ignored: every space
+		// now has a recovery phrase, generated when none is given.
+		ImportedOnly bool `json:"imported_only"`
+		First        bool `json:"first"`
 		// NetworkID is accepted for compatibility with older clients, but space
 		// creation never derives a wallet. Wallets are created explicitly later.
 		NetworkID string `json:"network_id"`
@@ -181,7 +189,7 @@ func (p *Platform) createSpace(w http.ResponseWriter, r *http.Request) {
 	result, err := p.spaces.Create(space.CreateRequest{
 		Name: request.Name, Mnemonic: request.Mnemonic,
 		BIP39Passphrase: request.BIP39Passphrase, Password: request.Password,
-		ImportedOnly: request.ImportedOnly, ExpectEmpty: request.First,
+		ExpectEmpty: request.First,
 	})
 	if err != nil {
 		p.writePlatformError(w, err)
@@ -190,6 +198,11 @@ func (p *Platform) createSpace(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{
 		"space": result.Space, "accounts": result.Accounts,
 		"mnemonic_generated": result.MnemonicGenerated,
+	}
+	// What the first sync found: a restore still waiting for other
+	// machines' files must not be shown as complete.
+	if result.Sync != nil {
+		response["sync"] = result.Sync
 	}
 	if result.MnemonicGenerated {
 		response["mnemonic"] = result.Mnemonic
@@ -231,11 +244,23 @@ func (p *Platform) unlockSpace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := p.spaces.Unlock(r.PathValue("space_id"), request.Password); err != nil {
+	first, err := p.spaces.UnlockAndSync(r.PathValue("space_id"), request.Password)
+	if err != nil {
 		p.writePlatformError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"unlocked": true})
+	// The space as it is now: some of it — whether it has a phrase, what its
+	// first sync brought — is known only once it is open.
+	summary, _, err := p.spaces.Get(r.PathValue("space_id"))
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	response := map[string]any{"unlocked": true, "space": summary}
+	if first != nil {
+		response["sync"] = first
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (p *Platform) lockSpace(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +304,28 @@ func (p *Platform) revealMnemonic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"mnemonic": value})
 }
 
+// addRecoveryPhrase gives a space created without a phrase one, and returns it
+// once to be written down.
+func (p *Platform) addRecoveryPhrase(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Password string `json:"password"`
+		// Mnemonic is the phrase this space was given on another computer,
+		// or empty for a new one.
+		Mnemonic string `json:"mnemonic"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	value, err := p.spaces.AddRecoveryPhrase(r.PathValue("space_id"), request.Password, request.Mnemonic)
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	secretHeaders(w)
+	writeJSON(w, http.StatusCreated, map[string]string{"mnemonic": value})
+}
+
 func (p *Platform) backupSpace(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Password string `json:"password"`
@@ -297,6 +344,57 @@ func (p *Platform) backupSpace(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="walletspace-backup.json"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// exportSpaces bundles several spaces into one file for another machine. Each
+// space is behind its own password, as a single backup is.
+func (p *Platform) exportSpaces(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Spaces []struct {
+			ID       string `json:"id"`
+			Password string `json:"password"`
+		} `json:"spaces"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items := make([]space.ExportItem, len(request.Spaces))
+	for i, item := range request.Spaces {
+		items[i] = space.ExportItem{ID: item.ID, Password: item.Password}
+	}
+	data, err := p.spaces.ExportBundle(items)
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	secretHeaders(w)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(
+		`attachment; filename="walletspace-%s.wsbackup"`, time.Now().UTC().Format("2006-01-02"),
+	))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// importSpaces adds the spaces of a bundle, or of a single-space backup, to
+// this machine. The body is the file itself.
+func (p *Platform) importSpaces(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+			writeError(w, http.StatusRequestEntityTooLarge, "the backup file is too large")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "could not read the backup file")
+		return
+	}
+	result, err := p.spaces.ImportBundle(data)
+	if err != nil {
+		p.writePlatformError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // confirmSend opens the window in which this space may spend.
@@ -609,9 +707,10 @@ type settingsDTO struct {
 		RequestTimeout   string `json:"request_timeout"`
 		AllowInsecureRPC bool   `json:"allow_insecure_rpc"`
 	} `json:"node_discovery"`
-	UI              config.UISettings `json:"ui"`
-	Revision        string            `json:"revision"`
-	RestartRequired []string          `json:"restart_required"`
+	UI              config.UISettings   `json:"ui"`
+	Sync            config.SyncSettings `json:"sync"`
+	Revision        string              `json:"revision"`
+	RestartRequired []string            `json:"restart_required"`
 }
 
 func settingsResponse(snapshot config.SettingsSnapshot) settingsDTO {
@@ -627,6 +726,7 @@ func settingsResponse(snapshot config.SettingsSnapshot) settingsDTO {
 	response.NodeDiscovery.RequestTimeout = snapshot.Config.NodeDiscovery.RequestTimeout.String()
 	response.NodeDiscovery.AllowInsecureRPC = snapshot.Config.NodeDiscovery.AllowInsecureRPC
 	response.UI = snapshot.Config.UI
+	response.Sync = snapshot.Config.Sync
 	response.Revision = snapshot.Revision
 	// The fields the API will not change while the process runs, named so the
 	// form can present them as read-only instead of offering a control whose
@@ -2118,6 +2218,8 @@ func (p *Platform) writeCodedPlatformError(w http.ResponseWriter, err error, cod
 		// space is being asked for its password before it will spend.
 		status = http.StatusForbidden
 	case errors.Is(err, space.ErrDuplicateKey), errors.Is(err, space.ErrFirstSpaceExists),
+		errors.Is(err, space.ErrHasSeed), errors.Is(err, space.ErrPhraseOfAnotherSpace),
+		errors.Is(err, space.ErrSpaceChanged),
 		errors.Is(err, space.ErrLastNetwork),
 		errors.Is(err, operation.ErrConflict), errors.Is(err, chain.ErrFeeChanged),
 		errors.Is(err, chain.ErrStateChanged):
@@ -2131,7 +2233,8 @@ func (p *Platform) writeCodedPlatformError(w http.ResponseWriter, err error, cod
 		status = http.StatusInsufficientStorage
 	case errors.Is(err, config.ErrRevisionConflict):
 		status = http.StatusPreconditionFailed
-	case errors.Is(err, config.ErrInvalidSettings), errors.Is(err, asset.ErrInvalidMetadata):
+	case errors.Is(err, config.ErrInvalidSettings), errors.Is(err, asset.ErrInvalidMetadata),
+		errors.Is(err, space.ErrInvalidBundle):
 		status = http.StatusBadRequest
 	case errors.Is(err, context.DeadlineExceeded):
 		status = http.StatusGatewayTimeout

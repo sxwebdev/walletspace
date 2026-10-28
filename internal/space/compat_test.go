@@ -7,10 +7,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sxwebdev/walletspace/internal/account"
 	"github.com/sxwebdev/walletspace/internal/chain"
+	"github.com/sxwebdev/walletspace/internal/devicesync"
 	"github.com/sxwebdev/walletspace/internal/space"
 )
 
@@ -216,5 +220,157 @@ func TestLegacyRecordIsNotASolanaWallet(t *testing.T) {
 			}); err != nil {
 			t.Errorf("WithSigner(legacy, %s) error = %v", family, err)
 		}
+	}
+}
+
+// The fixture's vault holds one key per reference, as every vault before key
+// variants does. Carried to another machine in a backup file and opened
+// there, its imported wallet keeps its id, its reference and its key; the
+// first change rewrites the vault with variants, and after a restart nothing
+// about the key has moved.
+func TestAnOldVaultCarriedInABackupKeepsItsKey(t *testing.T) {
+	t.Parallel()
+
+	const importedID = "acc_s5kctjpiqlvfa5kqq46a"
+	const importedKey = "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318"
+	_, original := headFixtureHome(t)
+	home := t.TempDir()
+	manager := newManager(t, home)
+	if result, err := manager.ImportBundle(original); err != nil || len(result.Imported) != 1 {
+		t.Fatalf("ImportBundle() = %+v, %v", result, err)
+	}
+	if err := manager.Unlock(headSpaceID, headPassword); err != nil {
+		t.Fatalf("Unlock() error = %v", err)
+	}
+	before, err := manager.Accounts(headSpaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exported, err := manager.ExportPrivateKey(headSpaceID, importedID, account.FamilyEVM, headPassword); err != nil || exported != importedKey {
+		t.Fatalf("ExportPrivateKey() = %q, %v", exported, err)
+	}
+	if _, err := manager.Import(headSpaceID, "eth-sepolia", account.FamilyEVM, "", strings.Repeat("11", 32)); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := newManager(t, home)
+	if err := restarted.Unlock(headSpaceID, headPassword); err != nil {
+		t.Fatalf("Unlock() after the vault was rewritten error = %v", err)
+	}
+	if exported, err := restarted.ExportPrivateKey(headSpaceID, importedID, account.FamilyEVM, headPassword); err != nil || exported != importedKey {
+		t.Fatalf("ExportPrivateKey() after a restart = %q, %v", exported, err)
+	}
+	after, err := restarted.Accounts(headSpaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range before {
+		i := slices.IndexFunc(after, func(a account.Account) bool { return a.ID == item.ID })
+		if i < 0 || after[i].KeyRef != item.KeyRef {
+			t.Errorf("wallet %s (reference %q) did not come through unchanged", item.ID, item.KeyRef)
+		}
+	}
+	keys, _, err := space.VaultContents(home, headSpaceID, headPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref := before[slices.IndexFunc(before, func(a account.Account) bool { return a.ID == importedID })].KeyRef; keys[ref] != 1 {
+		t.Errorf("vault keys = %v, want one variant under %s", keys, ref)
+	}
+}
+
+// fixtureMachine is the fixture space on one machine, unlocked, syncing
+// through folder.
+func fixtureMachine(t *testing.T, folder, deviceID string) *space.Manager {
+	t.Helper()
+	home, _ := headFixtureHome(t)
+	manager := newManager(t, home)
+	store, err := devicesync.NewFolderStore(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.SetSync(store, deviceID, nil)
+	if err := manager.Unlock(headSpaceID, headPassword); err != nil {
+		t.Fatalf("Unlock() error = %v", err)
+	}
+	return manager
+}
+
+// passes syncs each machine in turn, rounds times, and fails on any wallet
+// a pass did not keep.
+func passes(t *testing.T, rounds int, machines ...*space.Manager) {
+	t.Helper()
+	for range rounds {
+		for i, manager := range machines {
+			status, err := manager.SyncNow(t.Context(), headSpaceID)
+			if err != nil {
+				t.Fatalf("machine %d: SyncNow() error = %v", i, err)
+			}
+			if len(status.Dropped) != 0 {
+				t.Fatalf("machine %d dropped %v", i, status.Dropped)
+			}
+		}
+	}
+}
+
+func legacyRecord(t *testing.T, manager *space.Manager) account.Account {
+	t.Helper()
+	accounts, err := manager.Accounts(headSpaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(accounts, func(a account.Account) bool { return a.ID == headLegacyID })
+	if i < 0 {
+		t.Fatal("the record from before bindings is gone")
+	}
+	return accounts[i]
+}
+
+// A record from before network bindings, bound on one machine, reaches the
+// other bound — the family set, the other family's address gone — and
+// neither machine reports the wallet as dropped.
+func TestABindingOfAnOldRecordReachesTheOtherMachine(t *testing.T) {
+	t.Parallel()
+
+	folder := t.TempDir()
+	a := fixtureMachine(t, folder, "dev_fixturea")
+	b := fixtureMachine(t, folder, "dev_fixtureb")
+	passes(t, 1, a, b)
+	if _, err := a.BindNetwork(headSpaceID, headLegacyID, "tron-nile", account.FamilyTron); err != nil {
+		t.Fatal(err)
+	}
+	passes(t, 2, a, b)
+	got := legacyRecord(t, b)
+	if got.Family != account.FamilyTron || len(got.Addresses) != 1 || !got.BoundTo("tron-nile") {
+		t.Fatalf("B's record = %+v, want it bound to Tron", got)
+	}
+	if want := legacyRecord(t, a); !reflect.DeepEqual(got, want) {
+		t.Errorf("the machines disagree:\nA %+v\nB %+v", want, got)
+	}
+}
+
+// One machine binds an old record while the other, not having seen that yet,
+// renames it. The later change wins whole on both, as for any wallet, and
+// neither machine keeps reporting the other's copy as dropped.
+func TestAnOldRecordBoundHereAndRenamedThereConverges(t *testing.T) {
+	t.Parallel()
+
+	folder := t.TempDir()
+	a := fixtureMachine(t, folder, "dev_fixturea")
+	b := fixtureMachine(t, folder, "dev_fixtureb")
+	passes(t, 1, a, b)
+	if _, err := a.BindNetwork(headSpaceID, headLegacyID, "tron-nile", account.FamilyTron); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.RenameAccount(headSpaceID, headLegacyID, "renamed on B"); err != nil {
+		t.Fatal(err)
+	}
+	passes(t, 3, a, b)
+	got, want := legacyRecord(t, a), legacyRecord(t, b)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the machines disagree:\nA %+v\nB %+v", got, want)
+	}
+	if got.Label != "renamed on B" || got.Family != "" {
+		t.Errorf("record = %+v, want B's later rename, still unbound", got)
 	}
 }

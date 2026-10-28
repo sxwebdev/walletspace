@@ -15,6 +15,7 @@ export const queryKeys = {
   settings: ["settings"] as const,
   overrides: ["settings", "networks"] as const,
   doctor: ["doctor"] as const,
+  sync: ["sync"] as const,
   accounts: (spaceId: string) => ["accounts", spaceId] as const,
   assets: (networkId: string) => ["assets", networkId] as const,
   prices: (ids: string[]) => ["prices", ...ids] as const,
@@ -149,6 +150,24 @@ export function SessionProvider({
 
   return (
     <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
+  )
+}
+
+// setSpace puts the server's latest summary of a space into the list, so that
+// what only an open space can tell — has_phrase — is right at once rather than
+// at the next poll.
+export function setSpace(
+  queryClient: ReturnType<typeof useQueryClient>,
+  space: Space
+) {
+  queryClient.setQueryData<{ spaces: Space[] }>(queryKeys.spaces, (data) =>
+    data
+      ? {
+          spaces: data.spaces.map((item) =>
+            item.id === space.id ? space : item
+          ),
+        }
+      : data
   )
 }
 

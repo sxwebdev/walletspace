@@ -1,0 +1,76 @@
+{
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+  "passphrase": "TREZOR",
+  "device_id": "dev_vector",
+  "local_space_id": "spc_vector",
+  "space_tag": "b3c58b04dbf9a8e46fe58d837282f9fe",
+  "device_tag": "16144d7de8dc43378df4a095b78d58bc",
+  "nonce": "424242424242424242424242424242424242424242424242",
+  "snapshot": {
+    "version": 1,
+    "written_at": "2026-10-26T12:10:00Z",
+    "name": "Main",
+    "name_updated_at": "2026-10-26T12:01:00Z",
+    "accounts": [
+      {
+        "id": "acc_one",
+        "label": "derived acc_one",
+        "kind": "derived",
+        "family": "tron",
+        "network_ids": [
+          "tron-nile"
+        ],
+        "addresses": {
+          "tron": "Tacc_one"
+        },
+        "index": 0,
+        "derivation_profile": "bip44-v1",
+        "created_at": "2026-10-26T12:00:00Z",
+        "updated_at": "2026-10-26T12:02:00Z"
+      },
+      {
+        "id": "acc_two",
+        "label": "imported acc_two",
+        "kind": "imported",
+        "network_ids": [
+          "eth-sepolia"
+        ],
+        "addresses": {
+          "evm": "0xacc_two"
+        },
+        "key_ref": "key_two",
+        "fingerprint": "fp2",
+        "imported_at": "2026-10-26T12:00:00Z",
+        "created_at": "2026-10-26T12:00:00Z",
+        "updated_at": "2026-10-26T12:03:00Z"
+      }
+    ],
+    "deleted_accounts": [
+      {
+        "id": "acc_gone",
+        "deleted_at": "2026-10-26T12:04:00Z"
+      }
+    ],
+    "imported_keys": {
+      "key_two": [
+        {
+          "curve": "ed25519",
+          "private_key": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
+          "imported_at": "2026-10-26T12:01:00Z"
+        },
+        {
+          "curve": "secp256k1",
+          "private_key": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+          "imported_at": "2026-10-26T12:00:00Z"
+        }
+      ]
+    },
+    "deleted_keys": [
+      {
+        "id": "key_gone",
+        "deleted_at": "2026-10-26T12:05:00Z"
+      }
+    ]
+  },
+  "envelope": "5753594e0162336335386230346462663961386534366665353864383337323832663966653136313434643764653864633433333738646634613039356237386435386263424242424242424242424242424242424242424242424242fc36821e7f5e8e36f14e2ee344b54197270a3a37f6052fac28cefbcfeb2086011ec83b822a013cb37d6db6562e1a4c4c9fa90ff5e4dc386c01229c2fc323fd91dda3bb7aa1dd413e9cfb8ed03603d53d4a16b8c737cc054b30f6def913578bf273d0db6598f6d44b307f41a3d06f629b6c02531584fe595df530785a98a47e6d1601cfa7e650348134feeb1d98368b0344f77bdf136a7b83b8e2d2a991ac3ef567f8015c947eced6b496a739726348e20513d07df72926a827af9fb936ad08b46db74332c6a07e5bc7756a37b190014e37496271a2651da011516f44c738400de455f8eed723450fef444eb298ae9db5b0b5a9d45a6c737d6f9517001a71294e1675dc86100520f784fc2177eb257a0aab5b4fc3e8a023e18122dc9394e9bbd8edeb82e7c7fb915a95320bc05013c639e598c463b409eac9b27852ce94cee221b89c948cda01493ad3d9a31df1ac50e010fbad12d29e1e601e698646ebd404ed81a7622e92e31eb2135acdc4eb1547fff5bd9ed87dff60e9a72cffb230a8246234c4fbd07a241e9d9b54e0fb15ae6bc9d11bd984ea9decf9aaf4857c2f2657dcb4550021b458a5bd2e58731599d7883454de6943a01fc054c38d14fc62fe67bacd97b379405880da29719d77a4d9d2cb8321d87ac40ba2eedf0b08ddbcaba22bf90170a049cc51ee9021c1b95ca04ccd85a9c7ab3e736188b265f6b5fcb1d6b93163a741e33518a2d9212f5f51281ca5055881365893c96ae9b16c16fb6d3020f2f7391dd61966bcff58feffc888ff2ea3202f7bca0c7e698ae4d2237ee9d0bc4e648b1f501d1506c150cd37089bb948f5a5aaa191f81880c0c7ba89123835cc7b7f8258d7f045ab87ac2d3153cc79540fdecac2dae12f34a99c64621d4bd11332964d9b3eca0c0df30917b8c5f534366e503a8744e827b1ea9c9d23efc5a5dac5da635b3eb6dc938608a6f37d382bd2c6fd256a3e0577559eabbb72814fdd0c1db6ef023e4dca00b84573b731b584cf962021f090ef656b5eefd70e845032cf869a74ac30f80651e21ef05edbdaf27078eb590c538762170cebed41ff8ca1a8c252136e8204917b36d850fd9c4c8379f40bd5e04fe62594eb154569bcb1bc799b82e07f79b3b222a780b731588118d34b5c6f77dc3901bd01b07cfcb61b13b93ce926043664559faf0cd1f0ba1e0f2586e936b94cc34bac4da414860678fc28a37247882c81ac3851c7ef0a74e239b20d79eaac4bf4f363f44e80bfc959e1aca96976cf89d580954b39870f3f27601d317f4f3e27138d2003959aeb9a9da79f81d176c55152e4371dcc688aee50fc5b7af851968c5052cbd620513f3f60ce1fa22bceb010be2edb31ecc5ca421671f2e3e70055de47a4fccc1b9e35e838f26594b1f531e4ca4cd124761544f314fe35bf1fbf323fce428ac9fe006029b91ebe9c8808ee66104db752c351789146aff9adfb7de0715fe0bf5a3111f73fa5f6b3bd6e8255705d042284bf9f8f9b0a"
+}

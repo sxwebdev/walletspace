@@ -120,7 +120,7 @@ func TestRefuelIsBoundToTransferAndCannotPayTwiceAfterRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	created, err := fixture.spaces.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	created, err := fixture.spaces.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatal(err)
 	}

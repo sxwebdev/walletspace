@@ -30,6 +30,14 @@ func TestParseCommand(t *testing.T) {
 			name: "migrate keeps its own flags", args: []string{"migrate", "--from", "./data"},
 			want: commandMigrate, wantArgs: []string{"--from", "./data"},
 		},
+		{
+			name: "export keeps its own flags", args: []string{"export", "--out", "x.wsbackup"},
+			want: commandExport, wantArgs: []string{"--out", "x.wsbackup"},
+		},
+		{
+			name: "import keeps its file", args: []string{"import", "x.wsbackup"},
+			want: commandImport, wantArgs: []string{"x.wsbackup"},
+		},
 		{name: "version word", args: []string{"version"}, want: commandVersion},
 		{name: "version flag", args: []string{"--version"}, want: commandVersion},
 		{name: "single dash version flag", args: []string{"-version"}, want: commandVersion},

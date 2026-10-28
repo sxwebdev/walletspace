@@ -1,0 +1,1739 @@
+{
+  "description": "Merge vectors for walletspace device sync, snapshot version 1 (docs/device-sync.md, 'Merge' and 'Canonical encoding'). Each case: snapshots -> merged. The merged snapshot must come out of every order and every grouping of the snapshots (merging some first, then the result with the rest). written_at is delivery metadata and not part of a merge result. Wallet records, times and tombstones of the merged snapshot are in normal form.",
+  "cases": [
+    {
+      "name": "the copy updated last wins the whole wallet",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_one",
+              "label": "first",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_one"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:01:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_one",
+              "label": "second",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile",
+                "tron-mainnet"
+              ],
+              "addresses": {
+                "tron": "Tacc_one"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:02:00Z"
+            },
+            {
+              "id": "acc_two",
+              "label": "only here",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_two"
+              },
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_one",
+            "label": "second",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_one"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:02:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 0,
+            "network_ids": [
+              "tron-mainnet",
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_two",
+            "label": "only here",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_two"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 1,
+            "network_ids": [
+              "tron-nile"
+            ]
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "one instant written in two zones is a tie, settled by the greater canonical encoding",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_tie",
+              "label": "alpha",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_tie"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:05:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_tie",
+              "label": "beta",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_tie"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T13:05:00+01:00"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_tie",
+              "label": "zzz",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_tie"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T07:04:59.999999999-05:00"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_tie",
+            "label": "beta",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_tie"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:05:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 0,
+            "network_ids": [
+              "tron-nile"
+            ]
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "fractional seconds compare by instant and lose their trailing zeros",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_frac",
+              "label": "x",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_frac"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00.000000000Z",
+              "updated_at": "2026-10-26T12:00:00.500Z"
+            },
+            {
+              "id": "acc_nano",
+              "label": "n",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_nano"
+              },
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00.000000001Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_frac",
+              "label": "y",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_frac"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00.5+00:00"
+            },
+            {
+              "id": "acc_nano",
+              "label": "z",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_nano"
+              },
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_frac",
+            "label": "y",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_frac"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00.5Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 0,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_nano",
+            "label": "n",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_nano"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00.000000001Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 1,
+            "network_ids": [
+              "tron-nile"
+            ]
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "an index of 0 is part of the record, an absent index is not",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_idx",
+              "label": "same",
+              "kind": "imported",
+              "network_ids": [
+                "eth-sepolia"
+              ],
+              "addresses": {
+                "evm": "0xacc_idx"
+              },
+              "key_ref": "key_idx",
+              "fingerprint": "fp",
+              "index": 0,
+              "imported_at": "2026-10-26T12:00:00Z",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_zero",
+              "label": "kept at index 0",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_zero"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_idx",
+              "label": "same",
+              "kind": "imported",
+              "network_ids": [
+                "eth-sepolia"
+              ],
+              "addresses": {
+                "evm": "0xacc_idx"
+              },
+              "key_ref": "key_idx",
+              "fingerprint": "fp",
+              "imported_at": "2026-10-26T12:00:00Z",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_idx",
+            "label": "same",
+            "kind": "imported",
+            "addresses": {
+              "evm": "0xacc_idx"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "key_ref": "key_idx",
+            "fingerprint": "fp",
+            "imported_at": "2026-10-26T12:00:00Z",
+            "network_ids": [
+              "eth-sepolia"
+            ]
+          },
+          {
+            "id": "acc_zero",
+            "label": "kept at index 0",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_zero"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 0,
+            "network_ids": [
+              "tron-nile"
+            ]
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "an empty optional string is left out of the encoding",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_opt",
+              "label": "m",
+              "kind": "derived",
+              "addresses": {
+                "tron": "T",
+                "evm": "E"
+              },
+              "index": 3,
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_opt",
+              "label": "m",
+              "kind": "derived",
+              "family": "evm",
+              "addresses": {
+                "tron": "T",
+                "evm": "E"
+              },
+              "index": 3,
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_opt",
+            "label": "m",
+            "kind": "derived",
+            "addresses": {
+              "tron": "T",
+              "evm": "E"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "index": 3
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "networks are a set, and no networks is no field",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_net",
+              "label": "n",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile",
+                "tron-mainnet",
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_net"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_nonet",
+              "label": "q",
+              "kind": "derived",
+              "family": "tron",
+              "addresses": {
+                "tron": "Tacc_nonet"
+              },
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_net",
+              "label": "n",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-mainnet",
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_net"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_nonet",
+              "label": "q",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_nonet"
+              },
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_net",
+            "label": "n",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_net"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 0,
+            "network_ids": [
+              "tron-mainnet",
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_nonet",
+            "label": "q",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_nonet"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 1
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "address keys are ordered by UTF-16 code units, and no addresses is an empty object",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_addr",
+              "label": "s",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "😀": "b",
+                "｡": "a"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_noaddr",
+              "label": "s",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {},
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_addr",
+              "label": "s",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "｡": "b",
+                "😀": "a"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_noaddr",
+              "label": "s",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "T"
+              },
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_addr",
+            "label": "s",
+            "kind": "derived",
+            "addresses": {
+              "😀": "b",
+              "｡": "a"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 0,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_noaddr",
+            "label": "s",
+            "kind": "derived",
+            "addresses": {},
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 1,
+            "network_ids": [
+              "tron-nile"
+            ]
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "strings compare as the UTF-8 bytes of their JCS form",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_utf8",
+              "label": "é",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_utf8"
+              },
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_astral",
+              "label": "😀",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_astral"
+              },
+              "index": 2,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_ctrl",
+              "label": "a\u0001",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_ctrl"
+              },
+              "index": 3,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_html",
+              "label": "<",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_html"
+              },
+              "index": 4,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_short",
+              "label": "a\n",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_short"
+              },
+              "index": 5,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_quote",
+              "label": "say \"hi\"",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_quote"
+              },
+              "index": 6,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_utf8",
+              "label": "z",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_utf8"
+              },
+              "index": 1,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_astral",
+              "label": "｡",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_astral"
+              },
+              "index": 2,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_ctrl",
+              "label": "a[",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_ctrl"
+              },
+              "index": 3,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_html",
+              "label": "=",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_html"
+              },
+              "index": 4,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_short",
+              "label": "a\t",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_short"
+              },
+              "index": 5,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_quote",
+              "label": "say \\hi",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_quote"
+              },
+              "index": 6,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_astral",
+            "label": "😀",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_astral"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 2,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_ctrl",
+            "label": "a\u0001",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_ctrl"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 3,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_html",
+            "label": "=",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_html"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 4,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_quote",
+            "label": "say \\hi",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_quote"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 6,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_short",
+            "label": "a\t",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_short"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 5,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_utf8",
+            "label": "é",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_utf8"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 1,
+            "network_ids": [
+              "tron-nile"
+            ]
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "the name set last wins, a tie goes to the greater UTF-8 bytes, a default name has no time",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "default",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "｡",
+          "name_updated_at": "2026-10-26T12:00:00Z",
+          "accounts": [],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "😀",
+          "name_updated_at": "2026-10-26T13:00:00+01:00",
+          "accounts": [],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "😀",
+        "name_updated_at": "2026-10-26T12:00:00Z",
+        "accounts": [],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "key variants: one per distinct key, the earliest import, sorted by variant id",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_v",
+              "label": "",
+              "kind": "imported",
+              "network_ids": [
+                "eth-sepolia"
+              ],
+              "addresses": {
+                "evm": "0xacc_v"
+              },
+              "key_ref": "key_v",
+              "fingerprint": "fp",
+              "imported_at": "2026-10-26T12:00:00Z",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {
+            "key_v": [
+              {
+                "curve": "secp256k1",
+                "private_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+                "imported_at": "2026-10-26T12:05:00Z"
+              }
+            ],
+            "key_w": [
+              {
+                "curve": "ed25519",
+                "private_key": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
+                "imported_at": "2026-10-26T12:00:00Z"
+              }
+            ]
+          },
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [],
+          "deleted_accounts": [],
+          "imported_keys": {
+            "key_v": [
+              {
+                "curve": "secp256k1",
+                "private_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+                "imported_at": "2026-10-26T13:01:00+01:00"
+              },
+              {
+                "curve": "ed25519",
+                "private_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+                "imported_at": "2026-10-26T12:03:00Z"
+              }
+            ],
+            "key_w": [
+              {
+                "curve": "ed25519",
+                "private_key": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
+                "imported_at": "2026-10-26T12:00:00.000Z"
+              }
+            ]
+          },
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [],
+          "deleted_accounts": [],
+          "imported_keys": {
+            "key_v": [
+              {
+                "curve": "secp256k1",
+                "private_key": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+                "imported_at": "2026-10-26T12:02:00Z"
+              }
+            ]
+          },
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_v",
+            "label": "",
+            "kind": "imported",
+            "addresses": {
+              "evm": "0xacc_v"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "key_ref": "key_v",
+            "fingerprint": "fp",
+            "imported_at": "2026-10-26T12:00:00Z",
+            "network_ids": [
+              "eth-sepolia"
+            ]
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {
+          "key_v": [
+            {
+              "curve": "secp256k1",
+              "private_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+              "imported_at": "2026-10-26T12:01:00Z"
+            },
+            {
+              "curve": "secp256k1",
+              "private_key": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+              "imported_at": "2026-10-26T12:02:00Z"
+            },
+            {
+              "curve": "ed25519",
+              "private_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+              "imported_at": "2026-10-26T12:03:00Z"
+            }
+          ],
+          "key_w": [
+            {
+              "curve": "ed25519",
+              "private_key": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
+              "imported_at": "2026-10-26T12:00:00Z"
+            }
+          ]
+        },
+        "deleted_keys": []
+      },
+      "duplicates": [],
+      "key_conflicts": [
+        "key_v"
+      ]
+    },
+    {
+      "name": "a deletion wins, takes every variant of a key, and keeps its latest time",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_del",
+              "label": "edited after the deletion",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_del"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:10:00Z"
+            },
+            {
+              "id": "acc_kdel",
+              "label": "",
+              "kind": "imported",
+              "network_ids": [
+                "eth-sepolia"
+              ],
+              "addresses": {
+                "evm": "0xacc_kdel"
+              },
+              "key_ref": "key_del",
+              "fingerprint": "fp",
+              "imported_at": "2026-10-26T12:00:00Z",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [
+            {
+              "id": "acc_gone",
+              "deleted_at": "2026-10-26T12:01:00Z"
+            }
+          ],
+          "imported_keys": {
+            "key_del": [
+              {
+                "curve": "secp256k1",
+                "private_key": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=",
+                "imported_at": "2026-10-26T12:00:00Z"
+              }
+            ],
+            "key_keep": [
+              {
+                "curve": "secp256k1",
+                "private_key": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=",
+                "imported_at": "2026-10-26T12:00:00Z"
+              }
+            ]
+          },
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [],
+          "deleted_accounts": [
+            {
+              "id": "acc_del",
+              "deleted_at": "2026-10-26T12:05:00Z"
+            },
+            {
+              "id": "acc_gone",
+              "deleted_at": "2026-10-26T13:02:00+01:00"
+            }
+          ],
+          "imported_keys": {},
+          "deleted_keys": [
+            {
+              "id": "key_del",
+              "deleted_at": "2026-10-26T12:06:00Z"
+            }
+          ]
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [],
+          "deleted_accounts": [],
+          "imported_keys": {
+            "key_del": [
+              {
+                "curve": "secp256k1",
+                "private_key": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=",
+                "imported_at": "2026-10-26T12:00:00Z"
+              }
+            ]
+          },
+          "deleted_keys": [
+            {
+              "id": "key_del",
+              "deleted_at": "2026-10-26T12:04:00.000Z"
+            }
+          ]
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_kdel",
+            "label": "",
+            "kind": "imported",
+            "addresses": {
+              "evm": "0xacc_kdel"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "key_ref": "key_del",
+            "fingerprint": "fp",
+            "imported_at": "2026-10-26T12:00:00Z",
+            "network_ids": [
+              "eth-sepolia"
+            ]
+          }
+        ],
+        "deleted_accounts": [
+          {
+            "id": "acc_del",
+            "deleted_at": "2026-10-26T12:05:00Z"
+          },
+          {
+            "id": "acc_gone",
+            "deleted_at": "2026-10-26T12:02:00Z"
+          }
+        ],
+        "imported_keys": {
+          "key_keep": [
+            {
+              "curve": "secp256k1",
+              "private_key": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=",
+              "imported_at": "2026-10-26T12:00:00Z"
+            }
+          ]
+        },
+        "deleted_keys": [
+          {
+            "id": "key_del",
+            "deleted_at": "2026-10-26T12:06:00Z"
+          }
+        ]
+      },
+      "duplicates": [],
+      "key_conflicts": []
+    },
+    {
+      "name": "wallets are ordered by creation instant then id, and the newer of two on one key is reported",
+      "snapshots": [
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_b",
+              "label": "b",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_b"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_c",
+              "label": "c",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_c"
+              },
+              "index": 0,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T11:00:00-01:00",
+              "updated_at": "2026-10-26T12:00:00Z"
+            },
+            {
+              "id": "acc_a",
+              "label": "a",
+              "kind": "derived",
+              "family": "tron",
+              "network_ids": [
+                "tron-nile"
+              ],
+              "addresses": {
+                "tron": "Tacc_a"
+              },
+              "index": 5,
+              "derivation_profile": "bip44-v1",
+              "created_at": "2026-10-26T11:59:59Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_i1",
+              "label": "",
+              "kind": "imported",
+              "network_ids": [
+                "eth-sepolia"
+              ],
+              "addresses": {
+                "evm": "0xacc_i1"
+              },
+              "key_ref": "key_i1",
+              "fingerprint": "fp",
+              "imported_at": "2026-10-26T12:00:00Z",
+              "created_at": "2026-10-26T12:00:00Z",
+              "updated_at": "2026-10-26T12:00:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        },
+        {
+          "version": 1,
+          "written_at": "2026-10-26T12:30:00Z",
+          "name": "",
+          "name_updated_at": "0001-01-01T00:00:00Z",
+          "accounts": [
+            {
+              "id": "acc_i0",
+              "label": "",
+              "kind": "imported",
+              "network_ids": [
+                "eth-sepolia"
+              ],
+              "addresses": {
+                "evm": "0xacc_i0"
+              },
+              "key_ref": "key_i0",
+              "fingerprint": "fp",
+              "imported_at": "2026-10-26T12:01:00Z",
+              "created_at": "2026-10-26T12:01:00Z",
+              "updated_at": "2026-10-26T12:01:00Z"
+            }
+          ],
+          "deleted_accounts": [],
+          "imported_keys": {},
+          "deleted_keys": []
+        }
+      ],
+      "merged": {
+        "version": 1,
+        "name": "",
+        "name_updated_at": "0001-01-01T00:00:00Z",
+        "accounts": [
+          {
+            "id": "acc_a",
+            "label": "a",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_a"
+            },
+            "created_at": "2026-10-26T11:59:59Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 5,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_b",
+            "label": "b",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_b"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 0,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_c",
+            "label": "c",
+            "kind": "derived",
+            "addresses": {
+              "tron": "Tacc_c"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "family": "tron",
+            "derivation_profile": "bip44-v1",
+            "index": 0,
+            "network_ids": [
+              "tron-nile"
+            ]
+          },
+          {
+            "id": "acc_i1",
+            "label": "",
+            "kind": "imported",
+            "addresses": {
+              "evm": "0xacc_i1"
+            },
+            "created_at": "2026-10-26T12:00:00Z",
+            "updated_at": "2026-10-26T12:00:00Z",
+            "key_ref": "key_i1",
+            "fingerprint": "fp",
+            "imported_at": "2026-10-26T12:00:00Z",
+            "network_ids": [
+              "eth-sepolia"
+            ]
+          },
+          {
+            "id": "acc_i0",
+            "label": "",
+            "kind": "imported",
+            "addresses": {
+              "evm": "0xacc_i0"
+            },
+            "created_at": "2026-10-26T12:01:00Z",
+            "updated_at": "2026-10-26T12:01:00Z",
+            "key_ref": "key_i0",
+            "fingerprint": "fp",
+            "imported_at": "2026-10-26T12:01:00Z",
+            "network_ids": [
+              "eth-sepolia"
+            ]
+          }
+        ],
+        "deleted_accounts": [],
+        "imported_keys": {},
+        "deleted_keys": []
+      },
+      "duplicates": [
+        "acc_c",
+        "acc_i0"
+      ],
+      "key_conflicts": []
+    }
+  ]
+}

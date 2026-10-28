@@ -241,7 +241,7 @@ func TestSolanaImportFormats(t *testing.T) {
 
 	home := t.TempDir()
 	manager := newManager(t, home)
-	created, err := manager.Create(space.CreateRequest{Password: "test-vault-password", ImportedOnly: true})
+	created, err := manager.Create(space.CreateRequest{Password: "test-vault-password"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
